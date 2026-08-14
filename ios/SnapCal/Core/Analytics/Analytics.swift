@@ -62,13 +62,13 @@ actor Analytics {
         flushTask?.cancel()
         flushTask = nil
 
-        Task {
+        Task { [weak self] in
             do {
                 try await APIClient.shared.sendEvents(batch)
             } catch {
                 // Analytics must never break a user flow, but dropping silently
                 // would skew the funnel, so failed batches are re-queued once.
-                await self.requeue(batch)
+                await self?.requeue(batch)
             }
         }
     }
