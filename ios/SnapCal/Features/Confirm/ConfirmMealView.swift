@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConfirmMealView: View {
     @Environment(AppState.self) private var app
+    @Environment(EntitlementStore.self) private var entitlements
 
     let payload: AnalysisPayload
     @Binding var slot: MealSlot
@@ -45,6 +46,26 @@ struct ConfirmMealView: View {
 
                     if !payload.assumptions.isEmpty {
                         assumptionsCard
+                    }
+
+                    // Shown only after the user has the result in hand.
+                    if !entitlements.isPro,
+                       let warning = entitlements.warningAfterUse(of: entitlements.entitlements.foodScan) {
+                        Button {
+                            Analytics.track(.freeLimitWarning, ["feature": "food_scan"])
+                            entitlements.present(.foodScan, source: "confirm_warning")
+                        } label: {
+                            HStack {
+                                Image(systemName: "sparkles").foregroundStyle(Theme.accent)
+                                Text(warning).font(.caption_)
+                                Spacer()
+                                Text("Unlock Unlimited")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            .card()
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if items.isEmpty {
