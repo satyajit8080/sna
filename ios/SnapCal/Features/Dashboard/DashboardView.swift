@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AppState.self) private var app
     @Environment(SubscriptionManager.self) private var store
+    @Environment(EntitlementStore.self) private var entitlements
 
     @State private var route: LogRoute?
     @State private var showPaywall = false
@@ -28,6 +29,8 @@ struct DashboardView: View {
                                 onAdd: { start(.camera, slot: slot) }
                             )
                         }
+
+                        if !entitlements.isPro { PremiumCard() }
 
                         WaterStrip()
 
@@ -60,7 +63,7 @@ struct DashboardView: View {
             .fullScreenCover(item: $route) { route in
                 LogFlowView(route: route)
             }
-            .sheet(isPresented: $showPaywall) { PaywallView() }
+            .sheet(isPresented: $showPaywall) { PaywallView(context: .general, source: "dashboard") }
             .confirmationDialog("Add food", isPresented: $showMoreOptions, titleVisibility: .visible) {
                 Button("Upload a photo") { start(.library) }
                 Button("Describe it") { start(.text) }
@@ -76,16 +79,17 @@ struct DashboardView: View {
 
     private var scanCTA: some View {
         VStack(spacing: Theme.Space.s) {
-            if let quota = app.quota, let remaining = quota.remaining, !quota.isPro {
+            if !entitlements.isPro {
+                let scan = entitlements.entitlements.foodScan
                 Button {
-                    showPaywall = true
+                    entitlements.present(.foodScan, source: "dashboard_badge")
                 } label: {
-                    Text(remaining > 0
-                         ? "\(remaining) free scan\(remaining == 1 ? "" : "s") left this week"
-                         : "Free scans used — go unlimited")
+                    Text(scan.isExhausted ? "Free scans used — go unlimited"
+                                          : scan.badge(noun: "AI scan"))
                         .font(.caption_)
-                        .foregroundStyle(remaining > 0 ? .secondary : Theme.accent)
+                        .foregroundStyle(scan.isExhausted ? Theme.accent : .secondary)
                 }
+                .buttonStyle(.plain)
             }
 
             HStack(spacing: Theme.Space.s) {
@@ -123,9 +127,11 @@ struct DashboardView: View {
     }
 
     private func start(_ mode: LogMode, slot: MealSlot? = nil) {
-        // Paywall gates Pro-only inputs before we burn a request.
-        if !store.isPro, mode == .barcode || mode == .voice {
-            showPaywall = true
+        // Check before opening the camera: making someone frame a plate and
+        // then refusing them is a worse experience than asking up front.
+        let scan = entitlements.entitlements.foodScan
+        if !entitlements.isPro, scan.isExhausted {
+            entitlements.present(.foodScan, source: "scan_cta")
             return
         }
         route = LogRoute(mode: mode, slot: slot ?? MealSlot.suggested())
@@ -327,5 +333,42 @@ struct WaterStrip: View {
     private func adjust(_ ml: Int) {
         withAnimation(Theme.snap) { app.dashboard.waterMl = max(0, app.dashboard.waterMl + ml) }
         Task { _ = try? await APIClient.shared.logWater(ml: ml) }
+    }
+}
+
+
+/// Tasteful upgrade card. Deliberately below the fold on a full day: the app
+/// should feel like a tracker with an offer, not an ad with a tracker.
+struct PremiumCard: View {
+    @Environment(EntitlementStore.self) private var entitlements
+
+    var body: some View {
+        Button {
+            Haptics.tap()
+            Analytics.track(.premiumCTAClicked, ["source": "home_card"])
+            entitlements.present(.general, source: "home_card")
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.accent)
+                    Text("Get More From Your AI Coach")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+
+                Text("Unlimited scans · Unlimited coaching · Personalized meal plans")
+                    .font(.caption_)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 4) {
+                    Text("Unlock Premium").font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "arrow.right").font(.system(size: 11, weight: .bold))
+                }
+                .foregroundStyle(Theme.accent)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+        .buttonStyle(.plain)
     }
 }
