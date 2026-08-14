@@ -1,0 +1,15 @@
+#include "Base.xcconfig"
+
+// Production API. Swap API_HOST for a custom domain once DNS is cut over.
+API_SCHEME = https:$(SLASH)$(SLASH)
+API_HOST = sna-production-5e29.up.railway.app
+API_BASE_URL = $(API_SCHEME)$(API_HOST)/api/v1
+
+SWIFT_ACTIVE_COMPILATION_CONDITIONS =
+SWIFT_OPTIMIZATION_LEVEL = -O
+SWIFT_COMPILATION_MODE = wholemodule
+VALIDATE_PRODUCT = YES
+
+// Signing style is decided by CI: `xcode-project use-profiles` writes Manual
+// settings plus the fetched profile into the target. Pinning Automatic here
+// only creates a conflict for release builds.
