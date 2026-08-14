@@ -3,23 +3,42 @@ import SwiftUI
 struct OnboardingFlow: View {
     @Environment(AppState.self) private var app
 
+    /// Phase 9: the user reaches a working app before ever seeing an offer.
+    /// questions → targets → Health → first scan → (Premium comes later, from
+    /// the natural limit, not from a modal on day one).
+    private enum Stage { case questions, targets, health, firstScan }
+
     @State private var draft = ProfileDraft()
     @State private var step = 0
     @State private var computed: TargetsResponse?
     @State private var submitting = false
     @State private var error: String?
+    @State private var stage: Stage = .questions
 
     private let steps = 7
 
     var body: some View {
         VStack(spacing: 0) {
-            if computed == nil {
+            switch stage {
+            case .questions:
                 header
                 content
                     .frame(maxHeight: .infinity)
                 footer
-            } else {
-                TargetsRevealView(result: computed!) {
+
+            case .targets:
+                if let computed {
+                    TargetsRevealView(result: computed) {
+                        withAnimation(Theme.snap) { stage = .health }
+                    }
+                }
+
+            case .health:
+                HealthConnectView { withAnimation(Theme.snap) { stage = .firstScan } }
+
+            case .firstScan:
+                FirstScanPromptView {
+                    Analytics.track(.onboardingCompleted)
                     Task { await app.refresh(); app.phase = .ready }
                 }
             }
@@ -155,7 +174,7 @@ struct OnboardingFlow: View {
             do {
                 let res = try await APIClient.shared.submitProfile(draft)
                 Haptics.success()
-                withAnimation(Theme.snap) { computed = res }
+                withAnimation(Theme.snap) { computed = res; stage = .targets }
             } catch {
                 self.error = error.localizedDescription
             }
@@ -289,5 +308,40 @@ private struct TargetsRevealView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.Space.s)
         .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.Radius.control))
+    }
+}
+
+
+/// Last onboarding beat: point them at the one action the product exists for.
+/// No paywall here — the offer lands after they've had value, not before.
+struct FirstScanPromptView: View {
+    let onContinue: () -> Void
+
+    var body: some View {
+        VStack(spacing: Theme.Space.l) {
+            Spacer()
+
+            Image(systemName: "camera.viewfinder")
+                .font(.system(size: 50, weight: .light))
+                .foregroundStyle(Theme.accent)
+
+            VStack(spacing: Theme.Space.s) {
+                Text("Now scan your first meal")
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.center)
+
+                Text("Point your camera at whatever you're eating next. You'll have calories and macros in a few seconds.")
+                    .font(.body_).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Theme.Space.m)
+            }
+
+            Spacer()
+
+            Button("Start tracking", action: onContinue)
+                .buttonStyle(PrimaryButtonStyle())
+        }
+        .padding(Theme.Space.l)
+        .background(Theme.bg)
     }
 }
