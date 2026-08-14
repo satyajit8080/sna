@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppState.self) private var app
     @Environment(SubscriptionManager.self) private var store
+    @Environment(EntitlementStore.self) private var entitlements
 
     @State private var showPaywall = false
     @State private var confirmDelete = false
@@ -10,20 +11,36 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
+                Section("Premium") {
                     HStack {
-                        Text(store.isPro ? "SnapCal Pro" : "Free plan")
+                        Text(entitlements.isPro ? "Premium" : "Free Plan")
                             .font(.system(size: 16, weight: .semibold))
                         Spacer()
-                        if !store.isPro {
-                            Button("Upgrade") { showPaywall = true }
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Theme.accent)
+                        if !entitlements.isPro {
+                            Button("Upgrade to Premium") {
+                                Analytics.track(.premiumCTAClicked, ["source": "settings"])
+                                showPaywall = true
+                            }
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
                         }
                     }
-                    if let quota = app.quota, let limit = quota.limit {
-                        LabeledContent("Scans this week", value: "\(quota.used) / \(limit)")
+
+                    if !entitlements.isPro {
+                        let e = entitlements.entitlements
+                        LabeledContent("AI scans", value: usageText(e.foodScan))
+                        LabeledContent("Coach questions", value: usageText(e.coach))
+                        LabeledContent("Meal planner", value: "Premium")
                     }
+
+                    Button("Restore Purchases") {
+                        Analytics.track(.restorePurchase)
+                        Task { await store.restore(); await entitlements.refresh() }
+                    }
+                }
+
+                Section {
+                    NavigationLink("Notifications") { NotificationSettingsView() }
                 }
 
                 Section("Targets") {
@@ -52,7 +69,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .sheet(isPresented: $showPaywall) { PaywallView() }
+            .sheet(isPresented: $showPaywall) { PaywallView(context: .general, source: "settings") }
             .confirmationDialog("Delete everything?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete permanently", role: .destructive) {
                     Task {
@@ -66,6 +83,10 @@ struct SettingsView: View {
             }
         }
     }
+}
+
+private func usageText(_ f: FeatureUsage) -> String {
+    f.isUnlimited ? "Unlimited" : "\(f.used) of \(f.limit ?? 0) used"
 }
 
 struct TargetEditorView: View {
