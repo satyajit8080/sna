@@ -54,8 +54,25 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Turns what you say into a food entry. Transcription runs on your device wherever iOS supports it.</string>
 
+	<key>NSHealthShareUsageDescription</key>
+	<string>SnapCal reads your steps, active calories and exercise minutes so your coach can factor in how much you've moved. It never writes to Health.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>SnapCal does not write to Health. This is requested only so iOS can show the Health permission screen.</string>
+
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>app.snapcal.ios</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>snapcal</string>
+			</array>
+		</dict>
+	</array>
+
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
