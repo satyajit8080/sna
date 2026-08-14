@@ -1,6 +1,12 @@
 import StoreKit
 import Observation
 
+/// Holds the update-listener task outside actor isolation so `deinit`, which is
+/// nonisolated, can cancel it. Written once in `init`, read once in `deinit`.
+private final class TaskBox: @unchecked Sendable {
+    var task: Task<Void, Never>?
+}
+
 /// StoreKit 2. Product IDs and prices live in one place so pricing experiments
 /// are a config change, not a refactor.
 enum SnapCalProduct: String, CaseIterable {
@@ -21,10 +27,10 @@ final class SubscriptionManager {
     /// `deinit` is nonisolated, so this cannot be a main-actor-isolated stored
     /// property if we want to cancel from there. The task is written once in
     /// `init` and only ever read in `deinit`, so unchecked access is safe.
-    private nonisolated(unsafe) var updatesTask: Task<Void, Never>?
+    private nonisolated let updatesBox = TaskBox()
 
     init() {
-        updatesTask = Task { [weak self] in
+        updatesBox.task = Task { [weak self] in
             // Renewals, refunds and Ask-to-Buy approvals arrive here, not from the UI.
             for await update in Transaction.updates {
                 guard let self else { return }
@@ -33,7 +39,7 @@ final class SubscriptionManager {
         }
     }
 
-    deinit { updatesTask?.cancel() }
+    deinit { updatesBox.task?.cancel() }
 
     func load() async {
         products = (try? await Product.products(for: SnapCalProduct.allCases.map(\.rawValue)))?
