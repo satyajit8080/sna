@@ -3,7 +3,9 @@ import Charts
 
 struct ProgressHubView: View {
     @Environment(AppState.self) private var app
+    @Environment(EntitlementStore.self) private var entitlements
 
+    @State private var report: WeeklyReport?
     @State private var range = "week"
     @State private var history: History?
     @State private var weight: WeightSeries?
@@ -13,6 +15,7 @@ struct ProgressHubView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: Theme.Space.m) {
+                    weeklyReportCard
                     weightCard
                     rangePicker
                     caloriesCard
@@ -38,11 +41,74 @@ struct ProgressHubView: View {
         }
     }
 
+    @ViewBuilder private var weeklyReportCard: some View {
+        if entitlements.isPro {
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                Text("Your Weekly Progress").font(.system(size: 16, weight: .semibold))
+
+                if let report {
+                    HStack(spacing: Theme.Space.m) {
+                        metric("Weight",
+                               report.weightChangeKg.map { ($0 > 0 ? "+" : "") + $0.formatted(.number.precision(.fractionLength(1))) + " kg" } ?? "—")
+                        metric("Avg calories", report.avgCalories.map { "\($0)" } ?? "—")
+                        metric("Protein", report.proteinPctOfTarget.map { "\($0)%" } ?? "—")
+                        metric("Steps", report.steps > 0 ? "\(report.steps)" : "—")
+                    }
+
+                    Text(report.insight)
+                        .font(.body_)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Log a few days this week and your report will appear here.")
+                        .font(.caption_).foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        } else {
+            Button {
+                Analytics.track(.premiumCTAClicked, ["source": "weekly_report"])
+                entitlements.present(.report, source: "weekly_report")
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Weekly AI progress report")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("Weight, calories, protein and activity in one view.")
+                            .font(.caption_).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: Theme.Space.s)
+                    Text("Premium")
+                        .font(.system(size: 11, weight: .bold))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Theme.accentSoft, in: Capsule())
+                        .foregroundStyle(Theme.accent)
+                }
+                .card()
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 16, weight: .semibold, design: .rounded).monospacedDigit())
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Text(label).font(.caption_).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private func load() async {
         async let h = try? APIClient.shared.history(range: range)
         async let w = try? APIClient.shared.weight()
         history = await h
         weight = await w
+        // 402 for free users is expected, not an error worth surfacing.
+        if entitlements.isPro { report = try? await APIClient.shared.weeklyReport() }
     }
 
     // MARK: - Weight
