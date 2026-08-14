@@ -3,7 +3,6 @@ import UIKit
 
 enum APIError: LocalizedError, Equatable {
     case unauthorized
-    case premiumRequired(PremiumRequired)
     case scanLimitReached(used: Int, limit: Int)
     case proRequired(feature: String)
     case noFoodDetected
@@ -14,7 +13,6 @@ enum APIError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unauthorized:        "Please sign in again."
-        case .premiumRequired:     "This needs Premium."
         case .scanLimitReached:    "You've used your free scans this week."
         case .proRequired:         "This is a Pro feature."
         case .noFoodDetected:      "We couldn't find food in that photo."
@@ -34,8 +32,6 @@ private struct ErrorBody: Decodable {
     let error: String
     let message: String?
     let feature: String?
-    let reason: String?
-    let usage: FeatureUsage?
     let quota: Quota?
 }
 
@@ -111,11 +107,6 @@ actor APIClient {
         let body = try? decoder.decode(ErrorBody.self, from: data)
         switch (http.statusCode, body?.error) {
         case (401, _):                        throw APIError.unauthorized
-        case (402, "PREMIUM_REQUIRED"):
-            throw APIError.premiumRequired(PremiumRequired(
-                feature: body?.feature ?? "food_scan",
-                reason: body?.reason ?? "limit_reached",
-                usage: body?.usage))
         case (402, "pro_required"):           throw APIError.proRequired(feature: body?.feature ?? "pro")
         case (402, _):                        throw APIError.scanLimitReached(used: body?.quota?.used ?? 0,
                                                                               limit: body?.quota?.limit ?? 2)
@@ -263,63 +254,6 @@ actor APIClient {
     // MARK: - Reads
 
     func dashboard() async throws -> Dashboard { try await get("dashboard", as: Dashboard.self) }
-
-    // MARK: - Entitlements, coach, planner
-
-    func entitlements() async throws -> Entitlements { try await get("entitlements", as: Entitlements.self) }
-
-    func askCoach(_ question: String) async throws -> CoachAnswer {
-        struct Body: Encodable { let question: String }
-        return try await post("coach/ask", Body(question: question), as: CoachAnswer.self)
-    }
-
-    func coachHistory() async throws -> [CoachMessage] {
-        struct Wrapper: Decodable { let messages: [CoachMessage] }
-        return try await get("coach/history", as: Wrapper.self).messages
-    }
-
-    func coachSuggestions() async throws -> [String] {
-        struct Wrapper: Decodable { let suggestions: [String] }
-        return try await get("coach/suggestions", as: Wrapper.self).suggestions
-    }
-
-    func generateMealPlan(span: String) async throws -> MealPlan {
-        struct Body: Encodable { let span: String }
-        return try await post("meal-plan", Body(span: span), as: MealPlan.self)
-    }
-
-    func latestMealPlan() async throws -> MealPlan { try await get("meal-plan/latest", as: MealPlan.self) }
-
-    func weeklyReport() async throws -> WeeklyReport { try await get("reports/weekly", as: WeeklyReport.self) }
-
-    // MARK: - Notifications, health, analytics
-
-    func notificationPrefs() async throws -> NotificationPrefs {
-        try await get("notifications/prefs", as: NotificationPrefs.self)
-    }
-
-    func updateNotificationPrefs(_ prefs: NotificationPrefs) async throws -> NotificationPrefs {
-        try await send(request("notifications/prefs", method: "PUT", body: try encoder.encode(prefs)),
-                       as: NotificationPrefs.self)
-    }
-
-    func morningMessage() async throws -> MorningMessage {
-        try await get("notifications/morning", as: MorningMessage.self)
-    }
-
-    func syncHealth(steps: Int?, activeKcal: Int?, exerciseMin: Int?) async throws {
-        struct Body: Encodable { let steps: Int?; let active_kcal: Int?; let exercise_min: Int? }
-        _ = try await post("health/daily",
-                           Body(steps: steps, active_kcal: activeKcal, exercise_min: exerciseMin),
-                           as: Empty.self)
-    }
-
-    func sendEvents(_ events: [[String: Any]]) async throws {
-        // Hand-encoded: analytics props are heterogeneous and not worth a
-        // generic AnyCodable just for this one call.
-        let payload = try JSONSerialization.data(withJSONObject: ["events": events])
-        _ = try await send(request("analytics/events", method: "POST", body: payload), as: Empty.self)
-    }
     func usage() async throws -> Quota { try await get("usage", as: Quota.self) }
     func subscription() async throws -> SubscriptionStatus { try await get("subscription", as: SubscriptionStatus.self) }
     func history(range: String) async throws -> History { try await get("history?range=\(range)", as: History.self) }
