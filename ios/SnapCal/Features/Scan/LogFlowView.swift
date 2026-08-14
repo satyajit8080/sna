@@ -17,6 +17,7 @@ struct LogRoute: Identifiable {
 struct LogFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var app
+    @Environment(EntitlementStore.self) private var entitlements
 
     let route: LogRoute
 
@@ -53,7 +54,7 @@ struct LogFlowView: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showPaywall, onDismiss: { dismiss() }) { PaywallView() }
+            .sheet(isPresented: $showPaywall, onDismiss: { dismiss() }) { PaywallView(context: .foodScan, source: "scan_flow") }
         }
         .interactiveDismissDisabled(stage == .analyzing)
     }
@@ -165,6 +166,7 @@ struct LogFlowView: View {
             do {
                 let res = try await work()
                 Haptics.success()
+                Analytics.track(.foodScanCompleted, ["method": route.mode.rawValue])
                 withAnimation(Theme.snap) {
                     stage = .confirm(AnalysisPayload(
                         items: res.foods,
@@ -177,6 +179,13 @@ struct LogFlowView: View {
                 await app.refresh()
             } catch let error as APIError {
                 Haptics.warn()
+                // A spent allowance is not an error state — close the flow and
+                // let the shared paywall explain, with copy for this feature.
+                if case .premiumRequired = error {
+                    _ = entitlements.handle(error, source: "scan")
+                    dismiss()
+                    return
+                }
                 withAnimation(Theme.snap) { stage = .failed(error) }
             } catch {
                 withAnimation(Theme.snap) { stage = .failed(.server(error.localizedDescription)) }
