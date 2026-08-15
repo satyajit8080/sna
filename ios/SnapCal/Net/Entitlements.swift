@@ -117,9 +117,52 @@ struct CoachMessage: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey { case role, content }
 }
 
+/// A concrete next meal resolved from the nutrition database — not a second AI
+/// call. Macros are exact, so "Add to Diary" needs no confirmation step.
+struct MealSuggestion: Codable, Identifiable, Hashable {
+    var id: String { foodId }
+    let foodId: String
+    let name: String
+    let slot: MealSlot
+    let grams: Double
+    let quantity: Double
+    let unit: String
+    let kcal100g: Double
+    let protein100g: Double
+    let carbs100g: Double
+    let fat100g: Double
+    let calories: Int
+    let protein_g: Int
+    let carbs_g: Int
+    let fat_g: Int
+    let reason: String
+
+    enum CodingKeys: String, CodingKey {
+        case foodId = "food_id", name, slot, grams, quantity, unit
+        case kcal100g = "kcal_100g", protein100g = "protein_100g"
+        case carbs100g = "carbs_100g", fat100g = "fat_100g"
+        case calories, protein_g, carbs_g, fat_g, reason
+    }
+
+    /// Same shape the diary stores, so what the card shows is what gets saved.
+    var asFoodItem: FoodItem {
+        FoodItem(foodId: foodId, name: name, quantity: quantity, unit: unit, grams: grams,
+                 kcal100g: kcal100g, protein100g: protein100g,
+                 carbs100g: carbs100g, fat100g: fat100g,
+                 confidence: 1, isEstimate: false)
+    }
+}
+
 struct CoachAnswer: Codable {
     let answer: String
+    let suggestion: MealSuggestion?
     let entitlements: Entitlements
+}
+
+struct SuggestionResponse: Codable {
+    let suggestion: MealSuggestion?
+    let remaining: MacroTotal?
+    let budget: Int?
 }
 
 // MARK: - Meal plan
@@ -160,6 +203,15 @@ struct PlanDay: Codable, Identifiable, Hashable {
 struct MealPlan: Codable {
     let days: [PlanDay]
     let note: String?
+    /// "remaining_today" when the plan covers only what's left of today.
+    let plannedFor: String?
+    let budgetKcal: Int?
+
+    var isRestOfDay: Bool { plannedFor == "remaining_today" }
+
+    enum CodingKeys: String, CodingKey {
+        case days, note, plannedFor = "planned_for", budgetKcal = "budget_kcal"
+    }
 }
 
 // MARK: - Weekly report
