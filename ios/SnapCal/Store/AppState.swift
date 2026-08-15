@@ -7,6 +7,18 @@ final class AppState {
     enum Phase { case launching, welcome, onboarding, ready }
 
     var phase: Phase = .launching
+
+    /// Browsing without an account.
+    ///
+    /// Guest mode is a *client* state only. No token is issued, so every
+    /// protected endpoint still returns 401 exactly as it would to any
+    /// unauthenticated caller — nothing about the backend's auth is relaxed.
+    /// The app simply shows sample content and prompts for sign-up at the
+    /// first action that needs a server round-trip.
+    private(set) var isGuest = false
+
+    /// Set when a guest taps something that needs an account; drives the sheet.
+    var guestPromptFeature: String?
     var dashboard: Dashboard = .placeholder
     var quota: Quota?
     var isRefreshing = false
@@ -32,6 +44,27 @@ final class AppState {
         }
     }
 
+    func enterGuestMode() {
+        isGuest = true
+        dashboard = .guestSample
+        phase = .ready
+    }
+
+    func leaveGuestMode() {
+        isGuest = false
+        guestPromptFeature = nil
+    }
+
+    /// Call before any action that needs the server. Returns false and raises
+    /// the sign-up prompt when the user is browsing as a guest.
+    @discardableResult
+    func requireAccount(for feature: String) -> Bool {
+        guard isGuest else { return true }
+        Haptics.warn()
+        guestPromptFeature = feature
+        return false
+    }
+
     func bootstrap() async {
         guard await APIClient.shared.token != nil else { phase = .welcome; return }
         do {
@@ -49,6 +82,8 @@ final class AppState {
     }
 
     func refresh() async {
+        // A guest has no token; refreshing would just 401 in a loop.
+        guard !isGuest else { return }
         isRefreshing = true
         defer { isRefreshing = false }
         if let d = try? await APIClient.shared.dashboard() {
@@ -59,6 +94,8 @@ final class AppState {
 
     func signOut() async {
         await APIClient.shared.setToken(nil)
+        isGuest = false
+        guestPromptFeature = nil
         dashboard = .placeholder
         phase = .welcome
     }
