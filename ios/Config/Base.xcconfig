@@ -1,0 +1,23 @@
+// Shared build settings. Values that differ per configuration live in
+// Debug.xcconfig / Release.xcconfig and are surfaced to the app via Info.plist.
+
+PRODUCT_BUNDLE_IDENTIFIER = app.snapcal.ios
+PRODUCT_NAME = SnapCal
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+
+IPHONEOS_DEPLOYMENT_TARGET = 18.0
+SWIFT_VERSION = 5.0
+TARGETED_DEVICE_FAMILY = 1
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+SUPPORTS_MACCATALYST = NO
+
+CODE_SIGN_ENTITLEMENTS = SnapCal/SnapCal.entitlements
+INFOPLIST_FILE = SnapCal/Resources/Info.plist
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+SWIFT_EMIT_LOC_STRINGS = YES
+
+// xcconfig treats // as a comment, so the scheme separator is spliced back in.
+SLASH = /
