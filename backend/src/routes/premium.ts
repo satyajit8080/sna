@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { q, one } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { adminUserIds } from "../config.js";
+import { adminUserIds, cfg, usdaKey } from "../config.js";
+import { searchUsdaMany } from "../nutrition/usda.js";
 import { ai, ProviderError, type Usage } from "../ai/index.js";
 import { COACH_SYSTEM, MEAL_PLAN_SYSTEM } from "../ai/prompts.js";
 import { buildContext, complete, parseJson } from "../services/coachContext.js";
@@ -326,6 +327,63 @@ export default async function routes(app: FastifyInstance) {
   app.get("/admin/openrouter/models", { preHandler: requireAuth }, async (req, reply) => {
     if (!adminUserIds.has(req.userId)) return reply.code(404).send({ error: "not_found" });
     return cheapestModels();
+  });
+
+  /**
+   * Provider self-test. Calls each configured AI provider with a minimal
+   * request and reports the raw status, so a failing scan can be diagnosed
+   * without reading container logs.
+   */
+  app.get("/admin/ai/selftest", { preHandler: requireAuth }, async (req, reply) => {
+    if (!adminUserIds.has(req.userId)) return reply.code(404).send({ error: "not_found" });
+
+    const results: Record<string, unknown> = {
+      config: {
+        ai_provider: cfg.AI_PROVIDER,
+        vision_model: cfg.AI_MODEL,
+        escalation_model: cfg.AI_ESCALATION_MODEL,
+        openai_key_set: !!cfg.OPENAI_API_KEY,
+        gemini_key_set: !!cfg.GEMINI_API_KEY,
+        openrouter_key_set: !!cfg.OPENROUTER_API_KEY,
+        openrouter_model: cfg.OPENROUTER_COACH_MODEL,
+        usda_key_set: usdaKey !== "DEMO_KEY",
+      },
+    };
+
+    // Vision path — a 1x1 JPEG is enough to prove auth and model availability.
+    const pixel = Buffer.from(
+      "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==",
+      "base64"
+    );
+    try {
+      const { usages } = await ai.primary().analyzeImage(pixel);
+      results.vision = { ok: true, model: usages[0]?.model, cost_usd: usages[0]?.costUsd };
+    } catch (e: any) {
+      results.vision = {
+        ok: false,
+        message: e?.message,
+        provider_status: e?.providerStatus ?? e?.status,
+        provider_body: e?.providerBody,
+      };
+    }
+
+    // Coach path — OpenRouter.
+    try {
+      const { text, usage } = await chat([{ role: "user", content: "Reply with the word ok." }], 10);
+      results.coach = { ok: true, model: usage.model, reply: text.slice(0, 60), cost_usd: usage.costUsd };
+    } catch (e: any) {
+      results.coach = { ok: false, message: e?.message, provider_status: e?.status };
+    }
+
+    // USDA path.
+    try {
+      const hits = await searchUsdaMany("chicken breast", { limit: 1 });
+      results.usda = { ok: hits.length > 0, first: hits[0]?.name ?? null };
+    } catch (e: any) {
+      results.usda = { ok: false, message: e?.message, code: e?.code };
+    }
+
+    return results;
   });
 
   // ── analytics ─────────────────────────────────────────────────────────────
