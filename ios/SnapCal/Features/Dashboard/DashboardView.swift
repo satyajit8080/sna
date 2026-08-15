@@ -127,6 +127,10 @@ struct DashboardView: View {
     }
 
     private func start(_ mode: LogMode, slot: MealSlot? = nil) {
+        // Guests can browse the sample day, but logging needs somewhere to
+        // save it. Ask before the camera opens, not after they've framed a plate.
+        guard app.requireAccount(for: "save your meals") else { return }
+
         // Check before opening the camera: making someone frame a plate and
         // then refusing them is a worse experience than asking up front.
         let scan = entitlements.entitlements.foodScan
@@ -331,6 +335,7 @@ struct WaterStrip: View {
     }
 
     private func adjust(_ ml: Int) {
+        guard app.requireAccount(for: "track your water") else { return }
         withAnimation(Theme.snap) { app.dashboard.waterMl = max(0, app.dashboard.waterMl + ml) }
         Task { _ = try? await APIClient.shared.logWater(ml: ml) }
     }
