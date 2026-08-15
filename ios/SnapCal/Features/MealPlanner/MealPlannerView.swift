@@ -26,7 +26,9 @@ struct MealPlannerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .task {
                 Analytics.track(.mealPlannerOpened, ["plan": entitlements.entitlements.plan])
-                if entitlements.isPro { plan = try? await APIClient.shared.latestMealPlan() }
+                if entitlements.isPro, !app.isGuest {
+                    plan = try? await APIClient.shared.latestMealPlan()
+                }
             }
             .alert("Couldn't build a plan", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
@@ -58,9 +60,9 @@ struct MealPlannerView: View {
 
                 // A real, non-interactive sample so the value is visible.
                 VStack(spacing: Theme.Space.s) {
-                    sampleRow("Breakfast", "Poha with peanuts", 279, 5)
-                    sampleRow("Lunch", "2 roti · dal tadka · sabzi", 553, 19)
-                    sampleRow("Dinner", "Grilled chicken · salad", 393, 42)
+                    sampleRow("Breakfast", "Oatmeal with berries", 290, 9)
+                    sampleRow("Lunch", "Turkey sandwich · side salad", 520, 28)
+                    sampleRow("Dinner", "Grilled steak · rice · broccoli", 610, 46)
                 }
                 .padding(.horizontal, Theme.Space.m)
                 .overlay(alignment: .bottom) {
@@ -191,6 +193,7 @@ struct MealPlannerView: View {
     }
 
     private func generate() {
+        guard app.requireAccount(for: "build a meal plan") else { return }
         generating = true
         Task {
             defer { generating = false }
@@ -211,6 +214,7 @@ struct MealPlannerView: View {
     /// Logs a planned meal straight into the diary — no second AI call, the
     /// macros are already known.
     private func log(_ meal: PlannedMeal) {
+        guard app.requireAccount(for: "save meals") else { return }
         let slot = MealSlot(rawValue: meal.slot) ?? .snack
         let item = meal.asFoodItem
         loggedMeals.insert(meal.id)
