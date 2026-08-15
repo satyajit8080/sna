@@ -24,7 +24,12 @@ async function callOnce(model: string, system: string, content: unknown[], start
 
   if (!res.ok) {
     const retryable = res.status >= 500 || res.status === 429;
-    throw new ProviderError(`openai ${res.status}`, [], retryable, res.status);
+    const detail = await res.text().catch(() => "");
+    const err = new ProviderError(`openai ${res.status} (${model}): ${detail.slice(0, 300)}`,
+                                  [], retryable, res.status);
+    (err as any).providerStatus = res.status;
+    (err as any).providerBody = detail.slice(0, 500);
+    throw err;
   }
 
   const json: any = await res.json();
