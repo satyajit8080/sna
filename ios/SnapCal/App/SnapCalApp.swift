@@ -20,7 +20,7 @@ struct SnapCalApp: App {
                 .task {
                     await store.load()
                     await app.bootstrap()
-                    await entitlements.refresh()
+                    if !app.isGuest { await entitlements.refresh() }
                     await notifications.loadPrefs()
                     // Rebuild schedules on every launch so a timezone change or
                     // a stale morning message can't survive.
