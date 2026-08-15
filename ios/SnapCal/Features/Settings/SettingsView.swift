@@ -6,11 +6,28 @@ struct SettingsView: View {
     @Environment(EntitlementStore.self) private var entitlements
 
     @State private var showPaywall = false
+    @State private var showGuestAuth = false
     @State private var confirmDelete = false
 
     var body: some View {
         NavigationStack {
             List {
+                if app.isGuest {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("You're browsing as a guest")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Nothing is saved yet. Create an account to keep your meals, targets and progress.")
+                                .font(.caption_).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Create Account") { showGuestAuth = true }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
                 Section("Premium") {
                     HStack {
                         Text(entitlements.isPro ? "Premium" : "Free Plan")
@@ -70,6 +87,12 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .sheet(isPresented: $showPaywall) { PaywallView(context: .general, source: "settings") }
+            .sheet(isPresented: $showGuestAuth) {
+                AuthView(startingMode: .signUp) { onboarded in
+                    app.phase = onboarded ? .ready : .onboarding
+                    Task { await app.refresh() }
+                }
+            }
             .confirmationDialog("Delete everything?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete permanently", role: .destructive) {
                     Task {
