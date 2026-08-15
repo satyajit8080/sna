@@ -2,9 +2,12 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { q, one } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { adminUserIds } from "../config.js";
 import { ai, ProviderError, type Usage } from "../ai/index.js";
 import { COACH_SYSTEM, MEAL_PLAN_SYSTEM } from "../ai/prompts.js";
 import { buildContext, complete, parseJson } from "../services/coachContext.js";
+import { chat, cheapestModels } from "../ai/openrouter.js";
+import { activityFor, recordActivity, activityHistory } from "../services/activity.js";
 import {
   entitlementsFor, reserve, settle, release, subscriptionFor,
   type Reservation,
@@ -46,15 +49,41 @@ export default async function routes(app: FastifyInstance) {
         `SELECT role, content FROM coach_messages WHERE user_id = $1
           ORDER BY created_at DESC LIMIT 2`, [req.userId]);
 
-      const prompt = [
-        `Context: ${JSON.stringify(context)}`,
-        prior.length ? `Previous: ${prior.reverse().map((m) => `${m.role}: ${m.content}`).join(" | ")}` : "",
-        `Question: ${question}`,
-      ].filter(Boolean).join("\n");
+      // Only the numbers the coach can actually use. Sending the whole context
+      // object would triple the token bill for answers that are one line long.
+      const activity = await activityFor(req.userId, req.tz);
+      const facts = {
+        remaining_kcal: context.remaining?.calories,
+        remaining_protein_g: context.remaining?.protein_g,
+        target_kcal: context.targets?.calories,
+        eaten_kcal: context.today?.calories,
+        steps: activity.steps,
+        burned_kcal: activity.credited_kcal,
+        weight_kg: context.currentWeightKg,
+        goal_kg: context.goalWeightKg,
+        change_kg: context.weightChangeKg,
+        streak_days: context.streakDays,
+      };
 
-      const { text, usage } = await complete(COACH_SYSTEM, prompt, { maxTokens: 160 });
-      const reply = text.trim().slice(0, 600) ||
-        "I couldn't work that out just now — try asking again in a moment.";
+      const messages = [
+        { role: "system" as const, content: COACH_SYSTEM },
+        ...prior.reverse().map((m) => ({
+          role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
+          content: m.content,
+        })),
+        { role: "user" as const, content: `${JSON.stringify(facts)}\n${question}` },
+      ];
+
+      const { text, usage } = await chat(messages, 60);
+
+      // Enforce one line server-side. A cheap model will occasionally ignore
+      // the instruction, and the UI is built for a single sentence.
+      const reply = text
+        .replace(/\s+/g, " ")
+        .split(/(?<=[.!?])\s/)[0]
+        ?.trim()
+        .slice(0, 200)
+        || "Log a meal and ask again — I need today's numbers first.";
 
       await q(`INSERT INTO coach_messages (user_id, role, content) VALUES ($1,'user',$2), ($1,'assistant',$3)`,
         [req.userId, question, reply]);
@@ -148,7 +177,7 @@ export default async function routes(app: FastifyInstance) {
     (await one(`SELECT diet, cuisines, dislikes, allergies FROM food_preferences WHERE user_id = $1`,
       [req.userId])) ?? { diet: null, cuisines: [], dislikes: [], allergies: [] });
 
-  // ── HealthKit rollup (written by the app) ─────────────────────────────────
+  // ── HealthKit ─────────────────────────────────────────────────────────────
   app.post("/health/daily", { preHandler: requireAuth }, async (req) => {
     const h = z.object({
       logged_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -156,20 +185,37 @@ export default async function routes(app: FastifyInstance) {
       active_kcal: z.number().int().min(0).max(20_000).optional(),
       resting_kcal: z.number().int().min(0).max(10_000).optional(),
       exercise_min: z.number().int().min(0).max(1440).optional(),
+      distance_m: z.number().int().min(0).max(500_000).optional(),
+      flights_climbed: z.number().int().min(0).max(2000).optional(),
     }).parse(req.body);
 
-    return one(
-      `INSERT INTO health_daily (user_id, logged_on, steps, active_kcal, resting_kcal, exercise_min)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (user_id, logged_on) DO UPDATE SET
-         steps=COALESCE(EXCLUDED.steps, health_daily.steps),
-         active_kcal=COALESCE(EXCLUDED.active_kcal, health_daily.active_kcal),
-         resting_kcal=COALESCE(EXCLUDED.resting_kcal, health_daily.resting_kcal),
-         exercise_min=COALESCE(EXCLUDED.exercise_min, health_daily.exercise_min),
-         updated_at=now()
-       RETURNING logged_on, steps, active_kcal`,
-      [req.userId, h.logged_on ?? localDate(req.tz), h.steps ?? null,
-       h.active_kcal ?? null, h.resting_kcal ?? null, h.exercise_min ?? null]);
+    const date = h.logged_on ?? localDate(req.tz);
+    await recordActivity(req.userId, date, h);
+
+    // Return the recomputed balance so the client doesn't need a second call.
+    return activityFor(req.userId, req.tz, date);
+  });
+
+  app.get("/health/daily", { preHandler: requireAuth }, async (req) => {
+    const { date } = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }).parse(req.query);
+    return activityFor(req.userId, req.tz, date);
+  });
+
+  app.get("/health/history", { preHandler: requireAuth }, async (req) => {
+    const { days } = z.object({
+      days: z.coerce.number().min(1).max(90).default(7),
+    }).parse(req.query);
+    return { days, entries: await activityHistory(req.userId, days) };
+  });
+
+  /** How much measured activity feeds back into the calorie budget. */
+  app.put("/health/activity-credit", { preHandler: requireAuth }, async (req) => {
+    const { mode } = z.object({ mode: z.enum(["off", "partial", "full"]) }).parse(req.body);
+    await q(`UPDATE nutrition_targets SET activity_credit = $2, updated_at = now()
+              WHERE user_id = $1`, [req.userId, mode]);
+    return activityFor(req.userId, req.tz);
   });
 
   // ── notification preferences ──────────────────────────────────────────────
@@ -231,6 +277,12 @@ export default async function routes(app: FastifyInstance) {
       body: lines[Math.floor(Date.now() / 864e5) % lines.length],
       deeplink: "snapcal://today",
     };
+  });
+
+  /** Live cheapest OpenRouter text models, for setting OPENROUTER_COACH_MODEL. */
+  app.get("/admin/openrouter/models", { preHandler: requireAuth }, async (req, reply) => {
+    if (!adminUserIds.has(req.userId)) return reply.code(404).send({ error: "not_found" });
+    return cheapestModels();
   });
 
   // ── analytics ─────────────────────────────────────────────────────────────

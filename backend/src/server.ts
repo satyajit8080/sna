@@ -4,6 +4,7 @@ import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 
+import { createHash } from "node:crypto";
 import { cfg, isProd, allowedOrigins, assertProviderConfigured } from "./config.js";
 import { pool } from "./db.js";
 import { migrate, verifySchema } from "./migrate.js";
@@ -12,6 +13,7 @@ import authRoutes from "./routes/auth.js";
 import foodRoutes from "./routes/food.js";
 import logRoutes from "./routes/log.js";
 import subRoutes from "./routes/subscription.js";
+import premiumRoutes from "./routes/premium.js";
 
 const app = Fastify({
   logger: {
@@ -48,10 +50,27 @@ await app.register(cors, {
 
 await app.register(multipart, { limits: { fileSize: cfg.MAX_UPLOAD_BYTES, files: 1, fields: 4 } });
 
+/**
+ * Rate-limit key.
+ *
+ * `req.userId` is set by the auth preHandler, which runs AFTER the rate
+ * limiter — so keying on it silently fell back to the IP for every request,
+ * meaning users behind one NAT throttled each other. Hashing the bearer token
+ * gives a stable per-user key at the right point in the lifecycle, without
+ * verifying the JWT twice or logging anything sensitive.
+ */
+function rateKey(req: { headers: Record<string, any>; ip: string }): string {
+  const header = req.headers.authorization;
+  if (typeof header === "string" && header.startsWith("Bearer ")) {
+    return "u:" + createHash("sha256").update(header.slice(7)).digest("hex").slice(0, 32);
+  }
+  return "ip:" + req.ip;
+}
+
 await app.register(rateLimit, {
-  max: 60,
+  max: 120,
   timeWindow: "1 minute",
-  keyGenerator: (req) => (req as any).userId ?? req.ip,
+  keyGenerator: rateKey as any,
 });
 
 // ── health ───────────────────────────────────────────────────────────────────
@@ -76,9 +95,9 @@ registerErrorHandler(app);
 // Tighter bucket on the expensive AI path.
 await app.register(async (scope) => {
   await scope.register(rateLimit, {
-    max: 20,
+    max: 30,
     timeWindow: "1 minute",
-    keyGenerator: (r) => (r as any).userId ?? r.ip,
+    keyGenerator: rateKey as any,
   });
   await scope.register(foodRoutes);
 }, { prefix: "/api/v1" });
@@ -86,6 +105,15 @@ await app.register(async (scope) => {
 await app.register(authRoutes, { prefix: "/api/v1" });
 await app.register(logRoutes, { prefix: "/api/v1" });
 await app.register(subRoutes, { prefix: "/api/v1" });
+
+// Coach and planner are AI-metered too, so they share the tighter bucket.
+await app.register(async (scope) => {
+  await scope.register(rateLimit, {
+    max: 30, timeWindow: "1 minute",
+    keyGenerator: rateKey as any,
+  });
+  await scope.register(premiumRoutes);
+}, { prefix: "/api/v1" });
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 assertProviderConfigured();

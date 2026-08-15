@@ -6,11 +6,12 @@ import { requireAuth } from "../middleware/auth.js";
 import { ai, ProviderError, type Usage } from "../ai/index.js";
 import { normaliseImage, pHash } from "../util/image.js";
 import { resolveFoods, searchFoods, type ResolvedItem } from "../nutrition/resolve.js";
+import { searchUsdaMany, usdaDetail, portion } from "../nutrition/usda.js";
 import { lookupBarcode } from "../nutrition/openfoodfacts.js";
 import {
-  reserveScan, settleReservation, releaseReservation, scanQuota,
+  reserve, settle, release, entitlementsFor,
   type Reservation,
-} from "../services/usage.js";
+} from "../services/entitlements.js";
 
 /** Every response carries `is_estimate` — never a medical-grade claim. */
 function envelope(items: ResolvedItem[], assumptions: string[], confidence: number) {
@@ -47,13 +48,13 @@ async function withReservation<T>(
   kind: string,
   work: (reservation: Reservation) => Promise<{ value: T; usages: Usage[]; cacheHit?: boolean }>
 ): Promise<T> {
-  const reservation = await reserveScan(req.userId, kind);
+  const reservation = await reserve(req.userId, kind);
   try {
     const { value, usages, cacheHit } = await work(reservation);
-    await settleReservation(reservation, req.userId, kind, ai.primary().name, usages, { cacheHit });
+    await settle(reservation, req.userId, kind, ai.primary().name, usages, { cacheHit });
     return value;
   } catch (e: any) {
-    await releaseReservation(reservation, e instanceof ProviderError ? e.usages : []);
+    await release(reservation, e instanceof ProviderError ? e.usages : []);
     throw e;
   }
 }
@@ -182,5 +183,101 @@ export default async function routes(app: FastifyInstance) {
     return { results: await searchFoods(term) };
   });
 
-  app.get("/usage", { preHandler: requireAuth }, async (req) => scanQuota(req.userId));
+  // Kept for the existing client; /entitlements is the richer replacement.
+  // ── USDA FoodData Central — free, no AI, no quota ────────────────────────
+  // Local curated table first (regional foods USDA covers poorly), then USDA.
+  app.get("/food/lookup", { preHandler: requireAuth }, async (req) => {
+    const { term, branded, limit } = z.object({
+      term: z.string().min(2).max(60),
+      branded: z.coerce.boolean().default(false),
+      limit: z.coerce.number().min(1).max(25).default(10),
+    }).parse(req.query);
+
+    const local = await searchFoods(term, limit);
+    let usda: any[] = [];
+    try {
+      usda = await searchUsdaMany(term, { limit, branded });
+    } catch (e: any) {
+      // A throttled USDA key must not break the picker; local results stand.
+      if (e?.code !== "usda_rate_limited") throw e;
+    }
+
+    return {
+      term,
+      results: [
+        ...local.map((f: any) => ({
+          id: f.id, source: "snapcal", name: f.name, brand: f.brand ?? null,
+          kcal_100g: f.kcal_100g, protein_100g: f.protein_100g,
+          carbs_100g: f.carbs_100g, fat_100g: f.fat_100g,
+          default_unit: f.default_unit, default_grams: f.default_grams,
+        })),
+        ...usda.map((f) => ({
+          id: null, fdc_id: f.fdc_id, source: "usda", name: f.name, brand: f.brand ?? null,
+          data_type: f.data_type,
+          kcal_100g: f.kcal_100g, protein_100g: f.protein_100g,
+          carbs_100g: f.carbs_100g, fat_100g: f.fat_100g,
+          fiber_100g: f.fiber_100g ?? null,
+          serving_size: f.serving_size ?? null, serving_unit: f.serving_unit ?? null,
+          household_serving: f.household_serving ?? null,
+          default_unit: f.serving_unit ?? "g",
+          default_grams: f.serving_size ?? 100,
+        })),
+      ],
+    };
+  });
+
+  /** Full detail plus macros scaled to a portion, ready to add to a meal. */
+  app.get("/food/usda/:fdcId", { preHandler: requireAuth }, async (req, reply) => {
+    const { fdcId } = z.object({ fdcId: z.string().regex(/^\d+$/) }).parse(req.params);
+    const { grams } = z.object({
+      grams: z.coerce.number().min(1).max(3000).optional(),
+    }).parse(req.query);
+
+    const food = await usdaDetail(fdcId);
+    if (!food) return reply.code(404).send({ error: "food_not_found", fdc_id: fdcId });
+
+    const g = grams ?? food.serving_size ?? 100;
+
+    // Cache into food_database so repeat lookups skip USDA entirely.
+    const cached = await one<{ id: string }>(
+      `INSERT INTO food_database (name, brand, source, source_ref, cuisine,
+                                  kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g,
+                                  default_unit, default_grams, serving_size, serving_unit,
+                                  household_serving, verified)
+       VALUES ($1,$2,'usda',$3,'global',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [food.name, food.brand ?? null, food.source_ref, food.kcal_100g, food.protein_100g,
+       food.carbs_100g, food.fat_100g, food.fiber_100g ?? null,
+       food.serving_unit ?? "g", food.serving_size ?? 100,
+       food.serving_size ?? null, food.serving_unit ?? null, food.household_serving ?? null]
+    );
+
+    return {
+      food_id: cached?.id ?? null,
+      fdc_id: Number(fdcId),
+      name: food.name,
+      brand: food.brand ?? null,
+      per_100g: {
+        calories: food.kcal_100g, protein_g: food.protein_100g,
+        carbs_g: food.carbs_100g, fat_g: food.fat_100g,
+        fiber_g: food.fiber_100g ?? null, sugar_g: food.sugar_100g ?? null,
+        sodium_mg: food.sodium_100g ?? null,
+      },
+      serving: {
+        size: food.serving_size ?? null,
+        unit: food.serving_unit ?? null,
+        household: food.household_serving ?? null,
+      },
+      portion: portion(food, g),
+      source: "usda",
+    };
+  });
+
+  app.get("/usage", { preHandler: requireAuth }, async (req) => {
+    const e = await entitlementsFor(req.userId);
+    const scan = e.features.food_scan;
+    return { plan: e.plan, used: scan.used, limit: scan.limit,
+             remaining: scan.remaining, resetsAt: e.periodEnd };
+  });
 }

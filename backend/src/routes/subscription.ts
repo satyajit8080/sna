@@ -4,7 +4,7 @@ import { decodeProtectedHeader, importX509, jwtVerify } from "jose";
 import { q, one } from "../db.js";
 import { cfg, adminUserIds } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
-import { planFor, scanQuota } from "../services/usage.js";
+import { entitlementsFor, subscriptionFor, invalidateLimitsCache } from "../services/entitlements.js";
 import { actual, projectionTable } from "../services/cost.js";
 
 /**
@@ -49,6 +49,15 @@ async function applyTransaction(userId: string, t: any) {
      t.offerType === 1 || t.offerDiscountType === "FREE_TRIAL"]
   );
 
+  if (active) {
+    // Upgrading starts a fresh period: the buyer should not inherit the free
+    // tier's spent allowance.
+    await q(`UPDATE subscriptions
+                SET period_start = now(),
+                    period_end = COALESCE($2, now() + interval '30 days')
+              WHERE user_id = $1`, [userId, expiresAt]);
+  }
+  invalidateLimitsCache();
   return { plan: active ? "pro" : "free", product_id: productId, expires_at: expiresAt };
 }
 
@@ -61,17 +70,17 @@ export default async function routes(app: FastifyInstance) {
   });
 
   app.get("/subscription", { preHandler: requireAuth }, async (req) => {
-    const [sub, quota] = await Promise.all([
+    const [sub, entitlements] = await Promise.all([
       one(`SELECT plan, product_id, expires_at, auto_renew, in_trial FROM subscriptions WHERE user_id = $1`, [req.userId]),
-      scanQuota(req.userId),
+      entitlementsFor(req.userId),
     ]);
     return {
       ...(sub ?? { plan: "free" }),
-      plan: await planFor(req.userId),
-      quota,
+      plan: entitlements.plan,
+      entitlements,
       products: {
-        monthly: { id: cfg.PRODUCT_MONTHLY, display: "$6.99 / month" },
-        yearly: { id: cfg.PRODUCT_YEARLY, display: "$39.99 / year" },
+        monthly: { id: cfg.PRODUCT_MONTHLY },
+        yearly: { id: cfg.PRODUCT_YEARLY },
       },
     };
   });

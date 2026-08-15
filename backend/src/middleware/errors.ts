@@ -16,9 +16,12 @@ export function registerErrorHandler(app: FastifyInstance) {
 
     reply.code(status).send({
       error: err.code ?? (status >= 500 ? "internal_error" : "bad_request"),
+      // Raw provider errors, stack traces and keys must never reach a client.
       message: status >= 500 && isProd ? "Something went wrong." : err.message,
       ...(err.quota ? { quota: err.quota } : {}),
       ...(err.feature ? { feature: err.feature } : {}),
+      ...(err.usage ? { usage: err.usage } : {}),
+      ...(err.reason ? { reason: err.reason } : {}),
     });
   });
 

@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { q, one, tx } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { localDate, daysAgo } from "../util/dates.js";
+import { localDate, daysAgo, nextLocalMidnight } from "../util/dates.js";
+import { activityFor } from "../services/activity.js";
 
 const Item = z.object({
   food_id: z.string().uuid().nullable().optional(),
@@ -138,9 +139,13 @@ export default async function routes(app: FastifyInstance) {
 
   // ── dashboard: one call, everything Home needs ────────────────────────────
   app.get("/dashboard", { preHandler: requireAuth }, async (req) => {
+    // The day boundary is the user's local midnight. `req.tz` comes from the
+    // X-Timezone header, falling back to the profile's stored zone — so the
+    // dashboard resets at midnight wherever they are, and a flight does not
+    // merge two days into one.
     const day = localDate(req.tz);
 
-    const [targets, totals, water, weight, streak] = await Promise.all([
+    const [targets, totals, water, weight, streak, activity] = await Promise.all([
       one(`SELECT calories, protein_g, carbs_g, fat_g, water_ml FROM nutrition_targets WHERE user_id = $1`, [req.userId]),
       one(`SELECT ${MACROS} FROM meals m JOIN meal_items i ON i.meal_id = m.id
             WHERE m.user_id = $1 AND m.logged_on = $2`, [req.userId, day]),
@@ -151,17 +156,33 @@ export default async function routes(app: FastifyInstance) {
          SELECT COUNT(*)::int AS n FROM (
            SELECT logged_on, logged_on + (ROW_NUMBER() OVER (ORDER BY logged_on DESC))::int AS grp FROM days
          ) t WHERE grp = (SELECT logged_on + 1 FROM days LIMIT 1)`, [req.userId]),
+      activityFor(req.userId, req.tz, day),
     ]);
 
     const consumed = totals ?? { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
     const t: any = targets ?? { calories: 2000, protein_g: 120, carbs_g: 220, fat_g: 60, water_ml: 2500 };
 
+    // Movement raises the day's allowance. `credited_kcal` is already
+    // discounted by the user's activity_credit setting, so adding it here
+    // cannot double-count what the target assumed.
+    const budget = t.calories + activity.credited_kcal;
+
     return {
       date: day,
+      timezone: req.tz,
+      // When this day rolls over, so the client can schedule its own refresh
+      // instead of polling.
+      resets_at: nextLocalMidnight(req.tz),
       targets: t,
       consumed,
+      activity,
+      budget: {
+        base_calories: t.calories,
+        activity_bonus: activity.credited_kcal,
+        total_calories: budget,
+      },
       remaining: {
-        calories: t.calories - (consumed.calories ?? 0),
+        calories: budget - (consumed.calories ?? 0),
         protein_g: t.protein_g - (consumed.protein_g ?? 0),
         carbs_g: t.carbs_g - (consumed.carbs_g ?? 0),
         fat_g: t.fat_g - (consumed.fat_g ?? 0),
