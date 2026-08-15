@@ -125,6 +125,30 @@ struct Targets: Codable, Hashable {
     var water_ml: Int
 }
 
+struct DashboardActivity: Codable, Hashable {
+    var steps: Int
+    var activeKcal: Int
+    var creditedKcal: Int
+    var exerciseMin: Int?
+    var kcalSource: String
+
+    enum CodingKeys: String, CodingKey {
+        case steps, activeKcal = "active_kcal", creditedKcal = "credited_kcal"
+        case exerciseMin = "exercise_min", kcalSource = "kcal_source"
+    }
+}
+
+struct DashboardBudget: Codable, Hashable {
+    var baseCalories: Int
+    var activityBonus: Int
+    var totalCalories: Int
+
+    enum CodingKeys: String, CodingKey {
+        case baseCalories = "base_calories", activityBonus = "activity_bonus"
+        case totalCalories = "total_calories"
+    }
+}
+
 struct Dashboard: Codable {
     var date: String
     var targets: Targets
@@ -134,9 +158,16 @@ struct Dashboard: Codable {
     var currentWeightKg: Double?
     var streakDays: Int
     var meals: [Meal]
+    var activity: DashboardActivity?
+    var budget: DashboardBudget?
+
+    /// Falls back to the plain target when the server predates the activity
+    /// fields, so an older build never divides by zero.
+    var budgetCalories: Int { budget?.totalCalories ?? targets.calories }
+    var activityBonus: Int { budget?.activityBonus ?? 0 }
 
     enum CodingKeys: String, CodingKey {
-        case date, targets, consumed, remaining, meals
+        case date, targets, consumed, remaining, meals, activity, budget
         case waterMl = "water_ml", currentWeightKg = "current_weight_kg", streakDays = "streak_days"
     }
 
@@ -175,12 +206,16 @@ struct Dashboard: Codable {
                              kcal100g: 130, protein100g: 2.7, carbs100g: 28, fat100g: 0.3,
                              confidence: 1, isEstimate: false),
                  ], note: nil, aiConfidence: nil),
-        ]
+        ],
+        activity: DashboardActivity(steps: 6200, activeKcal: 240, creditedKcal: 120,
+                                    exerciseMin: 22, kcalSource: "healthkit"),
+        budget: DashboardBudget(baseCalories: 2100, activityBonus: 0, totalCalories: 2100)
     )
 
     static let placeholder = Dashboard(
         date: "", targets: Targets(calories: 2000, protein_g: 140, carbs_g: 210, fat_g: 60, water_ml: 2500),
-        consumed: .zero, remaining: .zero, waterMl: 0, currentWeightKg: nil, streakDays: 0, meals: []
+        consumed: .zero, remaining: .zero, waterMl: 0, currentWeightKg: nil, streakDays: 0,
+        meals: [], activity: nil, budget: nil
     )
 }
 

@@ -148,11 +148,15 @@ workflows:
           [ -n "$SIM_ID" ] || { echo "No iOS simulator available on this image"; exit 1; }
           echo "Simulator: $SIM_ID"
 
+          # UI tests run on pull requests, not here: they add ~90s and are
+          # simulator-flaky, and a launch hiccup should not block a release
+          # whose unit tests all pass.
           xcodebuild \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
             -configuration Debug \
             -destination "id=$SIM_ID" \
+            -skip-testing:SnapCalUITests \
             CODE_SIGNING_ALLOWED=NO \
             test | $FORMATTER
 

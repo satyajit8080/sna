@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct SnapCalApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var app = AppState()
     @State private var store = SubscriptionManager()
     @State private var entitlements = EntitlementStore()
@@ -30,6 +31,16 @@ struct SnapCalApp: App {
                 }
                 .onOpenURL { url in
                     notifications.pendingDeeplink = url.absoluteString
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    // Steps move while the app is backgrounded. Re-sync on
+                    // return so the calorie budget and the coach's view of
+                    // "remaining" are current before the user reads them.
+                    guard phase == .active, app.phase == .ready, !app.isGuest else { return }
+                    Task {
+                        await health.syncToday(force: true)
+                        await app.refresh()
+                    }
                 }
         }
     }

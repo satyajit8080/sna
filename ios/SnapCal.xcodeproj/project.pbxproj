@@ -12,6 +12,7 @@
 		0D218423093A1EDF9877F917 /* LogFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DDB6BB913F33698197002C4 /* LogFlowView.swift */; };
 		136BFD0DD1D10E51D5AC1C6D /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD1A85386436132C2DEBEBB /* RootView.swift */; };
 		23B8A3B68DD7F1EEAED23120 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098B0A7475ED6BD5394CE249 /* NotificationService.swift */; };
+		29D6CF67AFD7C9C345416273 /* SuggestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D8BF47C81BA01D3A9E6C5DA /* SuggestionCard.swift */; };
 		37AA5A6937B7506FE8BB23FE /* BarcodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23A515D55189B2EDCF25408 /* BarcodeScannerView.swift */; };
 		384D2F8C69F6D3D42CE5FC8D /* NutritionMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43ABBB5E1D413BAAD2EF7265 /* NutritionMathTests.swift */; };
 		3A2B27F6D8D55F0437543174 /* CameraCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 217AA2E471DE72942A576B42 /* CameraCaptureView.swift */; };
@@ -73,6 +74,7 @@
 		7D80176967442EDFAA5BAD9B /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Theme.swift"; sourceTree = "<group>"; };
 		C23A515D55189B2EDCF25408 /* BarcodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BarcodeScannerView.swift"; sourceTree = "<group>"; };
 		4A82D5A53D8C939638ED0E0D /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CoachView.swift"; sourceTree = "<group>"; };
+		8D8BF47C81BA01D3A9E6C5DA /* SuggestionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SuggestionCard.swift"; sourceTree = "<group>"; };
 		CF60245C106E56ACFB1800FA /* ConfirmMealView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConfirmMealView.swift"; sourceTree = "<group>"; };
 		B8FD910563D48DD7EE1B0784 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DashboardView.swift"; sourceTree = "<group>"; };
 		C028B68F3247E08503691247 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DiaryView.swift"; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 			isa = PBXGroup;
 			children = (
 				4A82D5A53D8C939638ED0E0D /* CoachView.swift */,
+				8D8BF47C81BA01D3A9E6C5DA /* SuggestionCard.swift */,
 			);
 			path = "Coach";
 			sourceTree = "<group>";
@@ -533,6 +536,7 @@
 				810E446ACD3F8D8F8041590E /* Theme.swift in Sources */,
 				37AA5A6937B7506FE8BB23FE /* BarcodeScannerView.swift in Sources */,
 				E3AE1E9DA880189E64E84D29 /* CoachView.swift in Sources */,
+				29D6CF67AFD7C9C345416273 /* SuggestionCard.swift in Sources */,
 				D8E82869F7B8C5E4AF04BC96 /* ConfirmMealView.swift in Sources */,
 				EB9633292F7FF87E24453AFA /* DashboardView.swift in Sources */,
 				5602F9018620934328230811 /* DiaryView.swift in Sources */,

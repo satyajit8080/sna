@@ -122,6 +122,15 @@ struct MealPlannerView: View {
     private func planList(_ plan: MealPlan) -> some View {
         VStack(spacing: 0) {
             List {
+                if plan.isRestOfDay, let budget = plan.budgetKcal {
+                    Section {
+                        Label("Planned around your remaining \(budget) cal today",
+                              systemImage: "clock.arrow.circlepath")
+                            .font(.caption_)
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+
                 if let note = plan.note, !note.isEmpty {
                     Section { Text(note).font(.caption_).foregroundStyle(.secondary) }
                 }
@@ -213,23 +222,14 @@ struct MealPlannerView: View {
 
     /// Logs a planned meal straight into the diary — no second AI call, the
     /// macros are already known.
+    /// Macros are already known from the plan, so this never calls the AI.
     private func log(_ meal: PlannedMeal) {
-        guard app.requireAccount(for: "save meals") else { return }
         let slot = MealSlot(rawValue: meal.slot) ?? .snack
-        let item = meal.asFoodItem
         loggedMeals.insert(meal.id)
-        app.applyLocally([item], slot: slot)
 
         Task {
-            do {
-                _ = try await APIClient.shared.saveMeal(
-                    slot: slot, method: "manual", items: [item], confidence: nil)
-                await app.refresh()
-                Haptics.success()
-            } catch {
-                loggedMeals.remove(meal.id)
-                await app.refresh()
-            }
+            let ok = await app.logKnownItem(meal.asFoodItem, slot: slot)
+            if !ok { loggedMeals.remove(meal.id) }
         }
     }
 }

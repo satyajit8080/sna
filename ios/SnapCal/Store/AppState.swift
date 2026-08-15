@@ -65,6 +65,29 @@ final class AppState {
         return false
     }
 
+    /// Logs an already-priced item (coach suggestion or planned meal).
+    ///
+    /// Macros are known, so this never touches the AI. The ring moves
+    /// immediately from the optimistic update and reconciles on refresh.
+    @discardableResult
+    func logKnownItem(_ item: FoodItem, slot: MealSlot, method: String = "manual") async -> Bool {
+        guard requireAccount(for: "save meals") else { return false }
+
+        applyLocally([item], slot: slot)
+        do {
+            _ = try await APIClient.shared.saveMeal(
+                slot: slot, method: method, items: [item], confidence: nil)
+            await refresh()
+            Haptics.success()
+            return true
+        } catch {
+            // Roll the optimistic update back rather than leaving the ring wrong.
+            await refresh()
+            banner = (error as? APIError)?.errorDescription ?? "Couldn't save that."
+            return false
+        }
+    }
+
     func bootstrap() async {
         guard await APIClient.shared.token != nil else { phase = .welcome; return }
         do {

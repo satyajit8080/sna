@@ -6,6 +6,7 @@ struct DashboardView: View {
     @Environment(EntitlementStore.self) private var entitlements
 
     @State private var route: LogRoute?
+    @State private var suggestion: MealSuggestion?
     @State private var showPaywall = false
     @State private var showMoreOptions = false
 
@@ -16,11 +17,36 @@ struct DashboardView: View {
                     VStack(spacing: Theme.Space.l) {
                         CalorieRing(
                             consumed: app.dashboard.consumed.calories,
-                            target: app.dashboard.targets.calories
+                            // Budget, not base target: activity raises the ring.
+                            target: app.dashboard.budgetCalories
                         )
                         .padding(.top, Theme.Space.s)
 
                         MacroBars(consumed: app.dashboard.consumed, targets: app.dashboard.targets)
+
+                        // Explains why the allowance moved after a walk.
+                        if app.dashboard.activityBonus > 0 {
+                            HStack(spacing: Theme.Space.s) {
+                                Image(systemName: "figure.walk").foregroundStyle(Theme.accent)
+                                Text("\(app.dashboard.activity?.steps ?? 0) steps")
+                                    .font(.system(size: 14, weight: .medium))
+                                Spacer()
+                                Text("+\(app.dashboard.activityBonus) cal earned")
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            .card()
+                        }
+
+                        if let suggestion {
+                            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                                Text("What to eat next")
+                                    .font(.system(size: 15, weight: .semibold))
+                                SuggestionCard(suggestion: suggestion) {
+                                    Task { await loadSuggestion() }
+                                }
+                            }
+                        }
 
                         ForEach(MealSlot.allCases) { slot in
                             MealSection(
@@ -44,7 +70,16 @@ struct DashboardView: View {
                     }
                     .padding(.horizontal, Theme.Space.m)
                 }
-                .refreshable { await app.refresh() }
+                .refreshable {
+                    await app.refresh()
+                    await loadSuggestion()
+                }
+                .task { await loadSuggestion() }
+                .onChange(of: app.dashboard.consumed.calories) { _, _ in
+                    // Totals moved — the old suggestion was priced against a
+                    // budget that no longer exists.
+                    Task { await loadSuggestion() }
+                }
 
                 scanCTA
             }
@@ -124,6 +159,12 @@ struct DashboardView: View {
                 .allowsHitTesting(false),
             alignment: .bottom
         )
+    }
+
+    private func loadSuggestion() async {
+        guard !app.isGuest else { return }
+        let fresh = try? await APIClient.shared.nextMealSuggestion()
+        withAnimation(Theme.snap) { suggestion = fresh?.suggestion }
     }
 
     private func start(_ mode: LogMode, slot: MealSlot? = nil) {

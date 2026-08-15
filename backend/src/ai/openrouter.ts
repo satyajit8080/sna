@@ -85,7 +85,7 @@ export async function chat(messages: ChatMessage[], maxTokens = 60): Promise<Ope
       throw new ProviderError("openrouter_not_configured", [], false, 503);
     }
     return {
-      text: "You have room left today — a bowl of dal with two rotis keeps you on target.",
+      text: "You have room left — grilled chicken with rice keeps you on target.",
       usage: {
         model: "mock", inputTokens: 0, cachedTokens: 0, outputTokens: 0,
         costUsd: 0, latencyMs: 15, escalated: false,

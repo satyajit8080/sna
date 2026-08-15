@@ -55,9 +55,12 @@ final class HealthService {
     }
 
     /// Pulls today's totals and pushes them to the backend, which is where the
-    /// coach and weekly report read from. Safe to call often; it is cheap and
-    /// the backend upsert is idempotent.
-    func syncToday() async {
+    /// coach, planner and weekly report read from. Safe to call often; it is
+    /// cheap and the backend upsert is idempotent.
+    ///
+    /// `force` skips the unchanged-since-last-sync guard — used when the app
+    /// returns to the foreground, where steps have almost certainly moved.
+    func syncToday(force: Bool = false) async {
         guard isAvailable, isConnected else { return }
 
         let start = Calendar.current.startOfDay(for: .now)
@@ -74,7 +77,7 @@ final class HealthService {
         )
 
         // Don't spend a request when nothing has moved.
-        guard activity != today else { return }
+        guard force || activity != today else { return }
         today = activity
 
         do {

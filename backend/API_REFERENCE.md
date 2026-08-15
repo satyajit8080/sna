@@ -133,6 +133,10 @@ One call for the whole Home screen.
 instant of their next local midnight. Schedule a refresh at that instant rather
 than polling. Correct across DST and half-hour offsets.
 
+**The coach and the dashboard now agree.** `/coach/*` computes remaining
+against the same activity-adjusted budget, so a walk that raises the ring also
+raises what the coach says is left.
+
 **Activity affects the ring.** Draw progress against
 `budget.total_calories`, not `targets.calories`. `remaining.calories` already
 accounts for it. If `activity_bonus > 0`, showing "+160 from activity" explains
@@ -328,6 +332,37 @@ the answers specific.
 
 Free tier: **2 questions per billing period**, then 402.
 
+**`suggestion`** — a concrete next meal resolved from the nutrition database,
+returned alongside the answer:
+
+```json
+{
+  "answer": "Yes — you have 900 left, chicken is 248.",
+  "suggestion": {
+    "food_id": "uuid", "name": "grilled chicken breast", "slot": "dinner",
+    "grams": 150, "quantity": 1, "unit": "serving",
+    "kcal_100g": 165, "protein_100g": 31, "carbs_100g": 0, "fat_100g": 3.6,
+    "calories": 248, "protein_g": 47, "carbs_g": 0, "fat_g": 5,
+    "reason": "47g protein, fits your 900 kcal left"
+  },
+  "entitlements": { }
+}
+```
+
+Not a second AI call — the macros are exact, so "Add to Diary" posts straight
+to `POST /meals` with no confirmation step. `null` when under ~120 kcal remain.
+Respects allergies, dislikes, vegetarian/vegan, foods already eaten today, and
+the user's country for cuisine.
+
+### `GET /coach/suggestion` — free, no AI, no quota
+```json
+{ "suggestion": { /* as above, or null */ },
+  "remaining": { "calories": 900, "protein_g": 62, "carbs_g": 90, "fat_g": 20 },
+  "budget": 2250 }
+```
+Safe on every dashboard refresh. Use it to keep the Coach screen useful once
+the AI allowance is spent.
+
 ### `GET /coach/history` → last 40 messages, oldest first
 ### `GET /coach/suggestions` → `{ suggestions: ["Can I eat this?", ...] }`
 Free, no AI call. Use to fill the empty state.
@@ -337,6 +372,15 @@ Free, no AI call. Use to fill the empty state.
 ## Meal Planner — Premium only
 
 ### `POST /meal-plan` → `{ "span": "day" | "week" }`
+
+A `day` plan requested after the user has already eaten covers only what is
+**left** of today. The response says which:
+
+```json
+{ "planned_for": "remaining_today", "budget_kcal": 900 }
+```
+`full_day` otherwise. Weekly plans are always `full_day` — later days start
+empty. Label the UI accordingly; "Today's plan" is misleading at 4pm.
 ```json
 {
   "id": "uuid", "span": "day", "starts_on": "2026-08-15",
