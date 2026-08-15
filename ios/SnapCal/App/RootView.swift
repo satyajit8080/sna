@@ -26,6 +26,7 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    @Environment(AppState.self) private var app
     @Environment(EntitlementStore.self) private var entitlements
     @Environment(NotificationService.self) private var notifications
 
@@ -33,6 +34,7 @@ struct MainTabs: View {
 
     var body: some View {
         @Bindable var entitlements = entitlements
+        @Bindable var app = app
 
         TabView(selection: $tab) {
             Tab("Home", systemImage: "circle.circle.fill", value: 0) { DashboardView() }
@@ -46,6 +48,12 @@ struct MainTabs: View {
         // setting a context, and the copy follows the blocked feature.
         .sheet(item: $entitlements.pendingPaywall) { context in
             PaywallView(context: context, source: context.rawValue)
+        }
+        // One host for the guest sign-up prompt: any screen can raise it by
+        // calling app.requireAccount(for:).
+        .sheet(item: $app.guestPromptFeature) { feature in
+            SignInPromptView(feature: feature)
+                .presentationDetents([.height(420)])
         }
         .onChange(of: notifications.pendingDeeplink) { _, link in
             guard let link else { return }
