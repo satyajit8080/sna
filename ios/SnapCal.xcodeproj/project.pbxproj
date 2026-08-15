@@ -18,6 +18,7 @@
 		4419F66B9CC939CBE1F04394 /* SubscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4510BFFE580F76787E8182ED /* SubscriptionManager.swift */; };
 		471D248C81DC62152E49EF0F /* OnboardingFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7FA4143272759FA567DF7C /* OnboardingFlow.swift */; };
 		5602F9018620934328230811 /* DiaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C028B68F3247E08503691247 /* DiaryView.swift */; };
+		5EDB72ED70472116CA8BBFCA /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32E25871917A3FACCFEBC13D /* AuthView.swift */; };
 		7A63BC8FD5F0BBBD6C90B94E /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA44F6BD29A7628F0D60711 /* APIClient.swift */; };
 		810E446ACD3F8D8F8041590E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D80176967442EDFAA5BAD9B /* Theme.swift */; };
 		8656772768C879974B03B2A6 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE3335BD9405CA758AE54E2 /* NotificationSettingsView.swift */; };
@@ -80,6 +81,7 @@
 		A11B043588156633133CA4B4 /* MealPlannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MealPlannerView.swift"; sourceTree = "<group>"; };
 		098B0A7475ED6BD5394CE249 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationService.swift"; sourceTree = "<group>"; };
 		6AE3335BD9405CA758AE54E2 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationSettingsView.swift"; sourceTree = "<group>"; };
+		32E25871917A3FACCFEBC13D /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AuthView.swift"; sourceTree = "<group>"; };
 		9E7FA4143272759FA567DF7C /* OnboardingFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OnboardingFlow.swift"; sourceTree = "<group>"; };
 		43483FF4D3A2F040B59D952A /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WelcomeView.swift"; sourceTree = "<group>"; };
 		305411C8EBEFBE43F7147CAC /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PaywallView.swift"; sourceTree = "<group>"; };
@@ -265,6 +267,7 @@
 		3D152FD1425BA53E5CA49D04 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
+				32E25871917A3FACCFEBC13D /* AuthView.swift */,
 				9E7FA4143272759FA567DF7C /* OnboardingFlow.swift */,
 				43483FF4D3A2F040B59D952A /* WelcomeView.swift */,
 			);
@@ -538,6 +541,7 @@
 				AE90860930CFB441C7FC309B /* MealPlannerView.swift in Sources */,
 				23B8A3B68DD7F1EEAED23120 /* NotificationService.swift in Sources */,
 				8656772768C879974B03B2A6 /* NotificationSettingsView.swift in Sources */,
+				5EDB72ED70472116CA8BBFCA /* AuthView.swift in Sources */,
 				471D248C81DC62152E49EF0F /* OnboardingFlow.swift in Sources */,
 				EB3466F5039C4D3195960141 /* WelcomeView.swift in Sources */,
 				FA5252D463EF04BE09DCD392 /* PaywallView.swift in Sources */,
