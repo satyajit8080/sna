@@ -37,6 +37,7 @@ struct CoachView: View {
             }
             .task {
                 Analytics.track(.coachOpened)
+                guard !app.isGuest else { return }
                 messages = (try? await APIClient.shared.coachHistory()) ?? []
                 suggestions = (try? await APIClient.shared.coachSuggestions()) ?? []
             }
@@ -175,6 +176,7 @@ struct CoachView: View {
     private func send(_ text: String) {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard question.count >= 2, !thinking else { return }
+        guard app.requireAccount(for: "ask your coach") else { return }
 
         draft = ""
         focused = false
