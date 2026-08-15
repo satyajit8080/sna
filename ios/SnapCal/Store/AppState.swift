@@ -19,6 +19,11 @@ final class AppState {
 
     /// Set when a guest taps something that needs an account; drives the sheet.
     var guestPromptFeature: String?
+
+    /// Items with a save in flight. A double tap on "Add to Diary" would
+    /// otherwise POST twice and double-count the calories — the optimistic
+    /// ring update makes the second tap look plausible.
+    private var inFlightLogs = Set<String>()
     var dashboard: Dashboard = .placeholder
     var quota: Quota?
     var isRefreshing = false
@@ -72,6 +77,13 @@ final class AppState {
     @discardableResult
     func logKnownItem(_ item: FoodItem, slot: MealSlot, method: String = "manual") async -> Bool {
         guard requireAccount(for: "save meals") else { return false }
+
+        // Keyed on identity, portion and slot: logging the same food twice
+        // deliberately is fine, but only once the first save has landed.
+        let key = "\(item.foodId ?? item.name)|\(slot.rawValue)|\(Int(item.grams))"
+        guard !inFlightLogs.contains(key) else { return false }
+        inFlightLogs.insert(key)
+        defer { inFlightLogs.remove(key) }
 
         applyLocally([item], slot: slot)
         do {
