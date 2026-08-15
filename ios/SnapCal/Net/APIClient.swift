@@ -3,6 +3,8 @@ import UIKit
 
 enum APIError: LocalizedError, Equatable {
     case unauthorized
+    case emailTaken
+    case invalidCredentials
     case premiumRequired(PremiumRequired)
     case scanLimitReached(used: Int, limit: Int)
     case proRequired(feature: String)
@@ -14,6 +16,8 @@ enum APIError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unauthorized:        "Please sign in again."
+        case .emailTaken:          "That email already has an account. Try signing in."
+        case .invalidCredentials:  "That email and password don't match."
         case .premiumRequired:     "This needs Premium."
         case .scanLimitReached:    "You've used your free scans this week."
         case .proRequired:         "This is a Pro feature."
@@ -110,6 +114,8 @@ actor APIClient {
 
         let body = try? decoder.decode(ErrorBody.self, from: data)
         switch (http.statusCode, body?.error) {
+        case (409, "email_taken"):            throw APIError.emailTaken
+        case (401, "invalid_credentials"):    throw APIError.invalidCredentials
         case (401, _):                        throw APIError.unauthorized
         case (402, "PREMIUM_REQUIRED"):
             throw APIError.premiumRequired(PremiumRequired(
@@ -141,6 +147,22 @@ actor APIClient {
     func signInWithApple(identityToken: String, name: String?) async throws -> AuthResponse {
         struct Body: Encodable { let identity_token: String; let name: String? }
         let res = try await post("auth/apple", Body(identity_token: identityToken, name: name), as: AuthResponse.self)
+        setToken(res.token)
+        return res
+    }
+
+    /// Email sign-up. Reuses the existing /auth/signup endpoint and the same
+    /// JWT the Apple path issues — one auth system, two front doors.
+    func signUp(email: String, password: String) async throws -> AuthResponse {
+        struct Body: Encodable { let email: String; let password: String }
+        let res = try await post("auth/signup", Body(email: email, password: password), as: AuthResponse.self)
+        setToken(res.token)
+        return res
+    }
+
+    func signIn(email: String, password: String) async throws -> AuthResponse {
+        struct Body: Encodable { let email: String; let password: String }
+        let res = try await post("auth/login", Body(email: email, password: password), as: AuthResponse.self)
         setToken(res.token)
         return res
     }
