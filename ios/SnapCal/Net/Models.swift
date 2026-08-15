@@ -63,6 +63,11 @@ struct AnalysisResponse: Codable {
     }
 }
 
+/// Lets a plain String drive `.sheet(item:)` for the guest prompt.
+extension String: @retroactive Identifiable {
+    public var id: String { self }
+}
+
 // MARK: - Dashboard
 
 enum MealSlot: String, Codable, CaseIterable, Identifiable {
@@ -134,6 +139,44 @@ struct Dashboard: Codable {
         case date, targets, consumed, remaining, meals
         case waterMl = "water_ml", currentWeightKg = "current_weight_kg", streakDays = "streak_days"
     }
+
+    /// Read-only sample shown in guest mode. North American meals, realistic
+    /// numbers — the point is to show what a used app looks like.
+    static let guestSample = Dashboard(
+        date: "", targets: Targets(calories: 2100, protein_g: 150, carbs_g: 230, fat_g: 65, water_ml: 2500),
+        consumed: MacroTotal(calories: 1240, protein_g: 88, carbs_g: 121, fat_g: 42),
+        remaining: MacroTotal(calories: 860, protein_g: 62, carbs_g: 109, fat_g: 23),
+        waterMl: 1500, currentWeightKg: 78.5, streakDays: 4,
+        meals: [
+            Meal(id: "sample-1", slot: .breakfast, calories: 335, protein_g: 20, carbs_g: 38, fat_g: 11,
+                 items: [
+                    FoodItem(foodId: nil, name: "Scrambled eggs", quantity: 2, unit: "egg", grams: 110,
+                             kcal100g: 141, protein100g: 10, carbs100g: 1.5, fat100g: 10.5,
+                             confidence: 1, isEstimate: false),
+                    FoodItem(foodId: nil, name: "Oatmeal", quantity: 1, unit: "bowl", grams: 220,
+                             kcal100g: 84, protein100g: 3, carbs100g: 15, fat100g: 1.7,
+                             confidence: 1, isEstimate: false),
+                 ], note: nil, aiConfidence: nil),
+            Meal(id: "sample-2", slot: .lunch, calories: 520, protein_g: 41, carbs_g: 44, fat_g: 18,
+                 items: [
+                    FoodItem(foodId: nil, name: "Turkey sandwich", quantity: 1, unit: "sandwich", grams: 240,
+                             kcal100g: 175, protein100g: 13, carbs100g: 18, fat100g: 6,
+                             confidence: 1, isEstimate: false),
+                    FoodItem(foodId: nil, name: "Side salad", quantity: 1, unit: "bowl", grams: 120,
+                             kcal100g: 83, protein100g: 2, carbs100g: 4, fat100g: 6.5,
+                             confidence: 1, isEstimate: false),
+                 ], note: nil, aiConfidence: nil),
+            Meal(id: "sample-3", slot: .dinner, calories: 385, protein_g: 27, carbs_g: 39, fat_g: 13,
+                 items: [
+                    FoodItem(foodId: nil, name: "Grilled chicken", quantity: 1, unit: "breast", grams: 130,
+                             kcal100g: 165, protein100g: 31, carbs100g: 0, fat100g: 3.6,
+                             confidence: 1, isEstimate: false),
+                    FoodItem(foodId: nil, name: "Rice", quantity: 1, unit: "cup", grams: 150,
+                             kcal100g: 130, protein100g: 2.7, carbs100g: 28, fat100g: 0.3,
+                             confidence: 1, isEstimate: false),
+                 ], note: nil, aiConfidence: nil),
+        ]
+    )
 
     static let placeholder = Dashboard(
         date: "", targets: Targets(calories: 2000, protein_g: 140, carbs_g: 210, fat_g: 60, water_ml: 2500),
