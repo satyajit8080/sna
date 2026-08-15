@@ -6,13 +6,14 @@ struct TextLogView: View {
     @State private var text = ""
     @FocusState private var focused: Bool
 
-    /// Locale-aware examples — an Indian user should see food they recognise.
+    /// North American examples by default. The parser handles every cuisine —
+    /// these are only the prompts, and a first-run user should see food they
+    /// already eat. Other regions surface only when the device locale says so.
     private var examples: [String] {
         switch Locale.current.region?.identifier {
-        case "IN": ["2 rotis, dal and bhindi sabzi", "masala dosa with sambar", "2 idlis and coconut chutney"]
-        case "GB": ["beans on toast and a flat white", "chicken tikka masala with rice", "full english breakfast"]
-        case "AU": ["flat white and avocado toast", "chicken parma with chips", "meat pie"]
-        default:   ["2 eggs, toast and black coffee", "chipotle chicken bowl", "greek yogurt with berries"]
+        case "GB": ["beans on toast and a flat white", "roast chicken with potatoes", "full english breakfast"]
+        case "AU": ["flat white and avocado toast", "chicken parma with chips", "steak and salad"]
+        default:   ["2 eggs, toast and black coffee", "grilled chicken salad", "greek yogurt with berries"]
         }
     }
 
