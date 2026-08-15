@@ -257,3 +257,93 @@ struct NotificationPrefsTests {
         #expect(re == p)
     }
 }
+
+/// First-run localisation. The food database handles every cuisine; these
+/// assert that the *visible* first-run examples are North American, so a
+/// cold-start user in Ohio recognises the first plate they see.
+struct LocalizationTests {
+
+    private static let indiaSpecific = [
+        "roti", "chapati", "dal", "paneer", "poha", "idli", "dosa",
+        "sabzi", "bhindi", "thali", "katori", "samosa", "biryani",
+    ]
+
+    @Test("guest sample day uses North American foods only")
+    func guestSampleIsNorthAmerican() {
+        let names = Dashboard.guestSample.meals
+            .flatMap(\.items)
+            .map { $0.name.lowercased() }
+
+        #expect(!names.isEmpty)
+        for term in Self.indiaSpecific {
+            #expect(!names.contains { $0.contains(term) },
+                    "guest sample must not surface '\(term)' on first run")
+        }
+        #expect(names.contains { $0.contains("chicken") || $0.contains("eggs") || $0.contains("sandwich") })
+    }
+
+    @Test("guest sample is a realistic part-eaten day, not an empty shell")
+    func guestSampleIsPopulated() {
+        let sample = Dashboard.guestSample
+        #expect(sample.meals.count >= 3)
+        #expect(sample.consumed.calories > 0)
+        #expect(sample.remaining.calories > 0, "should still have room left")
+        #expect(sample.consumed.calories + sample.remaining.calories == sample.targets.calories)
+    }
+}
+
+struct GuestModeTests {
+
+    @MainActor
+    @Test("entering guest mode shows the app without a token")
+    func enterGuest() async {
+        let app = AppState()
+        app.enterGuestMode()
+
+        #expect(app.isGuest)
+        #expect(app.phase == .ready)
+        #expect(app.dashboard.meals.count >= 3, "guests see sample content, not an empty app")
+    }
+
+    @MainActor
+    @Test("guest actions requiring a server raise the sign-up prompt")
+    func guestGating() async {
+        let app = AppState()
+        app.enterGuestMode()
+
+        #expect(app.requireAccount(for: "save your meals") == false)
+        #expect(app.guestPromptFeature == "save your meals")
+    }
+
+    @MainActor
+    @Test("an authenticated user is never gated")
+    func authenticatedNotGated() async {
+        let app = AppState()
+        #expect(app.isGuest == false)
+        #expect(app.requireAccount(for: "save your meals") == true)
+        #expect(app.guestPromptFeature == nil)
+    }
+
+    @MainActor
+    @Test("leaving guest mode clears the prompt")
+    func leaveGuest() async {
+        let app = AppState()
+        app.enterGuestMode()
+        _ = app.requireAccount(for: "ask your coach")
+        app.leaveGuestMode()
+
+        #expect(app.isGuest == false)
+        #expect(app.guestPromptFeature == nil)
+    }
+
+    @MainActor
+    @Test("signing out returns to the welcome screen and clears guest state")
+    func signOutResets() async {
+        let app = AppState()
+        app.enterGuestMode()
+        await app.signOut()
+
+        #expect(app.isGuest == false)
+        #expect(app.phase == .welcome)
+    }
+}
