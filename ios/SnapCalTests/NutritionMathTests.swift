@@ -347,3 +347,101 @@ struct GuestModeTests {
         #expect(app.phase == .welcome)
     }
 }
+
+/// The connected loop: scan → activity → coach → plan → log → dashboard.
+struct LoopTests {
+
+    @Test("dashboard ring tracks the activity-adjusted budget, not the base target")
+    func ringUsesBudget() throws {
+        let json = """
+        {"date":"2026-08-15","timezone":"America/New_York","resets_at":"2026-08-16T04:00:00Z",
+         "targets":{"calories":2000,"protein_g":150,"carbs_g":220,"fat_g":60,"water_ml":2500},
+         "consumed":{"calories":800,"protein_g":60,"carbs_g":80,"fat_g":25},
+         "activity":{"steps":12000,"active_kcal":500,"credited_kcal":250,
+                     "exercise_min":40,"kcal_source":"healthkit"},
+         "budget":{"base_calories":2000,"activity_bonus":250,"total_calories":2250},
+         "remaining":{"calories":1450,"protein_g":90,"carbs_g":140,"fat_g":35},
+         "water_ml":1000,"current_weight_kg":80.0,"streak_days":3,"meals":[]}
+        """.data(using: .utf8)!
+
+        let d = try JSONDecoder().decode(Dashboard.self, from: json)
+        #expect(d.budgetCalories == 2250, "ring must use the adjusted budget")
+        #expect(d.activityBonus == 250)
+        #expect(d.activity?.steps == 12000)
+        // Remaining is budget minus consumed, not target minus consumed.
+        #expect(d.remaining.calories == d.budgetCalories - d.consumed.calories)
+    }
+
+    @Test("an older server response without activity still decodes")
+    func backwardCompatible() throws {
+        let json = """
+        {"date":"2026-08-15",
+         "targets":{"calories":2000,"protein_g":150,"carbs_g":220,"fat_g":60,"water_ml":2500},
+         "consumed":{"calories":800,"protein_g":60,"carbs_g":80,"fat_g":25},
+         "remaining":{"calories":1200,"protein_g":90,"carbs_g":140,"fat_g":35},
+         "water_ml":1000,"current_weight_kg":80.0,"streak_days":3,"meals":[]}
+        """.data(using: .utf8)!
+
+        let d = try JSONDecoder().decode(Dashboard.self, from: json)
+        #expect(d.budgetCalories == 2000, "falls back to the plain target")
+        #expect(d.activityBonus == 0)
+    }
+
+    @Test("a coach suggestion converts to a diary item with identical macros")
+    func suggestionRoundTrip() throws {
+        let json = """
+        {"food_id":"abc","name":"grilled chicken breast","slot":"dinner",
+         "grams":150,"quantity":1,"unit":"serving",
+         "kcal_100g":165,"protein_100g":31,"carbs_100g":0,"fat_100g":3.6,
+         "calories":248,"protein_g":47,"carbs_g":0,"fat_g":5,
+         "reason":"47g protein, fits your 900 kcal left"}
+        """.data(using: .utf8)!
+
+        let s = try JSONDecoder().decode(MealSuggestion.self, from: json)
+        let item = s.asFoodItem
+
+        // What the card shows must equal what the diary saves.
+        #expect(item.calories == s.calories)
+        #expect(item.protein == s.protein_g)
+        #expect(item.grams == s.grams)
+        #expect(item.isEstimate == false, "database macros are exact, not estimates")
+        #expect(item.foodId == "abc")
+    }
+
+    @Test("coach answer decodes with and without a suggestion")
+    func coachAnswerDecoding() throws {
+        let withSuggestion = """
+        {"answer":"Yes — you have 900 left, chicken is 248.",
+         "suggestion":{"food_id":"abc","name":"chicken","slot":"dinner","grams":150,
+           "quantity":1,"unit":"serving","kcal_100g":165,"protein_100g":31,
+           "carbs_100g":0,"fat_100g":3.6,"calories":248,"protein_g":47,
+           "carbs_g":0,"fat_g":5,"reason":"fits"},
+         "entitlements":{"plan":"pro","periodStart":"","periodEnd":"","features":{}}}
+        """.data(using: .utf8)!
+
+        let a = try JSONDecoder().decode(CoachAnswer.self, from: withSuggestion)
+        #expect(a.suggestion != nil)
+        #expect(a.answer.split(separator: "\n").count == 1, "coach stays one line")
+
+        let without = """
+        {"answer":"You're done for today.","suggestion":null,
+         "entitlements":{"plan":"free","periodStart":"","periodEnd":"","features":{}}}
+        """.data(using: .utf8)!
+        #expect(try JSONDecoder().decode(CoachAnswer.self, from: without).suggestion == nil)
+    }
+
+    @Test("meal plan reports whether it covers the rest of today")
+    func planScope() throws {
+        let restOfDay = """
+        {"days":[],"note":"n","planned_for":"remaining_today","budget_kcal":900}
+        """.data(using: .utf8)!
+        let plan = try JSONDecoder().decode(MealPlan.self, from: restOfDay)
+        #expect(plan.isRestOfDay)
+        #expect(plan.budgetKcal == 900)
+
+        let fullDay = """
+        {"days":[],"note":"n","planned_for":"full_day","budget_kcal":2000}
+        """.data(using: .utf8)!
+        #expect(try JSONDecoder().decode(MealPlan.self, from: fullDay).isRestOfDay == false)
+    }
+}

@@ -310,6 +310,11 @@ actor APIClient {
         return try await post("meal-plan", Body(span: span), as: MealPlan.self)
     }
 
+    /// Free, no AI, no quota — safe to call on every dashboard refresh.
+    func nextMealSuggestion() async throws -> SuggestionResponse {
+        try await get("coach/suggestion", as: SuggestionResponse.self)
+    }
+
     func latestMealPlan() async throws -> MealPlan { try await get("meal-plan/latest", as: MealPlan.self) }
 
     func weeklyReport() async throws -> WeeklyReport { try await get("reports/weekly", as: WeeklyReport.self) }

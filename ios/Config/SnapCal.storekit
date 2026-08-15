@@ -1,74 +1,77 @@
 {
-  "identifier" : "snapcal-products",
-  "nonRenewingSubscriptions" : [],
-  "products" : [],
-  "settings" : {
-    "_applicationInternalID" : "snapcal",
-    "_developerTeamID" : "",
-    "_failTransactionsEnabled" : false,
-    "_lastSynchronizedDate" : 0,
-    "_locale" : "en_US",
-    "_storefront" : "USA",
-    "_storeKitErrors" : []
+  "identifier": "snapcal-products",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_applicationInternalID": "snapcal",
+    "_developerTeamID": "",
+    "_failTransactionsEnabled": false,
+    "_lastSynchronizedDate": 0,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": []
   },
-  "subscriptionGroups" : [
+  "subscriptionGroups": [
     {
-      "id" : "21451234",
-      "localizations" : [],
-      "name" : "SnapCal Pro",
-      "subscriptions" : [
+      "id": "21451234",
+      "localizations": [],
+      "name": "SnapCal Pro",
+      "subscriptions": [
         {
-          "adHocOffers" : [],
-          "codeOffers" : [],
-          "displayPrice" : "6.99",
-          "familyShareable" : false,
-          "groupNumber" : 1,
-          "internalID" : "21451235",
-          "introductoryOffer" : {
-            "internalID" : "21451236",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "15.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "21451235",
+          "introductoryOffer": {
+            "internalID": "21451236",
+            "paymentMode": "free",
+            "subscriptionPeriod": "P3D"
           },
-          "localizations" : [
+          "localizations": [
             {
-              "description" : "Unlimited AI scans, barcode and voice logging.",
-              "displayName" : "Pro Monthly",
-              "locale" : "en_US"
+              "description": "Unlimited AI scans, coach and meal plans.",
+              "displayName": "Pro Monthly",
+              "locale": "en_US"
             }
           ],
-          "productID" : "app.snapcal.pro.monthly",
-          "recurringSubscriptionPeriod" : "P1M",
-          "referenceName" : "Pro Monthly",
-          "subscriptionGroupID" : "21451234",
-          "type" : "RecurringSubscription"
+          "productID": "app.snapcal.pro.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pro Monthly",
+          "subscriptionGroupID": "21451234",
+          "type": "RecurringSubscription"
         },
         {
-          "adHocOffers" : [],
-          "codeOffers" : [],
-          "displayPrice" : "39.99",
-          "familyShareable" : false,
-          "groupNumber" : 1,
-          "internalID" : "21451237",
-          "introductoryOffer" : {
-            "internalID" : "21451238",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P7D"
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "99.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "21451237",
+          "introductoryOffer": {
+            "internalID": "21451238",
+            "paymentMode": "free",
+            "subscriptionPeriod": "P7D"
           },
-          "localizations" : [
+          "localizations": [
             {
-              "description" : "Unlimited AI scans, barcode and voice logging. Best value.",
-              "displayName" : "Pro Yearly",
-              "locale" : "en_US"
+              "description": "Unlimited AI scans, barcode and voice logging. Best value.",
+              "displayName": "Pro Yearly",
+              "locale": "en_US"
             }
           ],
-          "productID" : "app.snapcal.pro.yearly",
-          "recurringSubscriptionPeriod" : "P1Y",
-          "referenceName" : "Pro Yearly",
-          "subscriptionGroupID" : "21451234",
-          "type" : "RecurringSubscription"
+          "productID": "app.snapcal.pro.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Pro Yearly",
+          "subscriptionGroupID": "21451234",
+          "type": "RecurringSubscription"
         }
       ]
     }
   ],
-  "version" : { "major" : 4, "minor" : 0 }
+  "version": {
+    "major": 4,
+    "minor": 0
+  }
 }

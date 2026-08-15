@@ -4,6 +4,7 @@ import { costUsd } from "../ai/pricing.js";
 import { parseJson } from "../util/json.js";
 import { ProviderError, type Usage } from "../ai/types.js";
 import { localDate } from "../util/dates.js";
+import { activityFor } from "./activity.js";
 
 /**
  * Compact snapshot of everything the coach or planner may reason about.
@@ -13,14 +14,20 @@ import { localDate } from "../util/dates.js";
 export type CoachContext = {
   name?: string;
   goal?: string;
+  /** ISO country from the profile; steers cuisine defaults. */
+  country?: string;
   currentWeightKg?: number;
   goalWeightKg?: number;
   weightChangeKg?: number;
   targets?: { calories: number; protein_g: number; carbs_g: number; fat_g: number };
   today?: { calories: number; protein_g: number; carbs_g: number; fat_g: number };
-  remaining?: { calories: number; protein_g: number };
+  /** Activity-adjusted. This is the number the coach and planner must use. */
+  remaining?: { calories: number; protein_g: number; carbs_g: number; fat_g: number };
+  /** Base target + credited activity. */
+  budget?: number;
   steps?: number;
   activeKcal?: number;
+  creditedKcal?: number;
   recentMeals: string[];
   streakDays: number;
   avgCalories7d?: number;
@@ -30,8 +37,8 @@ export type CoachContext = {
 export async function buildContext(userId: string, tz: string): Promise<CoachContext> {
   const day = localDate(tz);
 
-  const [profile, targets, today, weights, health, meals, avg, prefs, streak] = await Promise.all([
-    one<any>(`SELECT name, goal, goal_weight_kg, start_weight_kg FROM profiles WHERE user_id = $1`, [userId]),
+  const [profile, targets, today, weights, activity, meals, avg, prefs, streak] = await Promise.all([
+    one<any>(`SELECT name, goal, goal_weight_kg, start_weight_kg, country FROM profiles WHERE user_id = $1`, [userId]),
     one<any>(`SELECT calories, protein_g, carbs_g, fat_g FROM nutrition_targets WHERE user_id = $1`, [userId]),
     one<any>(`SELECT ROUND(SUM(i.grams * i.kcal_100g    / 100))::int AS calories,
                      ROUND(SUM(i.grams * i.protein_100g / 100))::int AS protein_g,
@@ -40,7 +47,7 @@ export async function buildContext(userId: string, tz: string): Promise<CoachCon
                 FROM meals m JOIN meal_items i ON i.meal_id = m.id
                WHERE m.user_id = $1 AND m.logged_on = $2`, [userId, day]),
     q<any>(`SELECT weight_kg FROM weight_logs WHERE user_id = $1 ORDER BY logged_on DESC LIMIT 14`, [userId]),
-    one<any>(`SELECT steps, active_kcal FROM health_daily WHERE user_id = $1 AND logged_on = $2`, [userId, day]),
+    activityFor(userId, tz, day),
     q<any>(`SELECT DISTINCT i.name FROM meals m JOIN meal_items i ON i.meal_id = m.id
              WHERE m.user_id = $1 ORDER BY i.name LIMIT 12`, [userId]),
     one<any>(`SELECT ROUND(AVG(d.cal))::int AS avg FROM (
@@ -59,17 +66,26 @@ export async function buildContext(userId: string, tz: string): Promise<CoachCon
   return {
     name: profile?.name,
     goal: profile?.goal,
+    country: profile?.country ?? undefined,
     currentWeightKg: current,
     goalWeightKg: profile?.goal_weight_kg,
     weightChangeKg: current != null && start != null ? Math.round((current - start) * 10) / 10 : undefined,
     targets: targets ?? undefined,
     today: today ?? undefined,
+    // Movement raises the allowance, so remaining must be computed against the
+    // activity-adjusted budget — not the base target. Using the base here was
+    // why the coach could say "you have 200 left" while the dashboard showed
+    // 400 after a walk.
+    budget: targets ? targets.calories + activity.credited_kcal : undefined,
     remaining: targets ? {
-      calories: targets.calories - (today?.calories ?? 0),
+      calories: targets.calories + activity.credited_kcal - (today?.calories ?? 0),
       protein_g: targets.protein_g - (today?.protein_g ?? 0),
+      carbs_g: targets.carbs_g - (today?.carbs_g ?? 0),
+      fat_g: targets.fat_g - (today?.fat_g ?? 0),
     } : undefined,
-    steps: health?.steps ?? undefined,
-    activeKcal: health?.active_kcal ?? undefined,
+    steps: activity.steps || undefined,
+    activeKcal: activity.active_kcal || undefined,
+    creditedKcal: activity.credited_kcal || undefined,
     recentMeals: meals.map((m: any) => m.name),
     streakDays: streak?.n ?? 0,
     avgCalories7d: avg?.avg ?? undefined,
@@ -96,11 +112,11 @@ export async function complete(
     return {
       text: opts.json
         ? JSON.stringify({ days: [{ date: new Date().toISOString().slice(0, 10), meals: [
-            { slot: "breakfast", name: "Poha", grams: 180, kcal: 279, protein_g: 5, carbs_g: 47, fat_g: 8 },
-            { slot: "lunch", name: "Roti", grams: 90, kcal: 238, protein_g: 8, carbs_g: 44, fat_g: 3 },
-            { slot: "dinner", name: "Dal tadka", grams: 150, kcal: 177, protein_g: 9, carbs_g: 23, fat_g: 5 },
+            { slot: "breakfast", name: "Oatmeal with berries", grams: 300, kcal: 290, protein_g: 9, carbs_g: 52, fat_g: 6 },
+            { slot: "lunch", name: "Turkey sandwich", grams: 240, kcal: 420, protein_g: 31, carbs_g: 44, fat_g: 14 },
+            { slot: "dinner", name: "Grilled chicken with rice", grams: 320, kcal: 480, protein_g: 42, carbs_g: 48, fat_g: 11 },
           ] }], note: "Balanced around your protein target." })
-        : "You have room left today. A bowl of dal with two rotis keeps you on target and adds protein.",
+        : "You have room left today. Grilled chicken with rice keeps you on target and adds protein.",
       usage: { model: "mock", inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 20, escalated: false },
     };
   }

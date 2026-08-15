@@ -570,3 +570,246 @@ test("food lookup returns local results even when USDA is unavailable", async ()
   assert.ok(local, "curated regional foods must always be searchable");
   assert.equal(local.default_unit, "roti");
 });
+
+// ─── the connected loop: scan → activity → coach → plan → log → dashboard ───
+
+test("full loop: logging + activity move the coach's remaining calories", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`loop-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Loop", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric" } });
+
+    const base = await api("/dashboard");
+    const target = base.json.targets.calories;
+    assert.equal(base.json.remaining.calories, target, "fresh day starts at target");
+
+    // ── 1. Log a scanned meal ────────────────────────────────────────────
+    await api("/meals", { method: "POST", body: {
+      slot: "lunch", input_method: "photo", ai_confidence: 0.9,
+      items: [{ name: "grilled chicken", quantity: 1, unit: "serving", grams: 200,
+                kcal_100g: 165, protein_100g: 31, carbs_100g: 0, fat_100g: 3.6,
+                is_estimate: true }] } });
+
+    const afterMeal = await api("/dashboard");
+    assert.equal(afterMeal.json.consumed.calories, 330, "scan must move the real totals");
+    assert.equal(afterMeal.json.remaining.calories, target - 330);
+
+    // ── 2. HealthKit activity raises the budget ──────────────────────────
+    await api("/health/daily", { method: "POST", body: { steps: 12000, active_kcal: 500 } });
+
+    const afterSteps = await api("/dashboard");
+    assert.equal(afterSteps.json.budget.activity_bonus, 250, "50% of 500 credited");
+    assert.equal(afterSteps.json.remaining.calories, target + 250 - 330,
+      "activity must feed the remaining budget");
+
+    // ── 3. The coach sees the SAME number the dashboard shows ────────────
+    const coach = await api("/coach/ask", { method: "POST", body: { question: "What should I eat next?" } });
+    assert.equal(coach.status, 200);
+    assert.ok(coach.json.answer.length > 0);
+    // One line, per the coach design.
+    assert.equal(coach.json.answer.split("\n").length, 1);
+
+    const ctx = await api("/coach/suggestion");
+    assert.equal(ctx.json.remaining.calories, afterSteps.json.remaining.calories,
+      "coach context and dashboard must never disagree");
+
+    // ── 4. Suggestion fits the remaining budget and is loggable ──────────
+    const suggestion = ctx.json.suggestion;
+    assert.ok(suggestion, "a suggestion should exist with calories left");
+    assert.ok(suggestion.calories <= ctx.json.remaining.calories,
+      "must never suggest an overshoot");
+    assert.ok(suggestion.food_id && suggestion.kcal_100g > 0,
+      "must carry per-100g macros so logging needs no second AI call");
+
+    // ── 5. One-tap log of the suggestion ─────────────────────────────────
+    const logged = await api("/meals", { method: "POST", body: {
+      slot: suggestion.slot, input_method: "manual",
+      items: [{ food_id: suggestion.food_id, name: suggestion.name,
+                quantity: suggestion.quantity, unit: suggestion.unit,
+                grams: suggestion.grams, kcal_100g: suggestion.kcal_100g,
+                protein_100g: suggestion.protein_100g,
+                carbs_100g: suggestion.carbs_100g, fat_100g: suggestion.fat_100g,
+                is_estimate: false }] } });
+    assert.equal(logged.status, 200);
+
+    // ── 6. Dashboard reflects it immediately ─────────────────────────────
+    const final = await api("/dashboard");
+    assert.equal(final.json.consumed.calories, 330 + suggestion.calories,
+      "logging a suggestion must update the diary totals");
+    assert.equal(final.json.meals.length, 2);
+  } finally { token = saved; }
+});
+
+test("meal planner plans the REST of today, not a fresh full day", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`plan-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Plan", birth_year: 1992, sex: "female", height_cm: 166,
+      start_weight_kg: 68, goal_weight_kg: 62, goal: "lose",
+      activity_level: "light", units: "metric" } });
+
+    const fresh = await api("/meal-plan", { method: "POST", body: { span: "day" } });
+    assert.equal(fresh.json.planned_for, "full_day", "empty day plans the whole day");
+
+    await api("/meals", { method: "POST", body: {
+      slot: "breakfast", input_method: "manual",
+      items: [{ name: "oatmeal", quantity: 1, unit: "bowl", grams: 300,
+                kcal_100g: 84, protein_100g: 3, carbs_100g: 15, fat_100g: 1.7,
+                is_estimate: false }] } });
+
+    const after = await api("/meal-plan", { method: "POST", body: { span: "day" } });
+    assert.equal(after.json.planned_for, "remaining_today",
+      "after eating, the plan must cover only what's left");
+    assert.ok(after.json.budget_kcal < fresh.json.budget_kcal,
+      "the planning budget must shrink by what was eaten");
+
+    // Weekly plans still use the full daily budget — later days start empty.
+    const week = await api("/meal-plan", { method: "POST", body: { span: "week" } });
+    assert.equal(week.json.planned_for, "full_day");
+  } finally { token = saved; }
+});
+
+test("suggestions respect allergies, diet and what was already eaten", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`pref-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Pref", birth_year: 1990, sex: "male", height_cm: 175,
+      start_weight_kg: 80, goal_weight_kg: 74, goal: "lose",
+      activity_level: "light", units: "metric" } });
+
+    await api("/preferences", { method: "PUT", body: {
+      diet: "vegetarian", cuisines: [], dislikes: [], allergies: ["peanut"] } });
+
+    const { json } = await api("/coach/suggestion");
+    if (json.suggestion) {
+      const name = json.suggestion.name.toLowerCase();
+      for (const meat of ["chicken", "beef", "steak", "pork", "fish", "salmon", "turkey"]) {
+        assert.ok(!name.includes(meat), `vegetarian suggestion must not be ${meat}`);
+      }
+      assert.ok(!name.includes("peanut"), "must never suggest an allergen");
+    }
+  } finally { token = saved; }
+});
+
+test("no suggestion once the budget is spent", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`full-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Full", birth_year: 1990, sex: "male", height_cm: 175,
+      start_weight_kg: 80, goal_weight_kg: 74, goal: "lose",
+      activity_level: "light", units: "metric" } });
+
+    // Eat the entire day.
+    await api("/meals", { method: "POST", body: {
+      slot: "dinner", input_method: "manual",
+      items: [{ name: "large meal", quantity: 1, unit: "serving", grams: 1000,
+                kcal_100g: 300, protein_100g: 10, carbs_100g: 30, fat_100g: 12,
+                is_estimate: false }] } });
+
+    const { json } = await api("/coach/suggestion");
+    assert.equal(json.suggestion, null, "must not suggest food with no budget left");
+  } finally { token = saved; }
+});
+
+test("suggestions follow the user's region, not the whole database", async () => {
+  async function userIn(country) {
+    const { rows } = await db.query(
+      `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+      [`geo-${country}-${Date.now()}@snapcal.test`]);
+    const uid = rows[0].id;
+    await db.query(
+      `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+      [uid]);
+    const { SignJWT } = await import("jose");
+    return new SignJWT({ sub: uid })
+      .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+      .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+  }
+
+  const saved = token;
+  const indiaOnly = ["roti", "dal", "paneer", "poha", "idli", "dosa", "sabzi", "bhindi", "biryani"];
+
+  try {
+    for (const country of ["US", "CA"]) {
+      token = await userIn(country);
+      await api("/profile", { method: "POST", body: {
+        name: "Geo", birth_year: 1992, sex: "male", height_cm: 180,
+        start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+        activity_level: "light", units: "metric", country } });
+
+      const { json } = await api("/coach/suggestion");
+      assert.ok(json.suggestion, `${country}: expected a suggestion`);
+      const name = json.suggestion.name.toLowerCase();
+      for (const term of indiaOnly) {
+        assert.ok(!name.includes(term),
+          `${country} user must not be suggested "${json.suggestion.name}"`);
+      }
+    }
+
+    // An explicit preference still wins over the country default.
+    token = await userIn("US");
+    await api("/profile", { method: "POST", body: {
+      name: "Geo", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+    await api("/preferences", { method: "PUT", body: {
+      diet: null, cuisines: ["indian"], dislikes: [], allergies: [] } });
+
+    const { json } = await api("/coach/suggestion");
+    assert.ok(json.suggestion, "explicit cuisine preference should still resolve");
+  } finally { token = saved; }
+});

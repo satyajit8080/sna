@@ -7,6 +7,7 @@ import { ai, ProviderError, type Usage } from "../ai/index.js";
 import { COACH_SYSTEM, MEAL_PLAN_SYSTEM } from "../ai/prompts.js";
 import { buildContext, complete, parseJson } from "../services/coachContext.js";
 import { chat, cheapestModels } from "../ai/openrouter.js";
+import { suggestNextMeal } from "../services/suggest.js";
 import { activityFor, recordActivity, activityHistory } from "../services/activity.js";
 import {
   entitlementsFor, reserve, settle, release, subscriptionFor,
@@ -88,10 +89,28 @@ export default async function routes(app: FastifyInstance) {
       await q(`INSERT INTO coach_messages (user_id, role, content) VALUES ($1,'user',$2), ($1,'assistant',$3)`,
         [req.userId, question, reply]);
 
-      return { value: { answer: reply }, usages: [usage] };
+      // Resolved from the nutrition database, not a second model call: the
+      // macros are exact, so the client can log it in one tap with no
+      // confirmation round-trip and no extra cost.
+      const suggestion = await suggestNextMeal(req.userId, req.tz, context);
+
+      return { value: { answer: reply, suggestion }, usages: [usage] };
     });
 
     return { ...answer, entitlements: await entitlementsFor(req.userId) };
+  });
+
+  /**
+   * Next-meal suggestion with no AI call and no quota cost. Lets the dashboard
+   * and an exhausted-allowance coach screen still be useful.
+   */
+  app.get("/coach/suggestion", { preHandler: requireAuth }, async (req) => {
+    const context = await buildContext(req.userId, req.tz);
+    return {
+      suggestion: await suggestNextMeal(req.userId, req.tz, context),
+      remaining: context.remaining ?? null,
+      budget: context.budget ?? null,
+    };
   });
 
   app.get("/coach/history", { preHandler: requireAuth }, async (req) => ({
@@ -123,11 +142,26 @@ export default async function routes(app: FastifyInstance) {
       const days = span === "week" ? 7 : 1;
       const start = localDate(req.tz);
 
+      // A day plan built mid-afternoon must cover what's LEFT, not a fresh
+      // 2,000 kcal on top of lunch. Weekly plans use the full daily budget
+      // because every day after today starts empty.
+      const remainingKcal = context.remaining?.calories ?? context.targets?.calories ?? 2000;
+      const remainingProtein = context.remaining?.protein_g ?? context.targets?.protein_g ?? 120;
+      const alreadyEaten = context.today?.calories ?? 0;
+      const planningRestOfDay = span === "day" && alreadyEaten > 0;
+
+      const budgetLine = planningRestOfDay
+        ? `They have already eaten ${alreadyEaten} kcal today. Plan ONLY the remaining meals, totalling about ${remainingKcal} kcal and ${remainingProtein} g protein.`
+        : `Daily target: ${context.targets?.calories ?? 2000} kcal, ${context.targets?.protein_g ?? 120} g protein.`;
+
       const prompt = [
         `Context: ${JSON.stringify(context)}`,
         `Build a ${days}-day plan starting ${start}.`,
-        `Daily target: ${context.targets?.calories ?? 2000} kcal, ${context.targets?.protein_g ?? 120} g protein.`,
-      ].join("\n");
+        budgetLine,
+        context.preferences?.allergies?.length
+          ? `ALLERGIES — never include: ${context.preferences.allergies.join(", ")}.`
+          : "",
+      ].filter(Boolean).join("\n");
 
       const { text, usage } = await complete(MEAL_PLAN_SYSTEM, prompt, {
         json: true, maxTokens: span === "week" ? 1600 : 400,
@@ -143,7 +177,16 @@ export default async function routes(app: FastifyInstance) {
         `INSERT INTO meal_plans (user_id, span, starts_on, plan) VALUES ($1,$2,$3,$4) RETURNING id`,
         [req.userId, span, start, JSON.stringify(parsed)]);
 
-      return { value: { id: saved!.id, span, starts_on: start, ...parsed }, usages: [usage] };
+      return {
+        value: {
+          id: saved!.id, span, starts_on: start,
+          // So the client can label it "rest of today" rather than "today".
+          planned_for: planningRestOfDay ? "remaining_today" : "full_day",
+          budget_kcal: planningRestOfDay ? remainingKcal : context.targets?.calories ?? 2000,
+          ...parsed,
+        },
+        usages: [usage],
+      };
     });
 
     return { ...plan, entitlements: await entitlementsFor(req.userId) };

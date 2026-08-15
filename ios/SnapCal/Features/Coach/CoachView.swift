@@ -8,6 +8,7 @@ struct CoachView: View {
     @State private var suggestions: [String] = []
     @State private var draft = ""
     @State private var thinking = false
+    @State private var suggestion: MealSuggestion?
     @State private var error: String?
     @FocusState private var focused: Bool
 
@@ -40,6 +41,9 @@ struct CoachView: View {
                 guard !app.isGuest else { return }
                 messages = (try? await APIClient.shared.coachHistory()) ?? []
                 suggestions = (try? await APIClient.shared.coachSuggestions()) ?? []
+                // Free and quota-less, so the screen is useful even with the
+                // AI allowance spent.
+                await refreshSuggestion()
             }
             .alert("Coach unavailable", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
@@ -115,6 +119,15 @@ struct CoachView: View {
                         .id(message.id)
                     }
 
+                    if let suggestion {
+                        SuggestionCard(suggestion: suggestion) {
+                            // Once logged, the numbers behind it are stale.
+                            withAnimation(Theme.snap) { self.suggestion = nil }
+                            Task { await refreshSuggestion() }
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+
                     if thinking {
                         HStack {
                             ProgressView().controlSize(.small)
@@ -173,6 +186,12 @@ struct CoachView: View {
         .background(.bar)
     }
 
+    private func refreshSuggestion() async {
+        guard !app.isGuest else { return }
+        let fresh = try? await APIClient.shared.nextMealSuggestion()
+        withAnimation(Theme.snap) { suggestion = fresh?.suggestion }
+    }
+
     private func send(_ text: String) {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard question.count >= 2, !thinking else { return }
@@ -192,6 +211,7 @@ struct CoachView: View {
                 let result = try await APIClient.shared.askCoach(question)
                 withAnimation(Theme.snap) {
                     messages.append(CoachMessage(role: "assistant", content: result.answer))
+                    suggestion = result.suggestion
                 }
                 await entitlements.refresh()
                 Haptics.success()
