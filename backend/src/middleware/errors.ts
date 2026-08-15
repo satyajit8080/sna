@@ -11,7 +11,15 @@ export function registerErrorHandler(app: FastifyInstance) {
 
     if (status >= 500) {
       // Never log request bodies — they contain food images and health data.
-      req.log.error({ err: err.message, url: req.url, status }, "request failed");
+      // Provider status/body IS logged: it is the only way to tell a bad model
+      // name from a bad key, and it contains no user data.
+      req.log.error({
+        err: err.message,
+        url: req.url,
+        status,
+        providerStatus: err.providerStatus,
+        providerBody: err.providerBody,
+      }, "request failed");
     }
 
     reply.code(status).send({
