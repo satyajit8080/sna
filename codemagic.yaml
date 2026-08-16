@@ -32,6 +32,7 @@ workflows:
       - name: Validate the Xcode project before spending build minutes
         script: |
           python3 ios/tools/validate_xcodeproj.py
+          python3 ios/tools/lint_swift.py
 
       - name: Backend typecheck and build
         script: |
@@ -92,6 +93,7 @@ workflows:
       - name: Validate project structure
         script: |
           python3 ios/tools/validate_xcodeproj.py
+          python3 ios/tools/lint_swift.py
 
       - name: Guard against shipping a development API URL
         script: |
