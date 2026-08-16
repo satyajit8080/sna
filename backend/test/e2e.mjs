@@ -813,3 +813,265 @@ test("suggestions follow the user's region, not the whole database", async () =>
     assert.ok(json.suggestion, "explicit cuisine preference should still resolve");
   } finally { token = saved; }
 });
+
+// ─── release hardening: one calorie calculation, everywhere ────────────────
+
+test("dashboard, coach and planner never disagree on remaining calories", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`agree-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Agree", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    // Exercise the formula at several points, including before any activity
+    // and after a partial day.
+    const states = [
+      { meal: null, steps: 0, kcal: 0 },
+      { meal: 400, steps: 6000, kcal: 0 },
+      { meal: 500, steps: 12000, kcal: 500 },
+    ];
+
+    for (const state of states) {
+      if (state.meal) {
+        await api("/meals", { method: "POST", body: {
+          slot: "snack", input_method: "manual",
+          items: [{ name: `filler ${state.meal}`, quantity: 1, unit: "serving",
+                    grams: 100, kcal_100g: state.meal, protein_100g: 5,
+                    carbs_100g: 10, fat_100g: 3, is_estimate: false }] } });
+      }
+      if (state.steps) {
+        await api("/health/daily", { method: "POST",
+          body: { steps: state.steps, active_kcal: state.kcal } });
+      }
+
+      const dash = await api("/dashboard");
+      const coach = await api("/coach/suggestion");
+      const plan = await api("/meal-plan", { method: "POST", body: { span: "day" } });
+
+      // remaining = base_target + credited_activity − consumed
+      const expected = dash.json.budget.base_calories
+                     + dash.json.budget.activity_bonus
+                     - dash.json.consumed.calories;
+
+      assert.equal(dash.json.remaining.calories, expected, "dashboard formula");
+      assert.equal(dash.json.budget.total_calories,
+        dash.json.budget.base_calories + dash.json.budget.activity_bonus);
+      assert.equal(coach.json.remaining.calories, expected, "coach must match dashboard");
+      assert.equal(coach.json.budget, dash.json.budget.total_calories, "budget must match");
+
+      if (plan.json.planned_for === "remaining_today") {
+        assert.equal(plan.json.budget_kcal, expected, "planner must match dashboard");
+      }
+    }
+  } finally { token = saved; }
+});
+
+test("activity credit never inflates protein, carbs or fat targets", async () => {
+  const { dailyBalance } = await import("../dist/services/budget.js");
+
+  const b = dailyBalance(
+    { calories: 2000, protein_g: 150, carbs_g: 220, fat_g: 60 },
+    { calories: 500, protein_g: 40, carbs_g: 50, fat_g: 15 },
+    { credited_kcal: 300 }
+  );
+
+  assert.equal(b.budget.total_calories, 2300);
+  assert.equal(b.remaining.calories, 1800);
+  // Walking further does not mean you need more protein.
+  assert.equal(b.remaining.protein_g, 110);
+  assert.equal(b.remaining.carbs_g, 170);
+  assert.equal(b.remaining.fat_g, 45);
+});
+
+test("budget handles missing targets, consumption and activity", async () => {
+  const { dailyBalance, DEFAULT_TARGETS } = await import("../dist/services/budget.js");
+
+  const empty = dailyBalance(null, null, null);
+  assert.equal(empty.budget.activity_bonus, 0);
+  assert.equal(empty.remaining.calories, DEFAULT_TARGETS.calories);
+
+  // A negative credit would be a bug upstream; it must not reduce the budget.
+  const negative = dailyBalance({ calories: 2000 }, null, { credited_kcal: -500 });
+  assert.equal(negative.budget.activity_bonus, 0);
+  assert.equal(negative.remaining.calories, 2000);
+});
+
+test("over-eating produces a negative remaining, not a clamped zero", async () => {
+  const { dailyBalance } = await import("../dist/services/budget.js");
+  const b = dailyBalance({ calories: 2000 }, { calories: 2600 }, { credited_kcal: 100 });
+  assert.equal(b.remaining.calories, -500, "the ring needs the real overshoot");
+});
+
+// ─── bug fixes: suggestion variety, coach grounding ────────────────────────
+
+test("suggestions vary instead of repeating the highest-protein food", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`vary-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Vary", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    const seen = new Set();
+    for (let i = 0; i < 6; i++) {
+      const { json } = await api("/coach/suggestion");
+      if (json.suggestion) seen.add(json.suggestion.name.toLowerCase());
+    }
+
+    assert.ok(seen.size >= 2,
+      `expected variety across six requests, always got: ${[...seen].join(", ")}`);
+  } finally { token = saved; }
+});
+
+test("a suggested food is not suggested again immediately", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`norepeat-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "NoRepeat", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    const first = (await api("/coach/suggestion")).json.suggestion;
+    assert.ok(first);
+
+    const logged = await db.query(
+      `SELECT food_name FROM suggestion_log WHERE user_id = $1`, [uid]);
+    assert.equal(logged.rows.length, 1, "suggestion must be recorded");
+    assert.equal(logged.rows[0].food_name, first.name.toLowerCase());
+
+    // Across several more requests the first pick should not dominate.
+    const names = [];
+    for (let i = 0; i < 5; i++) {
+      const s = (await api("/coach/suggestion")).json.suggestion;
+      if (s) names.push(s.name.toLowerCase());
+    }
+    assert.ok(!names.every((n) => n === first.name.toLowerCase()),
+      "recently suggested food must not repeat every time");
+  } finally { token = saved; }
+});
+
+test("coach context carries the actual meals logged today", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`ground-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Ground", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    await api("/meals", { method: "POST", body: {
+      slot: "breakfast", input_method: "photo",
+      items: [{ name: "scrambled eggs", quantity: 2, unit: "egg", grams: 110,
+                kcal_100g: 141, protein_100g: 10, carbs_100g: 1.5, fat_100g: 10.5,
+                is_estimate: true }] } });
+
+    const { status, json } = await api("/coach/ask", {
+      method: "POST", body: { question: "What did I eat today?" } });
+
+    assert.equal(status, 200);
+    // At most two sentences, per the coach design.
+    const sentences = json.answer.split(/(?<=[.!?])\s+/).filter(Boolean);
+    assert.ok(sentences.length <= 2, `expected ≤2 sentences, got ${sentences.length}`);
+    assert.ok(json.answer.length <= 260);
+  } finally { token = saved; }
+});
+
+test("insight reflects an empty day rather than inventing progress", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`empty-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Empty", birth_year: 1992, sex: "female", height_cm: 165,
+      start_weight_kg: 70, goal_weight_kg: 64, goal: "lose",
+      activity_level: "light", units: "metric", country: "CA" } });
+
+    const { json } = await api("/coach/insight");
+    assert.match(json.insight, /nothing logged/i,
+      "an empty day must say so, not fabricate progress");
+  } finally { token = saved; }
+});
+
+test("health sync accepts distance and reflects it", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`dist-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  const { status, json } = await api("/health/daily", {
+    method: "POST", body: { steps: 9200, active_kcal: 380, exercise_min: 25, distance_m: 6800 } });
+  token = saved;
+
+  assert.equal(status, 200);
+  assert.equal(json.steps, 9200);
+  assert.equal(json.distance_m, 6800);
+  assert.equal(json.credited_kcal, 190);
+});
