@@ -59,6 +59,34 @@ def check_closures(path: Path, src: str) -> None:
             fail(f"{path.name}:{i}: Decimal price mixed with an integer literal")
 
 
+def check_import_placement(path: Path, src: str) -> None:
+    """
+    `import` may only appear before the first declaration.
+
+    A stray `import` appended to the end of a file — the usual result of a
+    paste landing after the closing brace — is a syntax error the compiler
+    reports as "consecutive statements on a line", which reads as unrelated to
+    the real problem.
+    """
+    lines = src.split("\n")
+    first_decl = None
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*(struct|class|enum|extension|func|@main|actor|protocol)\b", line):
+            first_decl = i
+            break
+    if first_decl is None:
+        return
+
+    for i, line in enumerate(lines[first_decl:], start=first_decl + 1):
+        if re.match(r"^\s*@?\w*\s*import\s+\w", line) and "//" not in line.split("import")[0]:
+            fail(f"{path.name}:{i}: import after the first declaration — "
+                 f"almost always a paste landing past the end of the file")
+
+    # Anything glued to the final closing brace.
+    if re.search(r"\}\s*import\s", src):
+        fail(f"{path.name}: `import` glued to a closing brace")
+
+
 def check_swiftui_import(path: Path, src: str) -> None:
     if "View {" in src and "import SwiftUI" not in src:
         fail(f"{path.name}: uses View without importing SwiftUI")
@@ -132,6 +160,7 @@ for path in APP:
     check_dismiss(path, src)
     check_closures(path, src)
     check_swiftui_import(path, src)
+    check_import_placement(path, src)
     check_no_fabricated_food(path, src)
 
 # Test fixtures may name any food — they are never rendered to a user.
