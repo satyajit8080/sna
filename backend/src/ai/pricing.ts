@@ -3,6 +3,10 @@
  * Cached input bills at 10% of standard input on both OpenAI and Google.
  */
 export const PRICING: Record<string, { in: number; out: number }> = {
+  // Broadly available fallbacks.
+  "gpt-4o":      { in: 2.50, out: 10.00 },
+  "gpt-4o-mini": { in: 0.15, out: 0.60 },
+
   // OpenAI — GPT-5.6 family (GA 2026-07-09, Terra/Luna price cut 2026-07-30)
   "gpt-5.6-luna":  { in: 0.20, out: 1.20 },
   "gpt-5.6-terra": { in: 2.00, out: 12.00 },
