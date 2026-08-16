@@ -9,6 +9,7 @@ import { COACH_SYSTEM, MEAL_PLAN_SYSTEM } from "../ai/prompts.js";
 import { buildContext, complete, parseJson } from "../services/coachContext.js";
 import { chat, cheapestModels } from "../ai/openrouter.js";
 import { suggestNextMeal } from "../services/suggest.js";
+import { classify, isOnTopic, answerContainsRefusal } from "../services/coachIntent.js";
 import { activityFor, recordActivity, activityHistory } from "../services/activity.js";
 import {
   entitlementsFor, reserve, settle, release, subscriptionFor,
@@ -88,8 +89,25 @@ export default async function routes(app: FastifyInstance) {
         allergies: context.preferences?.allergies ?? [],
       };
 
+      const intent = classify(question);
+      const onTopic = isOnTopic(question);
+
+      // A short, explicit instruction per turn beats hoping the system prompt
+      // covers every phrasing.
+      const steer =
+        !onTopic
+          ? "This question is not about food, nutrition, activity or progress. Say in one short sentence that you can only help with those. Do NOT mention their calories."
+        : intent === "recommendation"
+          ? "The user is asking for a food recommendation. Name one specific food and say in a few words why it fits their remaining calories or protein. Do NOT ask them to scan or search anything."
+        : intent === "analysis"
+          ? "The user is asking about food they have eaten. Use meals_today. If the food is not there, say it needs scanning or searching."
+        : intent === "progress"
+          ? "The user is asking about their progress. Answer using their numbers."
+          : "Answer briefly and practically.";
+
       const messages = [
         { role: "system" as const, content: COACH_SYSTEM },
+        { role: "system" as const, content: steer },
         ...prior.reverse().map((m) => ({
           role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
           content: m.content,
@@ -113,12 +131,17 @@ export default async function routes(app: FastifyInstance) {
       await q(`INSERT INTO coach_messages (user_id, role, content) VALUES ($1,'user',$2), ($1,'assistant',$3)`,
         [req.userId, question, reply]);
 
-      // Resolved from the nutrition database, not a second model call: the
-      // macros are exact, so the client can log it in one tap with no
-      // confirmation round-trip and no extra cost.
-      const suggestion = await suggestNextMeal(req.userId, req.tz, context);
+      // A card only when the user asked for one AND the answer actually made a
+      // recommendation. Showing "Maple Glazed Salmon" under the words "I'll
+      // need the food scanned first" is the contradiction this prevents.
+      const shouldSuggest =
+        onTopic && intent === "recommendation" && !answerContainsRefusal(reply);
 
-      return { value: { answer: reply, suggestion }, usages: [usage] };
+      const suggestion = shouldSuggest
+        ? await suggestNextMeal(req.userId, req.tz, context)
+        : null;
+
+      return { value: { answer: reply, suggestion, intent }, usages: [usage] };
     });
 
     return { ...answer, entitlements: await entitlementsFor(req.userId) };
