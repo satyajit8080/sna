@@ -54,17 +54,38 @@ export default async function routes(app: FastifyInstance) {
       // Only the numbers the coach can actually use. Sending the whole context
       // object would triple the token bill for answers that are one line long.
       const activity = await activityFor(req.userId, req.tz);
+      // Today's actual meals, so the coach answers from what was eaten rather
+      // than inferring from a calorie total. Without this it would confidently
+      // describe meals the user never logged.
+      const todaysMeals = await q<{ name: string; slot: string; calories: number; protein_g: number }>(
+        `SELECT i.name, m.slot,
+                ROUND(i.grams * i.kcal_100g / 100)::int    AS calories,
+                ROUND(i.grams * i.protein_100g / 100)::int AS protein_g
+           FROM meals m JOIN meal_items i ON i.meal_id = m.id
+          WHERE m.user_id = $1 AND m.logged_on = $2
+          ORDER BY m.logged_at`,
+        [req.userId, localDate(req.tz)]
+      );
+
       const facts = {
-        remaining_kcal: context.remaining?.calories,
-        remaining_protein_g: context.remaining?.protein_g,
-        target_kcal: context.targets?.calories,
-        eaten_kcal: context.today?.calories,
+        remaining_kcal: context.remaining?.calories ?? null,
+        remaining_protein_g: context.remaining?.protein_g ?? null,
+        target_kcal: context.targets?.calories ?? null,
+        budget_kcal: context.budget ?? null,
+        eaten_kcal: context.today?.calories ?? 0,
+        eaten_protein_g: context.today?.protein_g ?? 0,
+        meals_today: todaysMeals.map((m) => ({
+          food: m.name, when: m.slot, kcal: m.calories, protein_g: m.protein_g,
+        })),
         steps: activity.steps,
-        burned_kcal: activity.credited_kcal,
-        weight_kg: context.currentWeightKg,
-        goal_kg: context.goalWeightKg,
-        change_kg: context.weightChangeKg,
+        burned_kcal_credited: activity.credited_kcal,
+        weight_kg: context.currentWeightKg ?? null,
+        goal_weight_kg: context.goalWeightKg ?? null,
+        change_since_start_kg: context.weightChangeKg ?? null,
         streak_days: context.streakDays,
+        goal: context.goal ?? null,
+        diet: context.preferences?.diet ?? null,
+        allergies: context.preferences?.allergies ?? [],
       };
 
       const messages = [
@@ -76,15 +97,17 @@ export default async function routes(app: FastifyInstance) {
         { role: "user" as const, content: `${JSON.stringify(facts)}\n${question}` },
       ];
 
-      const { text, usage } = await chat(messages, 60);
+      const { text, usage } = await chat(messages, 110);
 
-      // Enforce one line server-side. A cheap model will occasionally ignore
-      // the instruction, and the UI is built for a single sentence.
+      // Keep at most two sentences. Truncating to one, as this did before, cut
+      // answers mid-thought and made the coach look wrong rather than terse.
       const reply = text
         .replace(/\s+/g, " ")
-        .split(/(?<=[.!?])\s/)[0]
-        ?.trim()
-        .slice(0, 200)
+        .split(/(?<=[.!?])\s/)
+        .slice(0, 2)
+        .join(" ")
+        .trim()
+        .slice(0, 260)
         || "Log a meal and ask again — I need today's numbers first.";
 
       await q(`INSERT INTO coach_messages (user_id, role, content) VALUES ($1,'user',$2), ($1,'assistant',$3)`,
