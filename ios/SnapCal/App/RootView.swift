@@ -11,46 +11,85 @@ struct RootView: View {
             case .launching:
                 ProgressView().controlSize(.large)
             case .welcome:
-                WelcomeView()
-                    .transition(.opacity)
+                WelcomeView().transition(.opacity)
             case .onboarding:
                 OnboardingFlow()
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             case .ready:
-                MainTabs()
-                    .transition(.opacity)
+                MainTabs().transition(.opacity)
             }
         }
         .animation(Theme.snap, value: app.phase)
     }
 }
 
+/// Four tabs, per the design: Home · Scan · AI Coach · Meal Plan.
+///
+/// Diary, Progress and Settings are reachable from Home — "View All" on
+/// today's meals, "View Progress" on the streak card, and the profile button
+/// in the header. Settings has to stay reachable in particular: account
+/// deletion and subscription management live there and are App Store
+/// requirements.
 struct MainTabs: View {
     @Environment(AppState.self) private var app
     @Environment(EntitlementStore.self) private var entitlements
     @Environment(NotificationService.self) private var notifications
 
-    @State private var tab = 0
+    @State private var tab: Tab = .home
+    @State private var scanRoute: LogRoute?
+
+    enum Tab: String, CaseIterable, Hashable {
+        case home, scan, coach, meals
+
+        var title: String {
+            switch self {
+            case .home: "Home"
+            case .scan: "Scan"
+            case .coach: "AI Coach"
+            case .meals: "Meal Plan"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .home: "house.fill"
+            case .scan: "camera.fill"
+            case .coach: "sparkles"
+            case .meals: "calendar"
+            }
+        }
+    }
 
     var body: some View {
         @Bindable var entitlements = entitlements
         @Bindable var app = app
 
-        TabView(selection: $tab) {
-            Tab("Home", systemImage: "circle.circle.fill", value: 0) { DashboardView() }
-            Tab("Coach", systemImage: "bubble.left.and.text.bubble.right", value: 1) { CoachView() }
-            Tab("Meals", systemImage: "calendar", value: 2) { MealPlannerView() }
-            Tab("Diary", systemImage: "list.bullet", value: 3) { DiaryView() }
-            Tab("Progress", systemImage: "chart.xyaxis.line", value: 4) { ProgressHubView() }
-            Tab("Settings", systemImage: "gearshape", value: 5) { SettingsView() }
+        ZStack(alignment: .bottom) {
+            Group {
+                switch tab {
+                case .home:  DashboardView()
+                case .scan:  DashboardView()      // Scan presents modally; Home stays behind
+                case .coach: CoachView()
+                case .meals: MealPlannerView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            SnapTabBar(selection: $tab) { selected in
+                // Scan is an action, not a destination: tapping it opens the
+                // camera and leaves the previous tab underneath.
+                guard selected == .scan else { return false }
+                Haptics.commit()
+                startScan()
+                return true
+            }
         }
-        // One paywall host for the whole app: any screen can request it by
-        // setting a context, and the copy follows the blocked feature.
+        .ignoresSafeArea(.keyboard)
+        .background(Theme.bg)
+        .fullScreenCover(item: $scanRoute) { LogFlowView(route: $0) }
         .sheet(item: $entitlements.pendingPaywall) { context in
             PaywallView(context: context, source: context.rawValue)
         }
-        // One host for the guest sign-up prompt: any screen can raise it by
-        // calling app.requireAccount(for:).
         .sheet(item: $app.guestPromptFeature) { feature in
             SignInPromptView(feature: feature)
                 .presentationDetents([.height(420)])
@@ -62,17 +101,62 @@ struct MainTabs: View {
         }
     }
 
-    /// Deep links resolve after auth because MainTabs only exists once signed
-    /// in — an unauthenticated tap lands on Welcome and the link is replayed.
+    private func startScan() {
+        guard app.requireAccount(for: "save your meals") else { return }
+
+        let scan = entitlements.entitlements.foodScan
+        if !entitlements.isPro, scan.isExhausted {
+            entitlements.present(.foodScan, source: "scan_tab")
+            return
+        }
+        scanRoute = LogRoute(mode: .camera, slot: MealSlot.suggested())
+    }
+
     private func route(_ link: String) {
         switch link {
-        case let l where l.contains("coach"):   tab = 1
-        case let l where l.contains("meal"):    tab = 2
-        case let l where l.contains("scan"):    tab = 0
+        case let l where l.contains("coach"):   tab = .coach
+        case let l where l.contains("meal"):    tab = .meals
+        case let l where l.contains("scan"):    startScan()
         case let l where l.contains("premium"):
             entitlements.present(.general, source: "notification")
-        default:                                tab = 0
+        default:                                tab = .home
         }
+    }
+}
+
+/// Custom bar so the labels use the design's type and the Scan tab can act as
+/// a button rather than a destination — neither is possible with `TabView`.
+struct SnapTabBar: View {
+    @Binding var selection: MainTabs.Tab
+    /// Return true to consume the tap without changing tabs.
+    var onSelect: (MainTabs.Tab) -> Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(MainTabs.Tab.allCases, id: \.self) { tab in
+                Button {
+                    if onSelect(tab) { return }
+                    Haptics.tap()
+                    withAnimation(Theme.quick) { selection = tab }
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 20, weight: .semibold))
+                            .frame(height: 24)
+                        Text(tab.title)
+                            .font(.caption_)
+                    }
+                    .foregroundStyle(selection == tab ? Theme.accent : Theme.secondary)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, Theme.gutter)
+        .padding(.top, 11)
+        .padding(.bottom, 6)
+        .background(Theme.card.ignoresSafeArea(edges: .bottom))
     }
 }
 
