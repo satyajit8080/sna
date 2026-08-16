@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { q, one, tx } from "../db.js";
+import { cfg, premiumUnlocked } from "../config.js";
 import type { Usage } from "../ai/types.js";
 
 export type Plan = "free" | "pro";
@@ -60,7 +61,10 @@ export async function subscriptionFor(userId: string): Promise<Subscription> {
   );
 
   const expired = row?.expires_at ? new Date(row.expires_at) < new Date() : false;
-  const plan: Plan = row?.plan === "pro" && !expired ? "pro" : "free";
+
+  // DEV_UNLOCK_PREMIUM is rejected at boot in production, so this can only be
+  // true on a dev or staging deploy.
+  const plan: Plan = premiumUnlocked || (row?.plan === "pro" && !expired) ? "pro" : "free";
 
   // A free user's period still needs to roll, or their 2 scans never come back.
   let periodStart = row?.period_start ?? new Date().toISOString();
