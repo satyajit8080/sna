@@ -48,6 +48,16 @@ struct PaywallView: View {
             .padding(Theme.Space.m)
         }
         .background(Theme.bg)
+        .overlay(alignment: .top) {
+            if EntitlementStore.testingUnlock {
+                Text("TESTING BUILD — premium already unlocked")
+                    .font(.jakarta(11, .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Theme.streak, in: Capsule())
+                    .padding(.top, 6)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             Button { dismiss() } label: {
                 Image(systemName: "xmark").font(.system(size: 13, weight: .bold))
