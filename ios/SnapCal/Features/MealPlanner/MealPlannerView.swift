@@ -58,18 +58,17 @@ struct MealPlannerView: View {
                 .padding(.top, Theme.Space.l)
                 .padding(.horizontal, Theme.Space.m)
 
-                // A real, non-interactive sample so the value is visible.
-                VStack(spacing: Theme.Space.s) {
-                    sampleRow("Breakfast", "Oatmeal with berries", 290, 9)
-                    sampleRow("Lunch", "Turkey sandwich · side salad", 520, 28)
-                    sampleRow("Dinner", "Grilled steak · rice · broccoli", 610, 46)
+                // Describes what the feature does rather than fabricating a
+                // plan. Invented meals with invented calories are
+                // indistinguishable from real ones on screen.
+                VStack(alignment: .leading, spacing: Theme.Space.m) {
+                    benefit("target", "Built around your calorie and protein targets")
+                    benefit("fork.knife", "Respects your diet, allergies and dislikes")
+                    benefit("arrow.clockwise", "Adapts to what you've already eaten today")
+                    benefit("plus.circle", "Log any planned meal in one tap")
                 }
+                .card()
                 .padding(.horizontal, Theme.Space.m)
-                .overlay(alignment: .bottom) {
-                    LinearGradient(colors: [Theme.bg.opacity(0), Theme.bg],
-                                   startPoint: .top, endPoint: .bottom)
-                        .frame(height: 60).allowsHitTesting(false)
-                }
 
                 Button("Unlock Premium") {
                     Haptics.commit()
@@ -86,20 +85,16 @@ struct MealPlannerView: View {
         }
     }
 
-    private func sampleRow(_ slot: String, _ name: String, _ kcal: Int, _ protein: Int) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(slot).font(.caption_).foregroundStyle(.secondary)
-                Text(name).font(.system(size: 15, weight: .medium))
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(kcal) cal")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
-                Text("\(protein)g protein").font(.caption_).foregroundStyle(.secondary)
-            }
+    private func benefit(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: Theme.Space.m) {
+            Image(systemName: icon)
+                .frame(width: 22)
+                .foregroundStyle(Theme.accent)
+            Text(text)
+                .font(.body_)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .card()
     }
 
     private var emptyPro: some View {
