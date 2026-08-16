@@ -11,6 +11,7 @@ struct DashboardView: View {
     @Environment(AppState.self) private var app
     @Environment(SubscriptionManager.self) private var store
     @Environment(EntitlementStore.self) private var entitlements
+    @Environment(HealthService.self) private var health
 
     @State private var route: LogRoute?
     @State private var suggestion: MealSuggestion?
@@ -263,8 +264,11 @@ struct DashboardView: View {
                             GridItem(.flexible(), spacing: 12)],
                   spacing: 12) {
             MetricTile(icon: "shoeprints.fill", tint: Theme.steps,
-                       value: dash.activity?.steps.formatted() ?? "—",
-                       detail: "/10,000", label: "Steps")
+                       // Zero with no Health permission is misleading — say so.
+                       value: health.needsPermission ? "—" : (dash.activity?.steps.formatted() ?? "0"),
+                       detail: health.needsPermission ? "Connect Health" : "/10,000",
+                       label: "Steps",
+                       onTap: health.needsPermission ? { connectHealth() } : nil)
 
             MetricTile(icon: "scalemass.fill", tint: Theme.weight,
                        value: dash.currentWeightKg.map { "\($0.formatted(.number.precision(.fractionLength(1)))) kg" } ?? "—",
@@ -366,6 +370,13 @@ struct DashboardView: View {
     }
 
     // MARK: - Actions
+
+    private func connectHealth() {
+        Task {
+            await health.requestAuthorization()
+            await app.refresh()
+        }
+    }
 
     private func loadSuggestion() async {
         guard !app.isGuest else { return }
@@ -533,6 +544,7 @@ struct MealRow: View {
 
 struct PremiumCard: View {
     @Environment(EntitlementStore.self) private var entitlements
+    @Environment(HealthService.self) private var health
 
     var body: some View {
         Button {
