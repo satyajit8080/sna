@@ -8,6 +8,7 @@ struct SettingsView: View {
 
     @State private var showPaywall = false
     @State private var showGuestAuth = false
+    @State private var showBrain = false
     @State private var confirmDelete = false
 
     var body: some View {
@@ -58,6 +59,19 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Button {
+                        showBrain = true
+                    } label: {
+                        HStack {
+                            Text("What I know about you")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
                     NavigationLink("Notifications") { NotificationSettingsView() }
                 }
 
@@ -93,6 +107,7 @@ struct SettingsView: View {
                 }
             }
             .sheet(isPresented: $showPaywall) { PaywallView(context: .general, source: "settings") }
+            .sheet(isPresented: $showBrain) { BrainView() }
             .sheet(isPresented: $showGuestAuth) {
                 AuthView(startingMode: .signUp) { onboarded in
                     app.phase = onboarded ? .ready : .onboarding
