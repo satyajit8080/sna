@@ -383,6 +383,108 @@ Free, no AI call. Use to fill the empty state.
 
 ---
 
+## Daily briefing
+
+### `GET /coach/briefing?regenerate=false`
+```json
+{
+  "date": "2026-08-16",
+  "mode": "recovery",
+  "headline": "Lighter day. Your body's asking for a bit of slack...",
+  "actions": [{
+    "id": "uuid",
+    "domain": "recovery",
+    "action": "Take today easy — a walk or some mobility rather than a session",
+    "reason": "Your slept 24% below their usual, so recovery will do more than training today.",
+    "confidence": 0.85,
+    "triggeredBy": ["recovery_mode", "slept 24% below their usual"]
+  }],
+  "missing": ["hrv", "weight"],
+  "generated": true
+}
+```
+
+At most **3 actions** (2 in recovery mode), **one per domain**, each with a
+reason citing real data. Idempotent per day — `generated: false` means today's
+set already existed.
+
+Actions are produced by rules over stored observations, not by asking a model
+what to do. Nothing fires without the data it needs, so a new user never sees
+"below your usual". `missing` lists metrics with no data — show a connect
+prompt rather than a zero.
+
+Each action is persisted as a recommendation with its `id`, so responses and
+outcomes can be recorded against it.
+
+### `POST /coach/learn-cycle`
+```json
+{ "outcomesMeasured": 4, "memoriesAdded": 1,
+  "memoriesUpdated": 0, "memoriesReinforced": 3 }
+```
+Measures what last week's advice did, then updates the brain. Call once a day —
+lazily, on app open. Free, no AI call.
+
+## Health state
+
+### `POST /observations`
+```json
+{ "observations": [
+  { "metric": "hrv", "value": 42, "observed_on": "2026-08-16",
+    "source": "healthkit", "confidence": 1.0 }
+] }
+```
+Any metric, any source, with a confidence. Upserts per (metric, day, source).
+
+Send: `steps`, `resting_hr`, `hrv`, `sleep_minutes`, `sleep_start_min`,
+`sleep_end_min`, `weight_kg`, `active_kcal`, `exercise_min`.
+
+`sleep_start_min` / `sleep_end_min` are minutes past midnight — they power
+sleep-regularity coaching, which is measurable, unlike sleep stages.
+
+### `GET /health/state` · `GET /health/metric/{metric}`
+```json
+{ "metric": "hrv", "today": 38, "avg7": 40, "avg30": 50,
+  "baseline": 52, "trend": "falling", "deviationPct": -27,
+  "confidence": "high", "daysObserved": 21 }
+```
+`null` means no data — never zero. `confidence`: none / low (<5 days) /
+medium (5–20) / high (21+).
+
+`GET /health/state` adds `mode` (recovery / maintenance / growth) and
+`modeRationale`. **The mode is an internal coaching decision, not a score —
+don't render it as a number.**
+
+## Personal Health Brain
+
+### `GET /brain/memories`
+```json
+{ "layers": {
+    "routine": [{ "id": "uuid", "content": "usually eats breakfast around 7am",
+                  "confidence": 0.9, "evidence_count": 6, "user_edited": false }]
+  },
+  "labels": { "routine": "Your usual patterns" },
+  "total": 3 }
+```
+Use `labels` for headings — never show "semantic" to a user.
+
+### `PATCH /brain/memories/{id}` · `DELETE /brain/memories/{id}`
+Editing marks a memory authoritative: extraction will never overwrite it.
+Deletion is permanent, not a soft delete.
+
+### `POST /brain/learn`
+Extracts routines and outcome patterns from logged behaviour. Idempotent —
+repeat observations reinforce rather than duplicate.
+
+## Recommendations
+
+### `GET /recommendations?status=pending`
+### `POST /recommendations/{id}/respond` → `{ "status": "completed", "feedback": "..." }`
+### `GET /recommendations/effectiveness`
+
+`enough_data: false` until a domain has 4+ recommendations. Completion and
+improvement rates feed procedural memory, which then reranks future actions —
+a domain the user ignores drops down.
+
 ## Coach onboarding
 
 First run only. The server decides the next question, so it can skip anything
