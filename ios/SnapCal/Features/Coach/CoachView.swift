@@ -218,7 +218,7 @@ struct CoachView: View {
             } catch {
                 // The server refused: drop the optimistic bubble and show the
                 // paywall that matches what they were trying to do.
-                withAnimation(Theme.snap) { messages.removeLast() }
+                _ = withAnimation(Theme.snap) { messages.removeLast() }
                 if !entitlements.handle(error, source: "coach") {
                     self.error = (error as? APIError)?.errorDescription ?? "Try again in a moment."
                 }
