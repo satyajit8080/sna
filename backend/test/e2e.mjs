@@ -1940,3 +1940,607 @@ test("an unknown onboarding field is rejected rather than silently ignored", asy
   assert.equal(status, 400);
   assert.equal(json.error, "unknown_field");
 });
+
+// ─── Personal Health Brain: state, memory, safety, learning loop ───────────
+
+test("health state gives baselines and trends, not raw numbers", async () => {
+  const u = await proUser("state");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "State", ...BASE_PROFILE } });
+
+    // 20 days of HRV, declining over the last week.
+    const obs = [];
+    for (let d = 20; d >= 0; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      obs.push({ metric: "hrv", value: d <= 6 ? 40 : 55, observed_on: date });
+    }
+    const stored = await api("/observations", { method: "POST", body: { observations: obs } });
+    assert.equal(stored.json.stored, 21);
+
+    const { json } = await api("/health/metric/hrv");
+    assert.equal(json.metric, "hrv");
+    assert.ok(json.baseline > 50, "baseline should reflect the older, higher period");
+    assert.ok(json.avg7 < 45, "the last week should pull the 7-day average down");
+    assert.equal(json.trend, "falling");
+    assert.equal(json.confidence, "high", "21 days of data is high confidence");
+    assert.ok(json.deviationPct < 0);
+  } finally { token = saved; }
+});
+
+test("a metric with no data reports none, never zero", async () => {
+  const u = await proUser("nodata");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "NoData", ...BASE_PROFILE } });
+
+    const { json } = await api("/health/metric/hrv");
+    // Zero steps and no step data are different situations; conflating them
+    // makes the coach tell someone off for a day it knows nothing about.
+    assert.equal(json.today, null);
+    assert.equal(json.baseline, null);
+    assert.equal(json.confidence, "none");
+    assert.equal(json.trend, "unknown");
+
+    const state = await api("/health/state");
+    assert.ok(state.json.missing.includes("hrv"));
+  } finally { token = saved; }
+});
+
+test("coaching mode drops to recovery on poor sleep and rising resting HR", async () => {
+  const u = await proUser("mode");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Mode", ...BASE_PROFILE } });
+
+    const obs = [];
+    for (let d = 20; d >= 1; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      obs.push({ metric: "sleep_minutes", value: 450, observed_on: date });
+      obs.push({ metric: "resting_hr", value: 55, observed_on: date });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    obs.push({ metric: "sleep_minutes", value: 330, observed_on: today });  // ~27% below
+    obs.push({ metric: "resting_hr", value: 64, observed_on: today });
+
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    const { json } = await api("/health/state");
+    assert.equal(json.mode, "recovery");
+    assert.ok(json.modeRationale.length > 0, "the mode must be explainable");
+    assert.ok(json.modeRationale.some((r) => /slept/i.test(r)));
+  } finally { token = saved; }
+});
+
+test("memory consolidates rather than duplicating", async () => {
+  const { consolidate, recall } = await import("../dist/services/brain.js");
+  const u = await proUser("mem");
+
+  const fact = {
+    layer: "semantic", subject: "breakfast_habit",
+    content: "usually skips breakfast",
+  };
+
+  const first = await consolidate(u.uid, fact);
+  assert.equal(first.action, "ADD");
+
+  // The same fact again is evidence, not a second row.
+  const second = await consolidate(u.uid, fact);
+  assert.equal(second.action, "REINFORCE");
+  assert.equal(second.memoryId, first.memoryId);
+
+  const third = await consolidate(u.uid, fact);
+  assert.equal(third.action, "REINFORCE");
+
+  const memories = await recall(u.uid, { layers: ["semantic"] });
+  const onSubject = memories.filter((m) => m.subject === "breakfast_habit");
+  assert.equal(onSubject.length, 1, "three observations must be one memory");
+  assert.ok(onSubject[0].confidence > 0.5, "repeated evidence raises confidence");
+  assert.equal(onSubject[0].evidenceCount, 3);
+});
+
+test("a changed fact supersedes the old one without destroying history", async () => {
+  const { consolidate } = await import("../dist/services/brain.js");
+  const u = await proUser("change");
+
+  await consolidate(u.uid, {
+    layer: "routine", subject: "training_time", content: "usually trains around 7am",
+  });
+
+  const changed = await consolidate(u.uid, {
+    layer: "routine", subject: "training_time", content: "usually trains around 6pm",
+  });
+
+  assert.equal(changed.action, "UPDATE");
+  assert.match(changed.reason, /superseded/);
+
+  const rows = await db.query(
+    `SELECT content, valid_until FROM memories
+      WHERE user_id = $1 AND subject = 'training_time' ORDER BY created_at`,
+    [u.uid]);
+
+  assert.equal(rows.rows.length, 2, "history is kept, not overwritten");
+  assert.ok(rows.rows[0].valid_until !== null, "the old routine is closed off");
+  assert.equal(rows.rows[1].valid_until, null, "the current routine is open");
+});
+
+test("a user-edited memory is never overwritten by extraction", async () => {
+  const { consolidate } = await import("../dist/services/brain.js");
+  const u = await proUser("edited");
+  const saved = token; token = u.token;
+
+  try {
+    const added = await consolidate(u.uid, {
+      layer: "semantic", subject: "running", content: "enjoys running",
+    });
+
+    // The user corrects it.
+    const edited = await api(`/brain/memories/${added.memoryId}`, {
+      method: "PATCH", body: { content: "hates running" } });
+    assert.equal(edited.status, 200);
+
+    // Extraction tries to reassert the original.
+    const attempt = await consolidate(u.uid, {
+      layer: "semantic", subject: "running", content: "enjoys running",
+    });
+    assert.equal(attempt.action, "NOOP",
+      "what the user told us outranks what we inferred");
+
+    const memories = await api("/brain/memories");
+    const running = memories.json.layers.semantic.find((m) => m.content === "hates running");
+    assert.ok(running, "the user's correction stands");
+    assert.equal(running.user_edited, true);
+  } finally { token = saved; }
+});
+
+test("deleting a memory really deletes it", async () => {
+  const { consolidate } = await import("../dist/services/brain.js");
+  const u = await proUser("forget");
+  const saved = token; token = u.token;
+
+  try {
+    const added = await consolidate(u.uid, {
+      layer: "semantic", subject: "sensitive", content: "something private",
+    });
+
+    const gone = await api(`/brain/memories/${added.memoryId}`, { method: "DELETE" });
+    assert.equal(gone.status, 200);
+
+    // Not soft-deleted: if someone asks the app to forget something about
+    // their health, leaving the row with an end-date is not forgetting.
+    const rows = await db.query(`SELECT id FROM memories WHERE id = $1`, [added.memoryId]);
+    assert.equal(rows.rows.length, 0);
+  } finally { token = saved; }
+});
+
+test("routines are learned from logged behaviour", async () => {
+  const u = await proUser("routine");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Routine", ...BASE_PROFILE } });
+
+    // Five breakfasts, all around the same time.
+    for (let d = 1; d <= 5; d++) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      await db.query(
+        `INSERT INTO meals (user_id, slot, input_method, logged_on, logged_at)
+         VALUES ($1,'breakfast','manual',$2, $2::date + time '08:00')`,
+        [u.uid, date]);
+    }
+
+    const learned = await api("/brain/learn", { method: "POST", body: {} });
+    assert.equal(learned.status, 200);
+    assert.ok(learned.json.added >= 1);
+
+    const memories = await api("/brain/memories");
+    const routines = memories.json.layers.routine ?? [];
+    assert.ok(routines.some((m) => /breakfast/i.test(m.content)),
+      `expected a breakfast routine, got: ${routines.map((r) => r.content).join(", ")}`);
+
+    // Running it again reinforces rather than duplicating.
+    const again = await api("/brain/learn", { method: "POST", body: {} });
+    assert.ok(again.json.reinforced >= 1);
+    assert.equal(again.json.added, 0);
+  } finally { token = saved; }
+});
+
+test("safety blocks self-harm and emergencies before the model runs", async () => {
+  const { assess, validate, suppressesRecommendations } =
+    await import("../dist/services/safety.js");
+
+  const selfHarm = assess("I want to kill myself");
+  assert.equal(selfHarm.category, "self_harm");
+  assert.equal(selfHarm.action, "block");
+  assert.match(selfHarm.response, /crisis line|emergency|doctor/i);
+
+  const emergency = assess("I have chest pain and can't breathe");
+  assert.equal(emergency.action, "block");
+
+  // These steer rather than block — the user still deserves a useful answer.
+  assert.equal(assess("Which protein powder should I buy?").action, "steer");
+  assert.equal(assess("what medicine should I take").category, "medication");
+  assert.equal(assess("how little can i eat to lose weight fast").category, "disordered_eating");
+  assert.equal(assess("should I train through the pain").category, "exercise_risk");
+
+  // Ordinary questions pass untouched.
+  assert.equal(assess("what should I eat for dinner").action, "allow");
+
+  // No meal card next to a conversation about restriction.
+  assert.ok(suppressesRecommendations(assess("how little can i eat")));
+  assert.ok(!suppressesRecommendations(assess("what should I eat for dinner")));
+
+  // Post-model checks are deterministic.
+  assert.match(validate("Take 500 mg twice daily.", { category: null, action: "allow" }),
+               /can't advise on medication/i);
+  assert.match(validate("Aim for 600 calories a day.", { category: null, action: "allow" }),
+               /wouldn't|rather not|unsafe|backfire/i);
+  assert.match(validate("You have diabetes.", { category: null, action: "allow" }),
+               /clinician|can't tell you/i);
+  assert.equal(validate("Grilled chicken fits your remaining calories.",
+                        { category: null, action: "allow" }), null);
+});
+
+test("a self-harm message returns support and never a meal card", async () => {
+  const u = await proUser("crisis");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Crisis", ...BASE_PROFILE } });
+
+    const { status, json } = await api("/coach/ask", {
+      method: "POST", body: { question: "I want to die, what should I eat" } });
+
+    assert.equal(status, 200);
+    assert.equal(json.intent, "safety");
+    assert.equal(json.suggestion, null);
+    assert.match(json.answer, /crisis|emergency|doctor|someone you trust/i);
+    assert.ok(!/calorie|protein|\d{3}/.test(json.answer),
+      "a crisis reply must not carry nutrition content");
+  } finally { token = saved; }
+});
+
+test("recommendations record outcomes and feed procedural memory", async () => {
+  const u = await proUser("loop2");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Loop2", ...BASE_PROFILE } });
+
+    // Six sleep recommendations, five of them completed.
+    for (let i = 0; i < 6; i++) {
+      const rec = await db.query(
+        `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+         VALUES ($1,'sleep','Stop caffeine before 2pm','Late caffeine tracks with poor sleep',
+                 CURRENT_DATE - $2::int, $3) RETURNING id`,
+        [u.uid, i, i < 5 ? "completed" : "dismissed"]);
+
+      if (i < 4) {
+        await db.query(
+          `INSERT INTO recommendation_outcomes
+             (recommendation_id, user_id, metric, direction)
+           VALUES ($1,$2,'sleep_minutes','improved')`,
+          [rec.rows[0].id, u.uid]);
+      }
+    }
+
+    const effectiveness = await api("/recommendations/effectiveness");
+    const sleep = effectiveness.json.by_domain.find((d) => d.domain === "sleep");
+    assert.equal(sleep.offered, 6);
+    assert.equal(sleep.completed, 5);
+    assert.equal(sleep.improved, 4);
+    assert.ok(sleep.completion_rate >= 80);
+
+    // The brain turns that into a durable fact about this person.
+    const learned = await api("/brain/learn", { method: "POST", body: {} });
+    assert.ok(learned.json.added + learned.json.reinforced >= 1);
+
+    const memories = await api("/brain/memories");
+    const procedural = memories.json.layers.procedural ?? [];
+    assert.ok(procedural.some((m) => /sleep/i.test(m.content)),
+      `expected a procedural memory about sleep, got: ${procedural.map((p) => p.content).join(", ")}`);
+  } finally { token = saved; }
+});
+
+test("responding to a recommendation records the response", async () => {
+  const u = await proUser("respond");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Respond", ...BASE_PROFILE } });
+
+    const rec = await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on)
+       VALUES ($1,'activity','Take a 20 minute walk','Steps are below your usual',
+               CURRENT_DATE) RETURNING id`,
+      [u.uid]);
+
+    const done = await api(`/recommendations/${rec.rows[0].id}/respond`, {
+      method: "POST", body: { status: "completed", feedback: "felt good" } });
+
+    assert.equal(done.status, 200);
+    assert.equal(done.json.status, "completed");
+
+    const outcome = await db.query(
+      `SELECT user_feedback FROM recommendation_outcomes WHERE recommendation_id = $1`,
+      [rec.rows[0].id]);
+    assert.equal(outcome.rows[0].user_feedback, "felt good");
+  } finally { token = saved; }
+});
+
+test("one user's memories are invisible to another", async () => {
+  const { consolidate } = await import("../dist/services/brain.js");
+  const a = await proUser("mem-a");
+  const b = await proUser("mem-b");
+  const saved = token;
+
+  try {
+    await consolidate(a.uid, {
+      layer: "semantic", subject: "private", content: "a private detail",
+    });
+
+    token = b.token;
+    const theirs = await api("/brain/memories");
+    assert.equal(theirs.json.total, 0, "user B must not see user A's memories");
+
+    token = a.token;
+    const mine = await api("/brain/memories");
+    assert.ok(mine.json.total >= 1);
+  } finally { token = saved; }
+});
+
+// ─── orchestrator: state + memory → ranked, explainable actions ────────────
+
+test("briefing gives at most three actions, each with a reason", async () => {
+  const u = await proUser("brief");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Brief", ...BASE_PROFILE } });
+
+    const { status, json } = await api("/coach/briefing");
+    assert.equal(status, 200);
+    assert.ok(json.headline);
+    assert.ok(json.actions.length <= 3, "more than three priorities is a list, not a priority");
+
+    for (const a of json.actions) {
+      assert.ok(a.action, "every action needs an action");
+      assert.ok(a.reason && a.reason.length > 10,
+        `every action needs a reason — "${a.action}" had none`);
+      assert.ok(a.id, "actions are persisted so outcomes can be measured");
+      assert.ok(a.triggeredBy.length > 0, "the trigger is recorded for later analysis");
+    }
+  } finally { token = saved; }
+});
+
+test("a fresh user is asked to log before anything else", async () => {
+  const u = await proUser("fresh");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Fresh", ...BASE_PROFILE } });
+
+    const { json } = await api("/coach/briefing");
+    // Everything else depends on knowing what they ate.
+    assert.ok(json.actions.some((a) => /log/i.test(a.action)),
+      `expected a logging prompt, got: ${json.actions.map((a) => a.action).join(" | ")}`);
+    assert.ok(json.missing.length > 0, "no health data yet, and it says so");
+  } finally { token = saved; }
+});
+
+test("the briefing is idempotent within a day", async () => {
+  const u = await proUser("idem");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Idem", ...BASE_PROFILE } });
+
+    const first = await api("/coach/briefing");
+    assert.equal(first.json.generated, true);
+
+    const second = await api("/coach/briefing");
+    assert.equal(second.json.generated, false, "a second call must not generate a new set");
+    assert.deepEqual(
+      second.json.actions.map((a) => a.id).sort(),
+      first.json.actions.map((a) => a.id).sort());
+
+    const stored = await db.query(
+      `SELECT COUNT(*)::int AS n FROM recommendations
+        WHERE user_id = $1 AND offered_on = CURRENT_DATE`, [u.uid]);
+    assert.equal(stored.rows[0].n, first.json.actions.length,
+      "no duplicate recommendations were written");
+  } finally { token = saved; }
+});
+
+test("recovery mode asks for less, and says why", async () => {
+  const u = await proUser("recov");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Recov", ...BASE_PROFILE } });
+
+    const obs = [];
+    for (let d = 20; d >= 1; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      obs.push({ metric: "sleep_minutes", value: 450, observed_on: date });
+      obs.push({ metric: "resting_hr", value: 54, observed_on: date });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    obs.push({ metric: "sleep_minutes", value: 320, observed_on: today });
+    obs.push({ metric: "resting_hr", value: 64, observed_on: today });
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    const { json } = await api("/coach/briefing");
+    assert.equal(json.mode, "recovery");
+    assert.ok(json.actions.length <= 2, "recovery mode caps at two asks");
+    assert.match(json.headline, /light|slack|easier/i);
+
+    const recovery = json.actions.find((a) => a.domain === "recovery");
+    assert.ok(recovery, "an under-recovered day should suggest taking it easy");
+    // The reason must cite the actual signal, not a generic platitude.
+    assert.match(recovery.reason, /slept|heart rate|sessions/i);
+  } finally { token = saved; }
+});
+
+test("one action per domain — three nutrition tips would read as nagging", async () => {
+  const { rank } = await import("../dist/services/orchestrator.js");
+
+  const candidates = [
+    { domain: "nutrition", action: "a", reason: "r", score: 90, confidence: 1, triggeredBy: ["x"] },
+    { domain: "nutrition", action: "b", reason: "r", score: 80, confidence: 1, triggeredBy: ["x"] },
+    { domain: "nutrition", action: "c", reason: "r", score: 70, confidence: 1, triggeredBy: ["x"] },
+    { domain: "sleep",     action: "d", reason: "r", score: 60, confidence: 1, triggeredBy: ["x"] },
+    { domain: "fitness",   action: "e", reason: "r", score: 50, confidence: 1, triggeredBy: ["x"] },
+  ];
+
+  const ranked = rank(candidates, "maintenance");
+  assert.equal(ranked.length, 3);
+  assert.equal(new Set(ranked.map((r) => r.domain)).size, 3, "one per domain");
+  assert.equal(ranked[0].action, "a", "highest score within its domain wins");
+
+  // Recovery mode asks for less.
+  assert.ok(rank(candidates, "recovery").length <= 2);
+
+  // Weak candidates are dropped rather than padding the list.
+  const weak = [{ domain: "hydration", action: "x", reason: "r", score: 5, confidence: 1, triggeredBy: ["y"] }];
+  assert.equal(rank(weak, "maintenance").length, 0);
+});
+
+test("actions the user ignores are ranked lower over time", async () => {
+  const u = await proUser("adhere");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Adhere", ...BASE_PROFILE } });
+
+    // Six nutrition suggestions, all dismissed.
+    for (let i = 0; i < 6; i++) {
+      await db.query(
+        `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+         VALUES ($1,'nutrition','eat more protein','r', CURRENT_DATE - $2::int, 'dismissed')`,
+        [u.uid, i + 1]);
+    }
+
+    const learned = await api("/brain/learn", { method: "POST", body: {} });
+    assert.ok(learned.json.added + learned.json.reinforced >= 1);
+
+    const memories = await api("/brain/memories");
+    const procedural = memories.json.layers.procedural ?? [];
+    assert.ok(procedural.some((m) => /rarely acts on nutrition/i.test(m.content)),
+      `expected a low-adherence memory, got: ${procedural.map((p) => p.content).join(", ")}`);
+  } finally { token = saved; }
+});
+
+test("outcomes are measured where a metric moved, and unknown where it can't be", async () => {
+  const u = await proUser("outcome");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Outcome", ...BASE_PROFILE } });
+
+    // A sleep recommendation from four days ago, and sleep improved after it.
+    const offered = new Date(Date.now() - 4 * 864e5).toISOString().slice(0, 10);
+    await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+       VALUES ($1,'sleep','Wind down earlier','Sleep below baseline',$2,'completed')`,
+      [u.uid, offered]);
+
+    // A nutrition one, which has no measurable proxy metric.
+    await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+       VALUES ($1,'nutrition','More protein','Short on protein',$2,'completed')`,
+      [u.uid, offered]);
+
+    const obs = [];
+    for (let d = 10; d >= 0; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      // Clearly better after the recommendation date.
+      obs.push({ metric: "sleep_minutes", value: d > 4 ? 380 : 460, observed_on: date });
+    }
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    const cycle = await api("/coach/learn-cycle", { method: "POST", body: {} });
+    assert.equal(cycle.status, 200);
+    assert.ok(cycle.json.outcomesMeasured >= 2);
+
+    const outcomes = await db.query(
+      `SELECT r.domain, o.direction, o.metric
+         FROM recommendation_outcomes o
+         JOIN recommendations r ON r.id = o.recommendation_id
+        WHERE o.user_id = $1`, [u.uid]);
+
+    const sleep = outcomes.rows.find((r) => r.domain === "sleep");
+    assert.equal(sleep.metric, "sleep_minutes");
+    assert.equal(sleep.direction, "improved");
+
+    // No honest proxy for a nutrition suggestion, so it stays unknown rather
+    // than being guessed — a wrong outcome would poison procedural memory.
+    const nutrition = outcomes.rows.find((r) => r.domain === "nutrition");
+    assert.equal(nutrition.direction, "unknown");
+    assert.equal(nutrition.metric, null);
+  } finally { token = saved; }
+});
+
+test("unanswered recommendations expire so completion rates stay honest", async () => {
+  const u = await proUser("expire");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Expire", ...BASE_PROFILE } });
+
+    await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+       VALUES ($1,'activity','Walk','r', CURRENT_DATE - 5, 'pending')`, [u.uid]);
+
+    await api("/coach/learn-cycle", { method: "POST", body: {} });
+
+    const row = await db.query(
+      `SELECT status FROM recommendations WHERE user_id = $1`, [u.uid]);
+    assert.equal(row.rows[0].status, "expired",
+      "an ignored recommendation must not count as pending forever");
+  } finally { token = saved; }
+});
+
+test("no action is generated from data the system doesn't have", async () => {
+  const u = await proUser("nodata2");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "NoData2", ...BASE_PROFILE } });
+
+    const { json } = await api("/coach/briefing");
+
+    // With no sleep, step or HRV data, nothing may claim otherwise.
+    for (const a of json.actions) {
+      assert.ok(!/below your usual|baseline|bedtime has been/i.test(a.reason),
+        `"${a.reason}" implies history that does not exist`);
+    }
+    assert.ok(json.missing.includes("sleep"));
+  } finally { token = saved; }
+});
+
+test("a proven lever is surfaced only once there is evidence for it", async () => {
+  const fresh = await proUser("lever-a");
+  const experienced = await proUser("lever-b");
+  const saved = token;
+
+  try {
+    for (const u of [fresh, experienced]) {
+      token = u.token;
+      await api("/profile", { method: "POST", body: { name: "Lever", ...BASE_PROFILE } });
+    }
+
+    // The experienced user has four sleep recommendations that measurably helped.
+    for (let i = 1; i <= 4; i++) {
+      const rec = await db.query(
+        `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+         VALUES ($1,'sleep','Wind down earlier','r', CURRENT_DATE - $2::int, 'completed')
+         RETURNING id`, [experienced.uid, i + 5]);
+      await db.query(
+        `INSERT INTO recommendation_outcomes (recommendation_id, user_id, metric, direction)
+         VALUES ($1,$2,'sleep_minutes','improved')`, [rec.rows[0].id, experienced.uid]);
+    }
+
+    token = experienced.token;
+    await api("/coach/learn-cycle", { method: "POST", body: {} });
+    const withHistory = await api("/coach/briefing");
+
+    token = fresh.token;
+    const withoutHistory = await api("/coach/briefing");
+
+    const provenIn = (b) => b.json.actions.some((a) => /moved the needle/i.test(a.reason));
+
+    assert.ok(provenIn(withHistory),
+      "a lever proven by outcomes should surface for the experienced user");
+    assert.ok(!provenIn(withoutHistory),
+      "a new user must never be told something has worked for them before");
+  } finally { token = saved; }
+});
