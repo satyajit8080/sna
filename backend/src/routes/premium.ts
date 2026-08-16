@@ -114,6 +114,34 @@ export default async function routes(app: FastifyInstance) {
     };
   });
 
+  /**
+   * One-line insight for the Home card. Deterministic, free, no quota — the
+   * dashboard renders on every launch and must not cost an AI call.
+   */
+  app.get("/coach/insight", { preHandler: requireAuth }, async (req) => {
+    const c = await buildContext(req.userId, req.tz);
+    const remaining = c.remaining?.calories ?? 0;
+    const proteinLeft = c.remaining?.protein_g ?? 0;
+    const steps = c.steps ?? 0;
+
+    let text: string;
+    if ((c.today?.calories ?? 0) === 0) {
+      text = "Nothing logged yet today — scan your first meal to start tracking.";
+    } else if (remaining < 0) {
+      text = `You're ${Math.abs(remaining)} calories over. A short walk this evening helps.`;
+    } else if (proteinLeft > 40) {
+      text = `${proteinLeft}g of protein left today. Lean meat, eggs or yogurt close the gap.`;
+    } else if (steps > 0 && steps < 4000) {
+      text = `${steps.toLocaleString()} steps so far. A 10-minute walk earns back some calories.`;
+    } else if (c.streakDays >= 3) {
+      text = `${c.streakDays} days logged in a row — that consistency is what moves the weight.`;
+    } else {
+      text = `${remaining} calories left today. You're on track.`;
+    }
+
+    return { insight: text, remaining: c.remaining ?? null };
+  });
+
   app.get("/coach/history", { preHandler: requireAuth }, async (req) => ({
     messages: (await q(
       `SELECT role, content, created_at FROM coach_messages
