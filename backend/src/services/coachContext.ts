@@ -5,6 +5,7 @@ import { parseJson } from "../util/json.js";
 import { ProviderError, type Usage } from "../ai/types.js";
 import { localDate } from "../util/dates.js";
 import { activityFor } from "./activity.js";
+import { dailyBalance } from "./budget.js";
 
 /**
  * Compact snapshot of everything the coach or planner may reason about.
@@ -62,6 +63,7 @@ export async function buildContext(userId: string, tz: string): Promise<CoachCon
 
   const current = weights[0]?.weight_kg;
   const start = profile?.start_weight_kg;
+  const balance = dailyBalance(targets, today, activity);
 
   return {
     name: profile?.name,
@@ -72,17 +74,9 @@ export async function buildContext(userId: string, tz: string): Promise<CoachCon
     weightChangeKg: current != null && start != null ? Math.round((current - start) * 10) / 10 : undefined,
     targets: targets ?? undefined,
     today: today ?? undefined,
-    // Movement raises the allowance, so remaining must be computed against the
-    // activity-adjusted budget — not the base target. Using the base here was
-    // why the coach could say "you have 200 left" while the dashboard showed
-    // 400 after a walk.
-    budget: targets ? targets.calories + activity.credited_kcal : undefined,
-    remaining: targets ? {
-      calories: targets.calories + activity.credited_kcal - (today?.calories ?? 0),
-      protein_g: targets.protein_g - (today?.protein_g ?? 0),
-      carbs_g: targets.carbs_g - (today?.carbs_g ?? 0),
-      fat_g: targets.fat_g - (today?.fat_g ?? 0),
-    } : undefined,
+    // Same function the dashboard uses. Do not inline this maths again.
+    budget: targets ? balance.budget.total_calories : undefined,
+    remaining: targets ? balance.remaining : undefined,
     steps: activity.steps || undefined,
     activeKcal: activity.active_kcal || undefined,
     creditedKcal: activity.credited_kcal || undefined,
@@ -147,35 +141,110 @@ export async function complete(
     };
   }
 
-  const res = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${cfg.OPENAI_API_KEY}` },
-    body: JSON.stringify({
-      model: cfg.AI_MODEL,
-      instructions: system,
-      input: [{ role: "user", content: [{ type: "input_text", text: user }] }],
-      max_output_tokens: opts.maxTokens ?? 300,
-      ...(opts.json ? { text: { format: { type: "json_object" } } } : {}),
-    }),
-    signal: AbortSignal.timeout(cfg.AI_TIMEOUT_MS),
-  });
+  /**
+   * Chat Completions is the fallback.
+   *
+   * The Responses API's `text.format` shape is not accepted by every model, and
+   * a 400 there killed the whole meal planner — the same failure the vision
+   * path already guards against.
+   */
+  async function viaChat(model: string) {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${cfg.OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        max_tokens: opts.maxTokens ?? 300,
+        temperature: 0.4,
+        ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+      }),
+      signal: AbortSignal.timeout(cfg.AI_TIMEOUT_MS),
+    });
 
-  if (!res.ok) {
-    throw new ProviderError(`openai ${res.status}`, [], res.status >= 500 || res.status === 429, res.status);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      const err = new ProviderError(`openai chat ${res.status} (${model}): ${detail.slice(0, 200)}`,
+                                    [], res.status >= 500 || res.status === 429, res.status);
+      (err as any).providerStatus = res.status;
+      (err as any).providerBody = detail.slice(0, 500);
+      throw err;
+    }
+
+    const j: any = await res.json();
+    const u = j.usage ?? {};
+    const input = u.prompt_tokens ?? 0;
+    const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+    const output = u.completion_tokens ?? 0;
+
+    return {
+      text: j.choices?.[0]?.message?.content ?? "",
+      usage: { model: j.model ?? model, inputTokens: input, cachedTokens: cached, outputTokens: output,
+               costUsd: costUsd(model, input, cached, output),
+               latencyMs: Date.now() - started, escalated: false },
+    };
   }
 
-  const j: any = await res.json();
-  const text = j.output_text ??
-    j.output?.flatMap((o: any) => o.content ?? []).find((c: any) => c.type === "output_text")?.text ?? "";
-  const u = j.usage ?? {};
-  const input = u.input_tokens ?? 0, cached = u.input_tokens_details?.cached_tokens ?? 0, output = u.output_tokens ?? 0;
+  async function viaResponses(model: string) {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${cfg.OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model,
+        instructions: system,
+        input: [{ role: "user", content: [{ type: "input_text", text: user }] }],
+        max_output_tokens: opts.maxTokens ?? 300,
+        ...(opts.json ? { text: { format: { type: "json_object" } } } : {}),
+      }),
+      signal: AbortSignal.timeout(cfg.AI_TIMEOUT_MS),
+    });
 
-  return {
-    text,
-    usage: { model: cfg.AI_MODEL, inputTokens: input, cachedTokens: cached, outputTokens: output,
-             costUsd: costUsd(cfg.AI_MODEL, input, cached, output),
-             latencyMs: Date.now() - started, escalated: false },
-  };
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      const err = new ProviderError(`openai ${res.status} (${model}): ${detail.slice(0, 200)}`,
+                                    [], res.status >= 500 || res.status === 429, res.status);
+      (err as any).providerStatus = res.status;
+      (err as any).providerBody = detail.slice(0, 500);
+      throw err;
+    }
+
+    const j: any = await res.json();
+    const text = j.output_text ??
+      j.output?.flatMap((o: any) => o.content ?? []).find((c: any) => c.type === "output_text")?.text ?? "";
+    const u = j.usage ?? {};
+    const input = u.input_tokens ?? 0;
+    const cached = u.input_tokens_details?.cached_tokens ?? 0;
+    const output = u.output_tokens ?? 0;
+
+    return {
+      text,
+      usage: { model: cfg.AI_MODEL, inputTokens: input, cachedTokens: cached, outputTokens: output,
+               costUsd: costUsd(cfg.AI_MODEL, input, cached, output),
+               latencyMs: Date.now() - started, escalated: false },
+    };
+  }
+
+  const attempts = [
+    () => viaResponses(cfg.AI_MODEL),
+    () => viaChat(cfg.AI_MODEL),
+    () => viaChat("gpt-4o-mini"),
+  ];
+
+  let last: unknown;
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (e: any) {
+      last = e;
+      const status = e?.providerStatus ?? e?.status;
+      // A bad key cannot be fixed by another endpoint.
+      if (status === 401 || status === 403) throw e;
+    }
+  }
+  throw last;
 }
 
 export { parseJson };
