@@ -40,6 +40,14 @@ const Env = z.object({
   ALLOWED_ORIGINS: z.string().default(""),
   RUN_MIGRATIONS_ON_BOOT: z.coerce.boolean().default(true),
   ADMIN_USER_IDS: z.string().default(""),
+
+  /**
+   * Testing switch: treats every account as Premium.
+   *
+   * Refused in production at boot — an env typo must not silently give the
+   * whole userbase free subscriptions.
+   */
+  DEV_UNLOCK_PREMIUM: z.coerce.boolean().default(false),
 });
 
 function load() {
@@ -66,8 +74,21 @@ export const usdaKey = cfg.USDA_FDC_API_KEY || cfg.DATA_GOV_API_KEY || "DEMO_KEY
 export const allowedOrigins = cfg.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
 export const adminUserIds = new Set(cfg.ADMIN_USER_IDS.split(",").map((s) => s.trim()).filter(Boolean));
 
+/** True only when premium is force-unlocked outside production. */
+export const premiumUnlocked = cfg.DEV_UNLOCK_PREMIUM && cfg.NODE_ENV !== "production";
+
 /** The AI provider selected must actually have a key, or scans 500 at runtime. */
 export function assertProviderConfigured() {
+  // The mock provider returns invented foods. Useful in CI, catastrophic in
+  // production — it is indistinguishable from a real scan on the client.
+  if (cfg.AI_PROVIDER === "mock" && cfg.NODE_ENV === "production") {
+    throw new Error("AI_PROVIDER=mock is not allowed in production: it returns fabricated foods");
+  }
+
+  if (cfg.DEV_UNLOCK_PREMIUM && cfg.NODE_ENV === "production") {
+    throw new Error("DEV_UNLOCK_PREMIUM cannot be enabled in production");
+  }
+
   if (cfg.AI_PROVIDER === "openai" && !cfg.OPENAI_API_KEY) {
     throw new Error("AI_PROVIDER=openai but OPENAI_API_KEY is not set");
   }
