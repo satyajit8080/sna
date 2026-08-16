@@ -298,17 +298,6 @@ struct PriorityAction: Codable, Identifiable, Hashable {
         }
     }
 
-    var tint: Color {
-        switch domain {
-        case "nutrition":  Theme.protein
-        case "fitness":    Theme.accent
-        case "sleep":      Theme.water
-        case "recovery":   Theme.streak
-        case "hydration":  Theme.water
-        case "activity":   Theme.steps
-        default:           Theme.accent
-        }
-    }
 }
 
 struct DailyBriefing: Codable {
