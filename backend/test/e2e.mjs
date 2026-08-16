@@ -1294,3 +1294,160 @@ test("scanned meals with several foods save and total correctly", async () => {
     assert.equal(dash.json.meals[0].items.length, 3);
   } finally { token = saved; }
 });
+
+// ─── coach intent: cards only when a recommendation was asked for ──────────
+
+test("intent classifier separates recommendation from analysis", async () => {
+  const { classify, isOnTopic, answerContainsRefusal } =
+    await import("../dist/services/coachIntent.js");
+
+  for (const q of [
+    "What should I eat today for weight loss",
+    "You suggest one food",
+    "what fruit have highest protein",
+    "What food should i eat now i am based in netherlands",
+    "give me a high protein meal",
+    "what can I eat under 500 calories",
+    "recommend something for dinner",
+  ]) {
+    assert.equal(classify(q), "recommendation", `"${q}" should be a recommendation`);
+  }
+
+  for (const q of [
+    "I ate a burger, how many calories",
+    "how many calories in what I ate",
+    "what did i eat today",
+  ]) {
+    assert.equal(classify(q), "analysis", `"${q}" should be analysis`);
+  }
+
+  assert.equal(classify("why isn't my weight dropping"), "progress");
+
+  // Off-topic must be detectable so the coach doesn't bolt calories onto it.
+  assert.equal(isOnTopic("President of Australia"), false);
+  assert.equal(isOnTopic("what should i eat"), true);
+
+  // A hedged answer must never carry a card.
+  assert.ok(answerContainsRefusal("I'll need the food scanned or searched first."));
+  assert.ok(answerContainsRefusal("I can only help with food and nutrition."));
+  assert.ok(!answerContainsRefusal("Grilled salmon fits your 900 calories left."));
+});
+
+test("a general question returns no meal card", async () => {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`intent-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Intent", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    // Off-topic — no card, and the intent must not be a recommendation.
+    const offTopic = await api("/coach/ask", {
+      method: "POST", body: { question: "Who is the president of Australia?" } });
+    assert.equal(offTopic.status, 200);
+    assert.equal(offTopic.json.suggestion, null,
+      "an off-topic question must never attach a meal card");
+
+    // General on-topic question — still no card.
+    const general = await api("/coach/ask", {
+      method: "POST", body: { question: "How do I start the day well?" } });
+    assert.equal(general.json.suggestion, null,
+      "a general question must not attach a meal card");
+    assert.equal(general.json.intent, "general");
+
+    // Explicit request — card allowed.
+    const explicit = await api("/coach/ask", {
+      method: "POST", body: { question: "Suggest one food for weight loss" } });
+    assert.equal(explicit.json.intent, "recommendation");
+  } finally { token = saved; }
+});
+
+test("a card never accompanies an answer that refuses to recommend", async () => {
+  const { answerContainsRefusal } = await import("../dist/services/coachIntent.js");
+
+  // The exact strings seen on device, each alongside a meal card.
+  for (const answer of [
+    "I'll need the food scanned or searched first to provide a suggestion.",
+    "You have 1834 calories left, I'll need a food scanned or searched to suggest one.",
+    "0, I'll need the fruit scanned or searched first to provide a suggestion.",
+  ]) {
+    assert.ok(answerContainsRefusal(answer),
+      `"${answer.slice(0, 40)}..." must suppress the card`);
+  }
+});
+
+test("USDA record names never reach the diary", async () => {
+  const { looksLikeDatabaseRecord, displayName } =
+    await import("../dist/nutrition/resolve.js");
+
+  // Real FoodData Central descriptions — identifiers, not dish names.
+  for (const name of [
+    "Onions, red, raw",
+    "Tomatoes, red, ripe, raw",
+    "Fish, salmon, atlantic, farmed, cooked, dry heat",
+    "Beans, snap, green, canned",
+    "Chicken breast, cooked",
+  ]) {
+    assert.ok(looksLikeDatabaseRecord(name), `"${name}" should be treated as a record`);
+  }
+
+  // Dish names must pass through untouched.
+  for (const name of ["Butter chicken", "Grilled steak", "Turkey sandwich", "Mac and cheese"]) {
+    assert.ok(!looksLikeDatabaseRecord(name), `"${name}" is a dish name`);
+  }
+
+  // The model's label wins over a record; a real dish name wins over the model.
+  assert.equal(displayName("fish curry", "Fish, salmon, atlantic, raw"), "fish curry");
+  assert.equal(displayName("onions", "Onions, red, raw"), "onions");
+  assert.equal(displayName("chicken", "grilled chicken breast"), "grilled chicken breast");
+  assert.equal(displayName("something", undefined), "something");
+});
+
+test("water logging accepts a decrement and never goes negative", async () => {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`water-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Water", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    await api("/water", { method: "POST", body: { ml: 250 } });
+    await api("/water", { method: "POST", body: { ml: 250 } });
+    let dash = await api("/dashboard");
+    assert.equal(dash.json.water_ml, 500);
+
+    // Undo one glass.
+    await api("/water", { method: "POST", body: { ml: -250 } });
+    dash = await api("/dashboard");
+    assert.equal(dash.json.water_ml, 250, "a negative delta must subtract");
+
+    // Over-subtracting must floor at zero, not go negative.
+    await api("/water", { method: "POST", body: { ml: -1000 } });
+    dash = await api("/dashboard");
+    assert.ok(dash.json.water_ml >= 0, "water must never go negative");
+  } finally { token = saved; }
+});
