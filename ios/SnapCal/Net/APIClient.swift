@@ -286,6 +286,14 @@ actor APIClient {
 
     func dashboard() async throws -> Dashboard { try await get("dashboard", as: Dashboard.self) }
 
+    func profile() async throws -> ProfileSummary {
+        struct Wrapper: Decodable { let profile: ProfileSummary? }
+        guard let p = try await get("profile", as: Wrapper.self).profile else {
+            throw APIError.server("No profile yet")
+        }
+        return p
+    }
+
     // MARK: - Entitlements, coach, planner
 
     func entitlements() async throws -> Entitlements { try await get("entitlements", as: Entitlements.self) }
@@ -311,6 +319,12 @@ actor APIClient {
     }
 
     /// Free, no AI, no quota — safe to call on every dashboard refresh.
+    /// Free, no AI, no quota — powers the Home insight card.
+    func coachInsight() async throws -> String {
+        struct Wrapper: Decodable { let insight: String }
+        return try await get("coach/insight", as: Wrapper.self).insight
+    }
+
     func nextMealSuggestion() async throws -> SuggestionResponse {
         try await get("coach/suggestion", as: SuggestionResponse.self)
     }
