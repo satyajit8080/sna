@@ -539,3 +539,99 @@ struct UnitNormalisationTests {
         #expect(i.grams == 90, "3 slices at 30g each")
     }
 }
+
+/// Briefing and Brain decoding. These shapes come straight from the backend,
+/// and a mismatch shows up as an empty screen rather than an error.
+struct BriefingTests {
+
+    @Test("briefing decodes with actions and missing metrics")
+    func decodeBriefing() throws {
+        let json = """
+        {"date":"2026-08-16","mode":"recovery",
+         "headline":"Lighter day. Your body's asking for a bit of slack.",
+         "actions":[{"id":"a1","domain":"recovery",
+           "action":"Take today easy","reason":"You slept 24% below your usual.",
+           "confidence":0.85,"triggeredBy":["recovery_mode"],"score":76}],
+         "missing":["hrv","weight"],"generated":true}
+        """.data(using: .utf8)!
+
+        let b = try JSONDecoder().decode(DailyBriefing.self, from: json)
+        #expect(b.mode == "recovery")
+        #expect(b.actions.count == 1)
+        #expect(b.missing == ["hrv", "weight"])
+
+        // Every action must arrive with its reason — a card without one is an
+        // app telling someone what to do with no justification.
+        #expect(!b.actions[0].reason.isEmpty)
+        #expect(b.actions[0].icon == "heart.text.square")
+    }
+
+    @Test("an empty briefing is valid, not an error")
+    func emptyBriefing() throws {
+        let json = """
+        {"date":"2026-08-16","mode":"maintenance","headline":"Fresh start.",
+         "actions":[],"missing":[],"generated":true}
+        """.data(using: .utf8)!
+        let b = try JSONDecoder().decode(DailyBriefing.self, from: json)
+        #expect(b.actions.isEmpty)
+    }
+
+    @Test("every domain maps to an icon and a colour")
+    func domainMapping() {
+        for domain in ["nutrition", "fitness", "sleep", "recovery",
+                       "hydration", "activity", "habit", "something_new"] {
+            let a = PriorityAction(id: "x", domain: domain, action: "a",
+                                   reason: "r", confidence: 1)
+            // An unknown domain must still render rather than crash — the
+            // backend can add one without an app update.
+            #expect(!a.icon.isEmpty)
+        }
+    }
+}
+
+struct BrainMemoryTests {
+
+    @Test("memories group by layer with human-readable labels")
+    func decodeMemories() throws {
+        let json = """
+        {"layers":{
+          "routine":[{"id":"m1","content":"usually eats breakfast around 7am",
+                      "confidence":0.9,"evidence_count":6,"user_edited":false}],
+          "procedural":[{"id":"m2","content":"sleep changes measurably help",
+                         "confidence":0.8,"evidence_count":4,"user_edited":false}]},
+         "labels":{"routine":"Your usual patterns","procedural":"What works for you"},
+         "total":2}
+        """.data(using: .utf8)!
+
+        let m = try JSONDecoder().decode(BrainMemories.self, from: json)
+        #expect(m.total == 2)
+
+        let ordered = m.orderedLayers
+        // Routines first: they're the most recognisable, which is what makes
+        // the screen feel accurate rather than unsettling.
+        #expect(ordered.first?.label == "Your usual patterns")
+        // Never show raw layer names to a user.
+        #expect(!ordered.contains { $0.label == "routine" })
+    }
+
+    @Test("an empty brain has nothing to show, and that is fine")
+    func emptyBrain() throws {
+        let json = """
+        {"layers":{},"labels":{"routine":"Your usual patterns"},"total":0}
+        """.data(using: .utf8)!
+        let m = try JSONDecoder().decode(BrainMemories.self, from: json)
+        #expect(m.total == 0)
+        #expect(m.orderedLayers.isEmpty)
+    }
+
+    @Test("a user-corrected memory is marked as theirs")
+    func userEdited() throws {
+        let json = """
+        {"id":"m1","content":"hates running","confidence":1.0,
+         "evidence_count":1,"user_edited":true}
+        """.data(using: .utf8)!
+        let m = try JSONDecoder().decode(BrainMemory.self, from: json)
+        #expect(m.userEdited)
+        #expect(m.confidence == 1.0)
+    }
+}
