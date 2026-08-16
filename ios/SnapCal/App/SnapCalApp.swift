@@ -43,6 +43,7 @@ struct SnapCalApp: App {
                     Task {
                         await health.syncToday(force: true)
                         await app.refresh()
+                        await app.runLearningCycleIfDue()
                     }
                 }
         }
