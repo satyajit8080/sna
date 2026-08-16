@@ -143,6 +143,53 @@ def check_input_method_contract() -> None:
             fail(f"backend input_method enum changed to {sorted(backend)} — update the client")
 
 
+def check_exhaustive_switches() -> None:
+    """
+    A `switch` over an app enum must handle every case or have a default.
+
+    Adding an enum case and missing one switch is a compile error that only
+    appears on a macOS runner — cheap to catch here.
+    """
+    for path in APP:
+        src = path.read_text()
+
+        for enum_match in re.finditer(r"enum (\w+): String[^{]*\{(.*?)\n\}", src, re.S):
+            name, body = enum_match.group(1), enum_match.group(2)
+            cases: set[str] = set()
+            for line in body.split("\n"):
+                m = re.match(r"\s*case\s+([\w, ]+)$", line)
+                if m:
+                    cases |= {c.strip() for c in m.group(1).split(",") if c.strip()}
+            if not cases:
+                continue
+
+            # Every switch in the app that dispatches on this enum's cases.
+            for sw in re.finditer(r"switch\s+[\w.$]+\s*\{", src):
+                start = sw.end()
+                depth, i = 1, start
+                while i < len(src) and depth:
+                    if src[i] == "{": depth += 1
+                    elif src[i] == "}": depth -= 1
+                    i += 1
+                block = src[start:i]
+
+                # `case .a, .b:` lists several cases on one line — capture all
+                # of them, or the check reports a false missing case.
+                handled: set[str] = set()
+                for case_line in re.findall(r"case\s+([^\n:]+):", block):
+                    handled |= set(re.findall(r"\.(\w+)", case_line))
+                if not handled or not handled & cases:
+                    continue                      # switching on something else
+                if re.search(r"\bdefault\s*:", block):
+                    continue
+
+                missing = cases - handled
+                if missing:
+                    line_no = src[:sw.start()].count("\n") + 1
+                    fail(f"{path.name}:{line_no}: switch over {name} missing "
+                         f"{sorted(missing)} — add the case or a default")
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -171,6 +218,7 @@ for path in TESTS:
 
 check_guest_is_empty()
 check_input_method_contract()
+check_exhaustive_switches()
 
 for message in failures:
     print(f"FAIL  {message}")
