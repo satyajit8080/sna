@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+Static checks for the Swift sources.
+
+Covers the failure classes that have actually reached a build in this project:
+unbalanced delimiters, `dismiss()` without a declaration, `$0` inside an
+explicit-argument closure, Decimal-times-integer, and fabricated food data on a
+production surface.
+
+    python3 ios/tools/lint_swift.py
+"""
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+APP = sorted((ROOT / "SnapCal").rglob("*.swift"))
+TESTS = sorted((ROOT / "SnapCalTests").rglob("*.swift")) + \
+        sorted((ROOT / "SnapCalUITests").rglob("*.swift"))
+
+# The onboarding animation is an explicit, labelled product demo shown before
+# sign-in. It never mixes with user data, so it is the one sanctioned place a
+# food name may be hardcoded.
+DEMO_EXEMPT = {"WelcomeView.swift"}
+
+FOODS = ["rajma", "fish curry", "grilled chicken", "dal tadka",
+         "roti", "paneer", "biryani", "poha", "idli"]
+
+failures: list[str] = []
+
+
+def fail(msg: str) -> None:
+    failures.append(msg)
+
+
+def check_delimiters(path: Path, src: str) -> None:
+    for open_ch, close_ch, name in (("{", "}", "braces"),
+                                    ("(", ")", "parens"),
+                                    ("[", "]", "brackets")):
+        if src.count(open_ch) != src.count(close_ch):
+            fail(f"{path.name}: unbalanced {name}")
+
+
+def check_dismiss(path: Path, src: str) -> None:
+    """`dismiss()` needs an @Environment declaration in the *same* struct."""
+    for match in re.finditer(r"struct (\w+): View \{", src):
+        start = match.end()
+        nxt = src.find("\nstruct ", start)
+        block = src[start: nxt if nxt > 0 else len(src)]
+        if "dismiss()" in block and "private var dismiss" not in block:
+            fail(f"{path.name}: {match.group(1)} calls dismiss() without declaring it")
+
+
+def check_closures(path: Path, src: str) -> None:
+    for i, line in enumerate(src.split("\n"), 1):
+        if re.search(r"\{\s*\w+\s+in\b", line) and "$0" in line.split("in", 1)[-1]:
+            fail(f"{path.name}:{i}: $0 inside an explicit-argument closure")
+        if re.search(r"\.price\s*[*/]\s*\d+\b", line):
+            fail(f"{path.name}:{i}: Decimal price mixed with an integer literal")
+
+
+def check_swiftui_import(path: Path, src: str) -> None:
+    if "View {" in src and "import SwiftUI" not in src:
+        fail(f"{path.name}: uses View without importing SwiftUI")
+
+
+def check_no_fabricated_food(path: Path, src: str) -> None:
+    """
+    No production surface may hardcode a food with a calorie figure.
+
+    Fabricated meals are indistinguishable from real ones on screen — this is
+    exactly how foods nobody logged ended up on the Home screen.
+    """
+    if path.name in DEMO_EXEMPT:
+        return
+    for i, line in enumerate(src.split("\n"), 1):
+        low = line.lower()
+        hit = next((food for food in FOODS if food in low), None)
+        if not hit:
+            continue
+        if not re.search(r"\b\d{2,4}\b", line):
+            continue
+        if "//" in line[: low.find(hit)]:       # a comment, not code
+            continue
+        fail(f"{path.name}:{i}: hardcoded food with a number on a production surface")
+
+
+def check_guest_is_empty() -> None:
+    models = (ROOT / "SnapCal/Net/Models.swift").read_text()
+    start = models.find("static let guest =")
+    if start == -1:
+        fail("Models.swift: Dashboard.guest missing")
+        return
+    guest = models[start: models.find("static let placeholder")]
+    if "Meal(" in guest:
+        fail("Models.swift: guest dashboard fabricates meals")
+
+
+for path in APP:
+    src = path.read_text()
+    check_delimiters(path, src)
+    check_dismiss(path, src)
+    check_closures(path, src)
+    check_swiftui_import(path, src)
+    check_no_fabricated_food(path, src)
+
+# Test fixtures may name any food — they are never rendered to a user.
+for path in TESTS:
+    src = path.read_text()
+    check_delimiters(path, src)
+    check_closures(path, src)
+
+check_guest_is_empty()
+
+for message in failures:
+    print(f"FAIL  {message}")
+
+print(f"\nswift lint: {'PASS' if not failures else f'FAIL ({len(failures)})'} "
+      f"({len(APP)} app files, {len(TESTS)} test files)")
+sys.exit(1 if failures else 0)
