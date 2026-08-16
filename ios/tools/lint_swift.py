@@ -190,6 +190,56 @@ def check_exhaustive_switches() -> None:
                          f"{sorted(missing)} — add the case or a default")
 
 
+def check_no_duplicate_declarations(path: Path, src: str) -> None:
+    """
+    A type declared twice in one file, or a method declared twice inside the
+    same type.
+
+    Scripted edits that append rather than replace produce this, and Swift only
+    reports it as "invalid redeclaration" on a macOS runner. Methods are scoped
+    to their enclosing type, since `makeBody` legitimately appears once per
+    ViewModifier.
+    """
+    types: dict[str, int] = {}
+    current_type = "<file>"
+    methods: dict[tuple[str, str], int] = {}
+
+    for line_no, line in enumerate(src.split("\n"), 1):
+        type_match = re.match(r"^(?:struct|class|enum|actor|protocol)\s+(\w+)", line)
+        if type_match:
+            name = type_match.group(1)
+            if name in types:
+                fail(f"{path.name}:{line_no}: duplicate type '{name}' "
+                     f"(also at line {types[name]})")
+            else:
+                types[name] = line_no
+            current_type = name
+            continue
+
+        func_match = re.match(
+            r"^\s+(?:@\w+\s+)*(?:private |fileprivate |internal |public |static |nonisolated )*"
+            r"func\s+(\w+)\s*\(", line)
+        if func_match:
+            # Read to the closing paren: Swift signatures often wrap, and
+            # truncating at the newline makes two different overloads look
+            # identical.
+            rest = "\n".join(src.split("\n")[line_no - 1:])
+            open_at = rest.index("(")
+            depth, i = 1, open_at + 1
+            while i < len(rest) and depth:
+                if rest[i] == "(": depth += 1
+                elif rest[i] == ")": depth -= 1
+                i += 1
+            params = re.sub(r"\s+", " ", rest[open_at + 1:i - 1]).strip()
+            signature = (current_type, f"{func_match.group(1)}({params})")
+            if signature in methods:
+                fail(f"{path.name}:{line_no}: duplicate method "
+                     f"'{func_match.group(1)}' in {current_type} "
+                     f"(also at line {methods[signature]})")
+            else:
+                methods[signature] = line_no
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -208,6 +258,7 @@ for path in APP:
     check_closures(path, src)
     check_swiftui_import(path, src)
     check_import_placement(path, src)
+    check_no_duplicate_declarations(path, src)
     check_no_fabricated_food(path, src)
 
 # Test fixtures may name any food — they are never rendered to a user.
