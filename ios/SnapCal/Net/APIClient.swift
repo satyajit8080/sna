@@ -353,6 +353,51 @@ actor APIClient {
     }
 
     /// Free, no AI, no quota — safe to call on every dashboard refresh.
+    // MARK: - Briefing and the Brain
+
+    /// Today's priorities. Free, no AI call, idempotent per day.
+    func briefing() async throws -> DailyBriefing {
+        try await get("coach/briefing", as: DailyBriefing.self)
+    }
+
+    /// Records whether an action was done or dismissed. This is what lets the
+    /// coach learn which suggestions actually land for this person.
+    func respondToAction(id: String, status: String) async throws {
+        struct Body: Encodable { let status: String }
+        _ = try await send(request("recommendations/\(id)/respond", method: "POST",
+                                   body: try encoder.encode(Body(status: status))),
+                           as: Empty.self)
+    }
+
+    func brainMemories() async throws -> BrainMemories {
+        try await get("brain/memories", as: BrainMemories.self)
+    }
+
+    func editMemory(id: String, content: String) async throws {
+        struct Body: Encodable { let content: String }
+        _ = try await send(request("brain/memories/\(id)", method: "PATCH",
+                                   body: try encoder.encode(Body(content: content))),
+                           as: Empty.self)
+    }
+
+    func forgetMemory(id: String) async throws {
+        _ = try await send(request("brain/memories/\(id)", method: "DELETE"), as: Empty.self)
+    }
+
+    /// Measures what last week's advice did, then updates the brain.
+    /// Called once a day on foreground — without it the brain never learns.
+    @discardableResult
+    func runLearnCycle() async throws -> LearnCycleResult {
+        try await post("coach/learn-cycle", Empty(), as: LearnCycleResult.self)
+    }
+
+    /// Pushes normalized metrics. Separate from syncHealth because this accepts
+    /// any metric with a confidence, which is what the state engine needs.
+    func sendObservations(_ observations: [[String: Any]]) async throws {
+        let payload = try JSONSerialization.data(withJSONObject: ["observations": observations])
+        _ = try await send(request("observations", method: "POST", body: payload), as: Empty.self)
+    }
+
     /// Free, no AI, no quota — powers the Home insight card.
     func coachInsight() async throws -> String {
         struct Wrapper: Decodable { let insight: String }
