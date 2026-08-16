@@ -81,19 +81,30 @@ export async function suggestNextMeal(
   const country = context.country ?? "US";
   const preferredCuisines = prefs?.cuisines?.length
     ? prefs.cuisines.map((c) => c.toLowerCase())
-    : country === "IN" ? ["indian", "global"]
-    : country === "GB" ? ["british", "global"]
-    : ["american", "global"];
+    : country === "IN" ? ["indian"]
+    : country === "GB" ? ["british"]
+    : country === "AU" ? ["american", "british"]
+    : country === "CA" ? ["american", "canadian"]
+    : ["american"];
 
-  // Foods already logged today are poor suggestions — variety matters more
-  // than a marginally better macro fit.
-  const eaten = await q<{ name: string }>(
-    `SELECT DISTINCT lower(i.name) AS name
-       FROM meals m JOIN meal_items i ON i.meal_id = m.id
-      WHERE m.user_id = $1 AND m.logged_on = $2`,
-    [userId, day]
-  );
-  const eatenNames = new Set(eaten.map((r) => r.name));
+  // Foods eaten today, plus anything suggested in the last three days.
+  // Without the second list the same top-scoring food is proposed forever,
+  // which is exactly how "grilled chicken breast" became a running joke.
+  const [eaten, recent] = await Promise.all([
+    q<{ name: string }>(
+      `SELECT DISTINCT lower(i.name) AS name
+         FROM meals m JOIN meal_items i ON i.meal_id = m.id
+        WHERE m.user_id = $1 AND m.logged_on > $2::date - 2`,
+      [userId, day]
+    ),
+    q<{ name: string }>(
+      `SELECT DISTINCT lower(food_name) AS name
+         FROM suggestion_log
+        WHERE user_id = $1 AND created_at > now() - interval '3 days'`,
+      [userId]
+    ),
+  ]);
+  const eatenNames = new Set([...eaten, ...recent].map((r) => r.name));
 
   const banned = [...(prefs?.allergies ?? []), ...(prefs?.dislikes ?? [])]
     .map((s) => s.toLowerCase())
@@ -108,21 +119,45 @@ export async function suggestNextMeal(
     : prefs?.diet === "vegetarian" ? meatTerms
     : [];
 
-  const candidates = await q<any>(
+  /**
+   * Cuisine is a filter, not a tiebreaker.
+   *
+   * Scoring it as a bonus meant a high-protein off-cuisine dish still won, so
+   * US users were offered biryani. Foods tagged `global` stay eligible because
+   * eggs and chicken belong on every plate.
+   */
+  const allowed = [...new Set([...preferredCuisines, "global"])];
+
+  let candidates = await q<any>(
     `SELECT id, name, cuisine, kcal_100g, protein_100g, carbs_100g, fat_100g,
-            default_unit, default_grams,
-            (cuisine = ANY($1::text[])) AS on_cuisine
+            default_unit, default_grams, true AS on_cuisine
        FROM food_database
       WHERE kcal_100g > 0
         AND verified
         AND COALESCE(default_grams, 100) BETWEEN 30 AND 500
-      ORDER BY (cuisine = ANY($1::text[])) DESC, (source = 'curated') DESC, protein_100g DESC
+        AND (cuisine = ANY($1::text[]) OR cuisine IS NULL)
+      ORDER BY (source = 'curated') DESC, id
       LIMIT 400`,
-    [preferredCuisines]
+    [allowed]
   );
 
-  let best: MealSuggestion | null = null;
-  let bestScore = -Infinity;
+  // Only widen if the user's cuisines yield nothing usable — better an
+  // off-cuisine suggestion than a blank card.
+  if (candidates.length < 5) {
+    candidates = await q<any>(
+      `SELECT id, name, cuisine, kcal_100g, protein_100g, carbs_100g, fat_100g,
+              default_unit, default_grams, false AS on_cuisine
+         FROM food_database
+        WHERE kcal_100g > 0 AND verified
+          AND COALESCE(default_grams, 100) BETWEEN 30 AND 500
+        ORDER BY (source = 'curated') DESC, id
+        LIMIT 400`
+    );
+  }
+
+  // Collect every viable option, then pick from the strongest few. Taking the
+  // single best is deterministic and produces the same answer every time.
+  const scored: Array<{ score: number; suggestion: MealSuggestion }> = [];
 
   for (const row of candidates) {
     const name = String(row.name).toLowerCase();
@@ -141,9 +176,11 @@ export async function suggestNextMeal(
     // on-cuisine option.
     const s = score(kcal, protein, remainingKcal, remainingProtein)
             + (row.on_cuisine ? 0.6 : 0);
-    if (s > bestScore) {
-      bestScore = s;
-      best = {
+    if (!Number.isFinite(s)) continue;
+
+    scored.push({
+      score: s,
+      suggestion: {
         food_id: row.id,
         name: row.name,
         slot: slotForNow(tz),
@@ -161,11 +198,26 @@ export async function suggestNextMeal(
         reason: remainingProtein > 25
           ? `${protein}g protein, fits your ${remainingKcal} kcal left`
           : `${kcal} kcal — leaves room in your ${remainingKcal} remaining`,
-      };
-    }
+      },
+    });
   }
 
-  return best;
+  if (!scored.length) return null;
+
+  // Rotate through the top candidates rather than always returning the peak.
+  // They are all good fits; picking one at random is what makes the coach feel
+  // like it is thinking rather than reciting.
+  scored.sort((a, b) => b.score - a.score);
+  const pool = scored.slice(0, Math.min(8, scored.length));
+  const picked = pool[Math.floor(Math.random() * pool.length)]!.suggestion;
+
+  // Remember it so the next few days propose something else.
+  await q(
+    `INSERT INTO suggestion_log (user_id, food_id, food_name) VALUES ($1,$2,$3)`,
+    [userId, picked.food_id, picked.name.toLowerCase()]
+  ).catch(() => {});
+
+  return picked;
 }
 
 /** Same shaping the app uses when saving, so the diary maths agrees exactly. */
