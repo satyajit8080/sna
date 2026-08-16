@@ -9,6 +9,9 @@ import { COACH_SYSTEM, MEAL_PLAN_SYSTEM } from "../ai/prompts.js";
 import { buildContext, complete, parseJson } from "../services/coachContext.js";
 import { chat, cheapestModels } from "../ai/openrouter.js";
 import { suggestNextMeal } from "../services/suggest.js";
+import * as safety from "../services/safety.js";
+import { recall, memoriesForPrompt } from "../services/brain.js";
+import { buildHealthState, summariseForPrompt } from "../services/healthState.js";
 import { onboardingState, welcomeLine } from "../services/coachOnboarding.js";
 import { topPatterns } from "../services/patterns.js";
 import { generateWorkout, savePlan } from "../services/workoutPlanner.js";
@@ -49,8 +52,26 @@ export default async function routes(app: FastifyInstance) {
   app.post("/coach/ask", { preHandler: requireAuth }, async (req) => {
     const { question } = z.object({ question: z.string().min(2).max(300) }).parse(req.body);
 
-    // Classification first: it decides which context is worth gathering and
-    // how large a response to pay for.
+    // Safety first, before intent and before any context is gathered. A
+    // blocked category never reaches the model at all, so no amount of
+    // prompt-wrangling can talk it into answering.
+    const verdict = safety.assess(question);
+
+    if (verdict.action === "block") {
+      await q(`INSERT INTO coach_messages (user_id, role, content, intent)
+               VALUES ($1,'user',$2,'safety'), ($1,'assistant',$3,'safety')`,
+        [req.userId, question, verdict.response!]);
+
+      return {
+        answer: verdict.response!,
+        suggestion: null,
+        intent: "safety",
+        entitlements: await entitlementsFor(req.userId),
+      };
+    }
+
+    // Classification decides which context is worth gathering and how large a
+    // response to pay for.
     const intent = classify(question);
     const guard = guardFor(question);
     const onTopic = isOnTopic(question);
@@ -61,9 +82,18 @@ export default async function routes(app: FastifyInstance) {
       // Patterns are arithmetic over logged history, not model output, so they
       // cannot hallucinate. Only gathered where they change the answer — a
       // calorie check does not need a fortnight of trends.
-      const patterns = ["daily_plan", "progress", "workout_request"].includes(intent)
-        ? await topPatterns(req.userId, 3)
-        : [];
+      const wantsDeepContext = ["daily_plan", "progress", "workout_request", "sleep"]
+        .includes(intent);
+
+      const [patterns, memories, healthState] = await Promise.all([
+        wantsDeepContext ? topPatterns(req.userId, 3) : Promise.resolve([]),
+        // Memory goes to every turn: knowing someone dislikes running matters
+        // as much for a one-line answer as for a plan.
+        recall(req.userId, { limit: 10 }),
+        wantsDeepContext
+          ? buildHealthState(req.userId, localDate(req.tz))
+          : Promise.resolve(null),
+      ]);
 
       // Only the last exchange is replayed. Full history would grow the bill
       // linearly with no benefit for single-turn coaching questions.
@@ -116,6 +146,12 @@ export default async function routes(app: FastifyInstance) {
         })),
         fitness_profile: context.fitness ?? null,
         patterns_noticed: patterns,
+        // What the brain has learned. Each carries a certainty so the model
+        // hedges on a weak memory instead of asserting it as fact.
+        known_about_user: memoriesForPrompt(memories),
+        // Trends and baselines, not raw numbers — "HRV 42" means nothing
+        // without knowing this person's normal.
+        health_state: healthState ? summariseForPrompt(healthState) : null,
       };
 
       /**
@@ -126,7 +162,8 @@ export default async function routes(app: FastifyInstance) {
        * what the question is otherwise about.
        */
       const steer =
-        guard === "urgent"
+        verdict.instruction ? verdict.instruction
+        : guard === "urgent"
           ? "The user may be describing a medical emergency. Tell them plainly to seek urgent medical help now. Do not offer nutrition or training advice."
         : guard === "medical"
           ? "This touches on medication or diagnosis. Say a doctor or pharmacist is the right person, name no medication or dose, then offer help with the food, training or recovery side if there is one."
@@ -175,7 +212,10 @@ export default async function routes(app: FastifyInstance) {
       // Last line of defence: the model is instructed on medication and brands,
       // but instruction-following is probabilistic and these are the two places
       // where being wrong matters most.
-      const reply = validateResponse(cleaned, guard)
+      // Two independent checks: the older guard-based one and the safety
+      // engine's. Both are deterministic, and either can replace the answer.
+      const reply = safety.validate(cleaned, verdict)
+        ?? validateResponse(cleaned, guard)
         ?? (cleaned || "Tell me a bit more and I'll help.");
 
       await q(`INSERT INTO coach_messages (user_id, role, content, intent)
@@ -185,6 +225,9 @@ export default async function routes(app: FastifyInstance) {
       // A card only when a meal was actually requested and actually given.
       const shouldSuggest =
         onTopic && guard === null &&
+        // Never put a meal card next to a conversation about restriction or
+        // disordered eating.
+        !safety.suppressesRecommendations(verdict) &&
         intent === "meal_recommendation" &&
         !answerContainsRefusal(reply);
 
