@@ -263,46 +263,35 @@ struct NotificationPrefsTests {
 /// cold-start user in Ohio recognises the first plate they see.
 struct LocalizationTests {
 
-    private static let indiaSpecific = [
-        "roti", "chapati", "dal", "paneer", "poha", "idli", "dosa",
-        "sabzi", "bhindi", "thali", "katori", "samosa", "biryani",
-    ]
+    @Test("guest mode fabricates no meals")
+    func guestHasNoInventedMeals() {
+        let guest = Dashboard.guest
 
-    @Test("guest sample day uses North American foods only")
-    func guestSampleIsNorthAmerican() {
-        let names = Dashboard.guestSample.meals
-            .flatMap(\.items)
-            .map { $0.name.lowercased() }
-
-        #expect(!names.isEmpty)
-        for term in Self.indiaSpecific {
-            #expect(!names.contains { $0.contains(term) },
-                    "guest sample must not surface '\(term)' on first run")
-        }
-        #expect(names.contains { $0.contains("chicken") || $0.contains("eggs") || $0.contains("sandwich") })
+        // Fabricated meals are indistinguishable from real ones on screen, and
+        // were the reason foods nobody logged appeared on Home.
+        #expect(guest.meals.isEmpty)
+        #expect(guest.consumed.calories == 0)
+        #expect(guest.remaining.calories == guest.targets.calories)
     }
 
-    @Test("guest sample is a realistic part-eaten day, not an empty shell")
-    func guestSampleIsPopulated() {
-        let sample = Dashboard.guestSample
-        #expect(sample.meals.count >= 3)
-        #expect(sample.consumed.calories > 0)
-        #expect(sample.remaining.calories > 0, "should still have room left")
-        #expect(sample.consumed.calories + sample.remaining.calories == sample.targets.calories)
+    @Test("the placeholder dashboard is empty too")
+    func placeholderIsEmpty() {
+        #expect(Dashboard.placeholder.meals.isEmpty)
+        #expect(Dashboard.placeholder.consumed.calories == 0)
     }
 }
 
 struct GuestModeTests {
 
     @MainActor
-    @Test("entering guest mode shows the app without a token")
+    @Test("entering guest mode shows the app without a token or invented data")
     func enterGuest() async {
         let app = AppState()
         app.enterGuestMode()
 
         #expect(app.isGuest)
         #expect(app.phase == .ready)
-        #expect(app.dashboard.meals.count >= 3, "guests see sample content, not an empty app")
+        #expect(app.dashboard.meals.isEmpty, "guests must not be shown fabricated meals")
     }
 
     @MainActor
