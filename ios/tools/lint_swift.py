@@ -85,6 +85,36 @@ def check_no_fabricated_food(path: Path, src: str) -> None:
         fail(f"{path.name}:{i}: hardcoded food with a number on a production surface")
 
 
+BACKEND_INPUT_METHODS = {"photo", "text", "voice", "barcode", "search", "manual"}
+
+
+def check_input_method_contract() -> None:
+    """
+    Every value LogMode.inputMethod can produce must exist in the backend's
+    `input_method` enum. A mismatch here rejected every camera scan with a 400
+    that surfaced as "Something went wrong".
+    """
+    flow = (ROOT / "SnapCal/Features/Scan/LogFlowView.swift").read_text()
+    block = flow[flow.find("var inputMethod: String {"):]
+    block = block[: block.find("\n    }")]
+    produced = set(re.findall(r'"(\w+)"', block))
+
+    unknown = produced - BACKEND_INPUT_METHODS
+    if unknown:
+        fail(f"LogFlowView: input_method values the backend rejects: {sorted(unknown)}")
+
+    # The raw case name must never be sent; `camera` is not a backend value.
+    if re.search(r'method:\s*route\.mode\.rawValue', flow):
+        fail("LogFlowView: sends the raw LogMode case as input_method")
+
+    schema = (ROOT.parent / "backend/src/routes/log.ts").read_text()
+    match = re.search(r'input_method: z\.enum\(\[(.*?)\]\)', schema, re.S)
+    if match:
+        backend = set(re.findall(r'"(\w+)"', match.group(1)))
+        if backend != BACKEND_INPUT_METHODS:
+            fail(f"backend input_method enum changed to {sorted(backend)} — update the client")
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -111,6 +141,7 @@ for path in TESTS:
     check_closures(path, src)
 
 check_guest_is_empty()
+check_input_method_contract()
 
 for message in failures:
     print(f"FAIL  {message}")
