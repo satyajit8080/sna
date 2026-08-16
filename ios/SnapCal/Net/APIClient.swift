@@ -145,11 +145,22 @@ actor APIClient {
                                   ?? "The server rejected this meal.")
 
         default:
-            #if DEBUG
             let raw = String(data: data, encoding: .utf8) ?? ""
-            print("[APIClient] \(http.statusCode) \(r.url?.path ?? "") → \(raw.prefix(500))")
+            #if DEBUG
+            print("[APIClient] \(http.statusCode) \(r.url?.path ?? "") → \(raw.prefix(800))")
             #endif
-            throw APIError.server(body?.message ?? "Something went wrong. (\(http.statusCode))")
+
+            // Surface whatever the server actually said. A bare status code
+            // gives neither the user nor us anything to act on, and every
+            // failure looks identical.
+            let detail = body?.message
+                ?? body?.issues?.prefix(2).map(\.readable).joined(separator: ", ")
+                ?? (body?.error).map { "server said: \($0)" }
+                ?? raw.prefix(160).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            throw APIError.server(detail.isEmpty
+                ? "Something went wrong. (\(http.statusCode))"
+                : "\(detail) (\(http.statusCode))")
         }
     }
 
