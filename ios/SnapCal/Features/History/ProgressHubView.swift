@@ -2,6 +2,7 @@ import SwiftUI
 import Charts
 
 struct ProgressHubView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var app
     @Environment(EntitlementStore.self) private var entitlements
 
