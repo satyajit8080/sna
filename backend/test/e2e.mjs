@@ -1207,3 +1207,90 @@ test("every meal the dashboard returns belongs to the caller", async () => {
     `SELECT COUNT(*)::int AS n FROM meals WHERE user_id IS NULL`);
   assert.equal(orphans.rows[0].n, 0, "meals must always be user-scoped");
 });
+
+
+// ─── request contract: input_method ────────────────────────────────────────
+
+test("every input method the client sends is accepted", async () => {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`method-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Method", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    // Exactly what LogMode.inputMethod can produce.
+    for (const method of ["photo", "text", "voice", "barcode", "search", "manual"]) {
+      const { status, json } = await api("/meals", { method: "POST", body: {
+        slot: "snack", input_method: method,
+        items: [{ name: `via ${method}`, quantity: 1, unit: "serving", grams: 100,
+                  kcal_100g: 100, protein_100g: 5, carbs_100g: 10, fat_100g: 3,
+                  is_estimate: false }] } });
+      assert.equal(status, 200, `input_method "${method}" must be accepted, got ${JSON.stringify(json)}`);
+    }
+
+    // The old client sent the raw capture mode; it must still be rejected so
+    // the mismatch can never pass silently.
+    const bad = await api("/meals", { method: "POST", body: {
+      slot: "snack", input_method: "camera",
+      items: [{ name: "x", quantity: 1, unit: "serving", grams: 100,
+                kcal_100g: 100, protein_100g: 5, carbs_100g: 10, fat_100g: 3,
+                is_estimate: false }] } });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.json.error, "validation_failed");
+    assert.ok(bad.json.issues?.length, "validation errors must name the field");
+
+    const dash = await api("/dashboard");
+    assert.equal(dash.json.meals.length, 6, "all six saves must reach the diary");
+  } finally { token = saved; }
+});
+
+test("scanned meals with several foods save and total correctly", async () => {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`multi-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Multi", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    // A three-item plate, as a photo scan returns.
+    const { status } = await api("/meals", { method: "POST", body: {
+      slot: "dinner", input_method: "photo", ai_confidence: 0.82,
+      items: [
+        { name: "grilled steak", quantity: 1, unit: "steak", grams: 200,
+          kcal_100g: 224, protein_100g: 27, carbs_100g: 0, fat_100g: 12.7, is_estimate: true },
+        { name: "roast chicken breast", quantity: 1, unit: "breast", grams: 130,
+          kcal_100g: 165, protein_100g: 31, carbs_100g: 0, fat_100g: 3.6, is_estimate: true },
+        { name: "bread", quantity: 2, unit: "slice", grams: 60,
+          kcal_100g: 265, protein_100g: 9, carbs_100g: 49, fat_100g: 3.2, is_estimate: true },
+      ] } });
+    assert.equal(status, 200);
+
+    const dash = await api("/dashboard");
+    // 448 + 215 + 159
+    assert.equal(dash.json.consumed.calories, 822);
+    assert.equal(dash.json.meals[0].items.length, 3);
+  } finally { token = saved; }
+});
