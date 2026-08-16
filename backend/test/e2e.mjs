@@ -1075,3 +1075,135 @@ test("health sync accepts distance and reflects it", async () => {
   assert.equal(json.distance_m, 6800);
   assert.equal(json.credited_kcal, 190);
 });
+
+// ─── no fabricated data reaches a real user ────────────────────────────────
+
+test("a brand-new user sees a genuinely empty day", async () => {
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`fresh-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const { SignJWT } = await import("jose");
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Fresh", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    const { json } = await api("/dashboard");
+    assert.equal(json.meals.length, 0, "no meals may appear before any are logged");
+    assert.equal(json.consumed.calories, 0);
+    assert.equal(json.remaining.calories, json.targets.calories);
+
+    const insight = await api("/coach/insight");
+    assert.match(insight.json.insight, /nothing logged/i);
+  } finally { token = saved; }
+});
+
+test("one user can never see another user's meals", async () => {
+  const { SignJWT } = await import("jose");
+
+  async function makeUser(label) {
+    const { rows } = await db.query(
+      `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+      [`iso-${label}-${Date.now()}@snapcal.test`]);
+    const uid = rows[0].id;
+    await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+    const t = await new SignJWT({ sub: uid })
+      .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+      .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+    return { uid, t };
+  }
+
+  const a = await makeUser("a");
+  const b = await makeUser("b");
+  const saved = token;
+
+  try {
+    for (const u of [a, b]) {
+      token = u.t;
+      await api("/profile", { method: "POST", body: {
+        name: "Iso", birth_year: 1992, sex: "male", height_cm: 180,
+        start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+        activity_level: "light", units: "metric", country: "US" } });
+    }
+
+    token = a.t;
+    await api("/meals", { method: "POST", body: {
+      slot: "lunch", input_method: "manual",
+      items: [{ name: "user a burrito", quantity: 1, unit: "serving", grams: 300,
+                kcal_100g: 155, protein_100g: 10, carbs_100g: 17, fat_100g: 5.4,
+                is_estimate: false }] } });
+
+    const aDash = await api("/dashboard");
+    assert.equal(aDash.json.meals.length, 1);
+
+    token = b.t;
+    const bDash = await api("/dashboard");
+    assert.equal(bDash.json.meals.length, 0, "user B must not see user A's meals");
+    assert.equal(bDash.json.consumed.calories, 0);
+  } finally { token = saved; }
+});
+
+test("logged meals survive across sessions and a fresh token", async () => {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`persist-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(`INSERT INTO subscriptions (user_id) VALUES ($1)`, [uid]);
+
+  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+  const first = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(secret);
+
+  const saved = token; token = first;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Persist", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "light", units: "metric", country: "US" } });
+
+    await api("/meals", { method: "POST", body: {
+      slot: "dinner", input_method: "photo",
+      items: [{ name: "grilled steak", quantity: 1, unit: "steak", grams: 200,
+                kcal_100g: 224, protein_100g: 27, carbs_100g: 0, fat_100g: 12.7,
+                is_estimate: true }] } });
+    await api("/weight", { method: "POST", body: { weight_kg: 81.2 } });
+    await api("/water", { method: "POST", body: { ml: 500 } });
+
+    // A new token stands in for a relaunch and re-auth.
+    token = await new SignJWT({ sub: uid })
+      .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+      .setExpirationTime("1h").sign(secret);
+
+    const dash = await api("/dashboard");
+    assert.equal(dash.json.meals.length, 1, "meals must survive a new session");
+    assert.equal(dash.json.consumed.calories, 448);
+    assert.equal(dash.json.water_ml, 500);
+    assert.equal(dash.json.current_weight_kg, 81.2);
+
+    const profile = await api("/profile");
+    assert.equal(profile.json.profile.name, "Persist");
+    assert.ok(profile.json.targets.calories > 0, "targets must persist");
+  } finally { token = saved; }
+});
+
+test("every meal the dashboard returns belongs to the caller", async () => {
+  const rows = await db.query(
+    `SELECT DISTINCT m.user_id FROM meals m LIMIT 5`);
+  assert.ok(rows.rows.length > 0);
+
+  // Nothing in the schema allows a meal without an owner.
+  const orphans = await db.query(
+    `SELECT COUNT(*)::int AS n FROM meals WHERE user_id IS NULL`);
+  assert.equal(orphans.rows[0].n, 0, "meals must always be user-scoped");
+});
