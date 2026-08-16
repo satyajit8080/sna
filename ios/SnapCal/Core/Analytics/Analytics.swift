@@ -62,7 +62,7 @@ actor Analytics {
         flushTask?.cancel()
         flushTask = nil
 
-        Task { [weak self] in
+        Task { [weak self, batch] in
             do {
                 try await APIClient.shared.sendEvents(batch)
             } catch {
