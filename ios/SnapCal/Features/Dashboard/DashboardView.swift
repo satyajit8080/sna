@@ -15,6 +15,7 @@ struct DashboardView: View {
 
     @State private var route: LogRoute?
     @State private var suggestion: MealSuggestion?
+    @State private var suggestionLoaded = false
     @State private var showPaywall = false
     @State private var showMoreOptions = false
     @State private var showDiary = false
@@ -42,6 +43,12 @@ struct DashboardView: View {
                                     Task { await loadSuggestion() }
                                 }
                             }
+                        } else if suggestionLoaded, !dash.meals.isEmpty {
+                            // Says nothing rather than inventing something.
+                            Text("No meal recommendation yet")
+                                .font(.jakarta(12, .semibold))
+                                .foregroundStyle(Theme.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
                         sectionHeader("Today's Meals",
@@ -386,7 +393,10 @@ struct DashboardView: View {
     private func loadSuggestion() async {
         guard !app.isGuest else { return }
         let fresh = try? await APIClient.shared.nextMealSuggestion()
-        withAnimation(Theme.snap) { suggestion = fresh?.suggestion }
+        withAnimation(Theme.snap) {
+            suggestion = fresh?.suggestion
+            suggestionLoaded = true
+        }
     }
 
     private func start(_ mode: LogMode, slot: MealSlot? = nil) {
