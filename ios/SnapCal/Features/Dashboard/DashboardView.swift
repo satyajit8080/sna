@@ -366,14 +366,6 @@ struct DashboardView: View {
             await app.refresh()
         }
     }
-
-    private func connectHealth() {
-        Task {
-            await health.requestAuthorization()
-            await app.refresh()
-        }
-    }
-
     private func start(_ mode: LogMode, slot: MealSlot? = nil) {
         guard app.requireAccount(for: "save your meals") else { return }
 
@@ -630,74 +622,5 @@ struct WaterTile: View {
         .card(padding: 0)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Water, \(litres(consumedMl)) of \(litres(targetMl))")
-    }
-}
-
-
-/// Water tile with both directions.
-///
-/// A single tap-to-add is fine until someone taps twice, and then the day is
-/// wrong with no way to fix it. The minus only appears once there is something
-/// to remove, so the common case stays a one-tap target.
-struct WaterTile: View {
-    let consumedMl: Int
-    let targetMl: Int
-    let onAdd: () -> Void
-    let onRemove: () -> Void
-
-    private func litres(_ ml: Int) -> String {
-        "\((Double(ml) / 1000).formatted(.number.precision(.fractionLength(1)))) L"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                IconTile(systemName: "drop.fill", tint: Theme.water)
-                Spacer()
-                if consumedMl > 0 {
-                    Button {
-                        Haptics.tap()
-                        onRemove()
-                    } label: {
-                        Image(systemName: "minus")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Theme.water)
-                            .frame(width: 28, height: 28)
-                            .background(Theme.water.opacity(0.10), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Remove 250 millilitres")
-                }
-            }
-
-            Spacer(minLength: 6)
-
-            Text(litres(consumedMl))
-                .font(.bigNum)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .contentTransition(.numericText())
-
-            Text("/\(litres(targetMl))")
-                .font(.jakarta(13, .bold))
-                .foregroundStyle(Theme.water)
-
-            Spacer(minLength: 6)
-
-            Text("Water")
-                .font(.caption_)
-                .foregroundStyle(Theme.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 150)
-        .padding(17)
-        .card(padding: 0)
-        .contentShape(.rect)
-        .onTapGesture {
-            Haptics.tap()
-            onAdd()
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Water, \(litres(consumedMl)) of \(litres(targetMl)). Tap to add 250 millilitres.")
     }
 }
