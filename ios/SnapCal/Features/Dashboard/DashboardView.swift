@@ -33,18 +33,23 @@ struct DashboardView: View {
                         overviewCard
                         metricGrid
 
+                        if let suggestion {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Suggested next — not logged yet")
+                                    .font(.jakarta(12, .semibold))
+                                    .foregroundStyle(Theme.secondary)
+                                SuggestionCard(suggestion: suggestion) {
+                                    Task { await loadSuggestion() }
+                                }
+                            }
+                        }
+
                         sectionHeader("Today's Meals",
                                       action: dash.meals.isEmpty ? nil : ("View All", {
                                           Haptics.tap()
                                           showDiary = true
                                       }))
                         mealList
-
-                        if let suggestion {
-                            SuggestionCard(suggestion: suggestion) {
-                                Task { await loadSuggestion() }
-                            }
-                        }
 
                         coachInsight
 
