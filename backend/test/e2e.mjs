@@ -1310,7 +1310,7 @@ test("intent classifier separates recommendation from analysis", async () => {
     "what can I eat under 500 calories",
     "recommend something for dinner",
   ]) {
-    assert.equal(classify(q), "recommendation", `"${q}" should be a recommendation`);
+    assert.equal(classify(q), "meal_recommendation", `"${q}" should be a recommendation`);
   }
 
   for (const q of [
@@ -1318,7 +1318,7 @@ test("intent classifier separates recommendation from analysis", async () => {
     "how many calories in what I ate",
     "what did i eat today",
   ]) {
-    assert.equal(classify(q), "analysis", `"${q}" should be analysis`);
+    assert.equal(classify(q), "food_analysis", `"${q}" should be analysis`);
   }
 
   assert.equal(classify("why isn't my weight dropping"), "progress");
@@ -1366,12 +1366,13 @@ test("a general question returns no meal card", async () => {
       method: "POST", body: { question: "How do I start the day well?" } });
     assert.equal(general.json.suggestion, null,
       "a general question must not attach a meal card");
-    assert.equal(general.json.intent, "general");
+    assert.ok(["general", "education"].includes(general.json.intent),
+      `expected a non-recommendation intent, got ${general.json.intent}`);
 
     // Explicit request — card allowed.
     const explicit = await api("/coach/ask", {
       method: "POST", body: { question: "Suggest one food for weight loss" } });
-    assert.equal(explicit.json.intent, "recommendation");
+    assert.equal(explicit.json.intent, "meal_recommendation");
   } finally { token = saved; }
 });
 
@@ -1450,4 +1451,492 @@ test("water logging accepts a decrement and never goes negative", async () => {
     dash = await api("/dashboard");
     assert.ok(dash.json.water_ml >= 0, "water must never go negative");
   } finally { token = saved; }
+});
+
+// ─── coach as a health advisor, not a nutrition chatbot ────────────────────
+
+test("intent detection covers the coach's whole remit", async () => {
+  const { classify } = await import("../dist/services/coachIntent.js");
+
+  const cases = {
+    workout_request: [
+      "What workout should I do today?", "Should I go to the gym today?",
+      "should i train legs today", "how many sets and reps",
+      "what exercises should i do", "should i rest today",
+    ],
+    daily_plan: [
+      "What should I do today?", "what should i improve",
+      "coach me", "plan my day",
+    ],
+    meal_recommendation: [
+      "What should I eat for dinner?", "suggest one food",
+      "what fruit should i have", "give me a high protein meal",
+    ],
+    food_analysis: ["I ate a burger, how many calories", "what did i eat today"],
+    hydration: ["how much water should i drink"],
+    activity: ["how much should i walk today", "how many steps"],
+    sleep: ["how can i improve my sleep routine"],
+    progress: ["why isn't my weight dropping", "am i on track"],
+  };
+
+  for (const [expected, questions] of Object.entries(cases)) {
+    for (const q of questions) {
+      assert.equal(classify(q), expected, `"${q}" should classify as ${expected}`);
+    }
+  }
+});
+
+test("safety guards fire on medical, urgent, brand and live-data requests", async () => {
+  const { guardFor, validateResponse } = await import("../dist/services/coachIntent.js");
+
+  assert.equal(guardFor("What medicine should I take for my cold?"), "medical");
+  assert.equal(guardFor("should i stop taking my blood pressure tablets"), "medical");
+  assert.equal(guardFor("I have chest pain and can't breathe"), "urgent");
+  assert.equal(guardFor("Which protein powder should I buy?"), "brand");
+  assert.equal(guardFor("what brand of creatine is best"), "brand");
+  assert.equal(guardFor("is this food available in netherlands"), "live_data");
+  assert.equal(guardFor("what should i eat for dinner"), null);
+
+  // Urgent always overrides whatever the model produced.
+  const urgent = validateResponse("Try some ginger tea.", "urgent");
+  assert.ok(urgent && /medical attention|emergency|doctor/i.test(urgent));
+
+  // A dose must never survive, however it is phrased.
+  const dosed = validateResponse("Take 500 mg twice daily for that.", "medical");
+  assert.ok(dosed && /can't advise on medication/i.test(dosed));
+
+  // Ordinary advice passes through untouched.
+  assert.equal(validateResponse("Grilled chicken fits your 900 calories left.", null), null);
+});
+
+test("token budget scales with what the answer needs", async () => {
+  const { maxTokensFor, keepsStructure } = await import("../dist/services/coachIntent.js");
+
+  // A workout needs the whole session; a calorie check needs a line.
+  assert.ok(maxTokensFor("workout_request") > maxTokensFor("progress"));
+  assert.ok(maxTokensFor("daily_plan") > maxTokensFor("general"));
+  assert.ok(maxTokensFor("general") <= 120, "ordinary questions stay cheap");
+
+  assert.ok(keepsStructure("workout_request"));
+  assert.ok(keepsStructure("daily_plan"));
+  assert.ok(!keepsStructure("meal_recommendation"),
+    "conversational answers are trimmed to a few sentences");
+});
+
+test("workouts are logged, returned and feed the coach's context", async () => {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`gym-${Date.now()}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+  const saved = token; token = t;
+  try {
+    await api("/profile", { method: "POST", body: {
+      name: "Gym", birth_year: 1992, sex: "male", height_cm: 180,
+      start_weight_kg: 82, goal_weight_kg: 76, goal: "lose",
+      activity_level: "moderate", units: "metric", country: "US" } });
+
+    const profile = await api("/fitness/profile", { method: "PUT", body: {
+      gym_access: true, equipment: "full_gym", experience: "beginner",
+      training_days: 4, session_minutes: 60 } });
+    assert.equal(profile.status, 200);
+    assert.equal(profile.json.equipment, "full_gym");
+    assert.equal(profile.json.experience, "beginner");
+
+    const logged = await api("/workouts", { method: "POST", body: {
+      focus: "upper", minutes: 55, perceived_effort: 7,
+      exercises: [
+        { exercise: "Bench Press", sets: 3, reps: 10, weight_kg: 40 },
+        { exercise: "Lat Pulldown", sets: 3, reps: 12, weight_kg: 45 },
+      ] } });
+    assert.equal(logged.status, 200);
+    assert.equal(logged.json.focus, "upper");
+
+    const history = await api("/workouts?days=14");
+    assert.equal(history.json.workouts.length, 1);
+    assert.equal(history.json.workouts[0].exercises.length, 2);
+    // Weights round-trip, so progression can be suggested from real numbers.
+    assert.equal(Number(history.json.workouts[0].exercises[0].weight_kg), 40);
+
+    // A workout question is classified as such and answers without a meal card.
+    const ask = await api("/coach/ask", {
+      method: "POST", body: { question: "What workout should I do today?" } });
+    assert.equal(ask.status, 200);
+    assert.equal(ask.json.intent, "workout_request");
+    assert.equal(ask.json.suggestion, null,
+      "a training question must not attach a meal card");
+
+    // Deleting is scoped to the owner.
+    const del = await api(`/workouts/${history.json.workouts[0].id}`, { method: "DELETE" });
+    assert.equal(del.status, 200);
+    assert.equal((await api("/workouts")).json.workouts.length, 0);
+  } finally { token = saved; }
+});
+
+test("a user cannot delete another user's workout", async () => {
+  const { SignJWT } = await import("jose");
+  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+
+  async function make(label) {
+    const { rows } = await db.query(
+      `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+      [`w-${label}-${Date.now()}@snapcal.test`]);
+    const uid = rows[0].id;
+    await db.query(
+      `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+      [uid]);
+    return new SignJWT({ sub: uid })
+      .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+      .setExpirationTime("1h").sign(secret);
+  }
+
+  const a = await make("a");
+  const b = await make("b");
+  const saved = token;
+
+  try {
+    token = a;
+    const mine = await api("/workouts", { method: "POST", body: { focus: "lower", minutes: 40 } });
+
+    token = b;
+    const attempt = await api(`/workouts/${mine.json.id}`, { method: "DELETE" });
+    assert.equal(attempt.status, 404, "another user's workout must not be deletable");
+
+    token = a;
+    assert.equal((await api("/workouts")).json.workouts.length, 1, "still there");
+  } finally { token = saved; }
+});
+
+// ─── conversational onboarding, structured workouts, patterns ──────────────
+
+async function proUser(label) {
+  const { SignJWT } = await import("jose");
+  const { rows } = await db.query(
+    `INSERT INTO users (email, password_hash) VALUES ($1,'x') RETURNING id`,
+    [`${label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@snapcal.test`]);
+  const uid = rows[0].id;
+  await db.query(
+    `INSERT INTO subscriptions (user_id, plan, expires_at) VALUES ($1,'pro', now() + interval '30 days')`,
+    [uid]);
+  const t = await new SignJWT({ sub: uid })
+    .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setIssuer("snapcal")
+    .setExpirationTime("1h").sign(new TextEncoder().encode(process.env.JWT_SECRET));
+  return { uid, token: t };
+}
+
+const BASE_PROFILE = {
+  birth_year: 1992, sex: "male", height_cm: 180, start_weight_kg: 82,
+  goal_weight_kg: 76, goal: "lose", activity_level: "moderate",
+  units: "metric", country: "US",
+};
+
+test("onboarding asks one question at a time and never repeats an answer", async () => {
+  const u = await proUser("onb");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Onb", ...BASE_PROFILE } });
+
+    const first = await api("/coach/onboarding");
+    assert.equal(first.status, 200);
+    assert.equal(first.json.completed, false);
+    assert.ok(first.json.welcome, "a first-time user gets an opening line");
+    assert.equal(first.json.next.field, "primary_goal");
+    assert.ok(first.json.next.options.length >= 6);
+    assert.equal(first.json.next.step, 1);
+
+    // Answering advances exactly one step.
+    const second = await api("/coach/onboarding", {
+      method: "POST", body: { field: "primary_goal", value: "lose_fat_keep_muscle" } });
+    assert.equal(second.json.next.field, "experience");
+    assert.equal(second.json.answered, 1);
+
+    await api("/coach/onboarding", { method: "POST", body: { field: "experience", value: "beginner" } });
+
+    // Re-reading must not ask something already answered.
+    const resumed = await api("/coach/onboarding");
+    assert.equal(resumed.json.next.field, "training_location");
+    assert.equal(resumed.json.answered, 2);
+  } finally { token = saved; }
+});
+
+test("answers that make later questions irrelevant remove them", async () => {
+  const u = await proUser("skip");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Skip", ...BASE_PROFILE } });
+    await api("/coach/onboarding", { method: "POST", body: { field: "primary_goal", value: "general_health" } });
+    await api("/coach/onboarding", { method: "POST", body: { field: "experience", value: "beginner" } });
+
+    const withGym = await api("/coach/onboarding", {
+      method: "POST", body: { field: "training_location", value: "gym" } });
+    const gymTotal = withGym.json.total;
+    assert.equal(withGym.json.next.field, "equipment_list");
+
+    // "Nowhere regular" makes equipment, days and duration meaningless.
+    const u2 = await proUser("skip2");
+    token = u2.token;
+    await api("/profile", { method: "POST", body: { name: "Skip2", ...BASE_PROFILE } });
+    await api("/coach/onboarding", { method: "POST", body: { field: "primary_goal", value: "general_health" } });
+    await api("/coach/onboarding", { method: "POST", body: { field: "experience", value: "beginner" } });
+    const noGym = await api("/coach/onboarding", {
+      method: "POST", body: { field: "training_location", value: "none" } });
+
+    assert.ok(noGym.json.total < gymTotal,
+      "training nowhere should shorten onboarding");
+    assert.notEqual(noGym.json.next?.field, "equipment_list");
+  } finally { token = saved; }
+});
+
+test("completing onboarding marks the profile and stops asking", async () => {
+  const u = await proUser("done");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Done", ...BASE_PROFILE } });
+
+    const answers = [
+      { field: "primary_goal", value: "build_muscle" },
+      { field: "experience", value: "intermediate" },
+      { field: "training_location", value: "gym" },
+      { field: "equipment_list", values: ["full_gym", "dumbbells"] },
+      { field: "training_days", value: "4" },
+      { field: "session_minutes", value: "55" },
+      { field: "average_sleep_hours", value: "7.5" },
+      { field: "limitations_asked", values: ["lower back"] },
+    ];
+
+    let last;
+    for (const answer of answers) {
+      last = await api("/coach/onboarding", { method: "POST", body: answer });
+    }
+
+    assert.equal(last.json.completed, true);
+    assert.equal(last.json.next, null);
+
+    const after = await api("/coach/onboarding");
+    assert.equal(after.json.completed, true);
+    assert.equal(after.json.welcome, null, "a returning user is not welcomed again");
+
+    const profile = await api("/fitness/profile");
+    assert.equal(profile.json.experience, "intermediate");
+    assert.equal(profile.json.training_days, 4);
+  } finally { token = saved; }
+});
+
+test("workout is structured, respects equipment, and never invents weights", async () => {
+  const u = await proUser("plan");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Plan", ...BASE_PROFILE } });
+    await api("/fitness/profile", { method: "PUT", body: {
+      gym_access: true, equipment: "full_gym", experience: "beginner",
+      training_days: 4, session_minutes: 45 } });
+
+    const res = await api("/coach/workout", { method: "POST", body: {} });
+    assert.equal(res.status, 200);
+
+    const plan = res.json;
+    assert.ok(plan.id, "the plan is persisted so it can be started later");
+    assert.ok(plan.workout_title);
+    assert.ok(plan.exercises.length >= 3);
+    assert.ok(plan.warmup.length >= 1);
+    assert.ok(plan.cooldown.length >= 1);
+
+    for (const e of plan.exercises) {
+      assert.ok(e.exercise_name);
+      assert.ok(e.sets >= 1 && e.sets <= 10);
+      assert.ok(e.reps, "a rep range, not a bare number");
+      assert.ok(e.rest_seconds >= 15);
+      // No history yet, so no weight may be suggested.
+      assert.equal(e.suggested_weight_kg, null,
+        `${e.exercise_name}: a weight must never be invented without history`);
+      assert.ok(e.progression_note, "the absence of a weight is explained");
+    }
+  } finally { token = saved; }
+});
+
+test("progression comes from logged weights, one step at a time", async () => {
+  const { suggestLoad, needsRecovery, nextFocus } =
+    await import("../dist/services/workoutPlanner.js");
+
+  const u = await proUser("prog");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Prog", ...BASE_PROFILE } });
+
+    // No history → no weight.
+    const cold = await suggestLoad(u.uid, "Bench Press");
+    assert.equal(cold.weight, null);
+
+    // One session at the top of the range → hold, add reps.
+    await api("/workouts", { method: "POST", body: {
+      focus: "upper", minutes: 45,
+      exercises: [{ exercise: "Bench Press", sets: 3, reps: 12, weight_kg: 40 }] } });
+    const held = await suggestLoad(u.uid, "Bench Press");
+    assert.equal(held.weight, 40, "one good session is not enough to add weight");
+    assert.match(held.note, /add a rep/i);
+
+    // Two consecutive sessions at the top → a small increase.
+    await api("/workouts", { method: "POST", body: {
+      focus: "upper", minutes: 45,
+      exercises: [{ exercise: "Bench Press", sets: 3, reps: 12, weight_kg: 40 }] } });
+    const up = await suggestLoad(u.uid, "Bench Press");
+    assert.ok(up.weight > 40, "should progress after repeating the top of the range");
+    assert.ok(up.weight <= 42.5, "increments stay small");
+  } finally { token = saved; }
+
+  // Focus rotates rather than repeating.
+  assert.equal(nextFocus([{ focus: "upper", date: "2026-08-15" }], 3), "lower");
+  assert.equal(nextFocus([{ focus: "lower", date: "2026-08-15" }], 3), "upper");
+  assert.equal(nextFocus([], 2), "full_body", "two days a week suits full body");
+
+  // Four consecutive days is a recovery signal.
+  const consecutive = ["2026-08-16", "2026-08-15", "2026-08-14", "2026-08-13"]
+    .map((date) => ({ date, effort: 6 }));
+  assert.ok(needsRecovery(consecutive));
+  assert.ok(!needsRecovery([{ date: "2026-08-16", effort: 5 }]));
+});
+
+test("patterns are derived from real history and stay quiet without it", async () => {
+  const { detectPatterns } = await import("../dist/services/patterns.js");
+
+  const u = await proUser("pat");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Pat", ...BASE_PROFILE } });
+
+    // Nothing logged: no claims.
+    assert.equal((await detectPatterns(u.uid)).length, 0,
+      "an empty history must produce no findings");
+
+    // Six days of low protein.
+    for (let i = 1; i <= 6; i++) {
+      await db.query(
+        `INSERT INTO meals (user_id, slot, input_method, logged_on)
+         VALUES ($1,'lunch','manual', CURRENT_DATE - $2::int) RETURNING id`,
+        [u.uid, i]);
+      const meal = await db.query(
+        `SELECT id FROM meals WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, [u.uid]);
+      await db.query(
+        `INSERT INTO meal_items (meal_id, name, quantity, unit, grams,
+                                 kcal_100g, protein_100g, carbs_100g, fat_100g)
+         VALUES ($1,'rice',1,'cup',200,130,2.7,28,0.3)`,
+        [meal.rows[0].id]);
+    }
+
+    const found = await detectPatterns(u.uid);
+    const kinds = found.map((p) => p.kind);
+    assert.ok(kinds.includes("protein_low"),
+      `expected a protein finding, got ${kinds.join(", ")}`);
+
+    // Findings are phrased for a person and carry the real numbers.
+    const protein = found.find((p) => p.kind === "protein_low");
+    assert.match(protein.finding, /\d+g/);
+  } finally { token = saved; }
+});
+
+test("a completed workout closes the loop back to its plan", async () => {
+  const u = await proUser("loop");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Loop", ...BASE_PROFILE } });
+    await api("/fitness/profile", { method: "PUT", body: {
+      gym_access: true, equipment: "full_gym", experience: "beginner" } });
+
+    const plan = await api("/coach/workout", { method: "POST", body: {} });
+    assert.ok(plan.json.id);
+
+    const done = await api("/workouts", { method: "POST", body: {
+      focus: plan.json.focus, minutes: 45, perceived_effort: 6,
+      plan_id: plan.json.id,
+      exercises: plan.json.exercises.slice(0, 2).map((e) => ({
+        exercise: e.exercise_name, sets: e.sets, reps: 10, weight_kg: 30,
+      })) } });
+    assert.equal(done.status, 200);
+
+    const link = await db.query(
+      `SELECT workout_id FROM workout_plans WHERE id = $1`, [plan.json.id]);
+    assert.equal(link.rows[0].workout_id, done.json.id,
+      "the plan must record which session actually happened");
+
+    // And that history is what the next recommendation reads.
+    const history = await api("/workouts?days=7");
+    assert.equal(history.json.workouts.length, 1);
+    assert.equal(history.json.workouts[0].exercises.length, 2);
+  } finally { token = saved; }
+});
+
+test("no onboarding question is ever asked twice", async () => {
+  const u = await proUser("norepeat-onb");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "NoRepeat", ...BASE_PROFILE } });
+
+    const asked = [];
+    let state = await api("/coach/onboarding");
+    let guard = 0;
+
+    // Answer whatever is asked, until onboarding says it is done.
+    while (state.json.next && guard++ < 20) {
+      const q = state.json.next;
+      asked.push(q.field);
+
+      const body = q.multiSelect
+        ? { field: q.field, values: [q.options[0].value] }
+        : { field: q.field, value: q.options[0]?.value ?? "3" };
+
+      state = await api("/coach/onboarding", { method: "POST", body });
+    }
+
+    assert.ok(guard < 20, "onboarding must terminate");
+    assert.equal(asked.length, new Set(asked).size,
+      `a question was repeated: ${asked.join(" → ")}`);
+    assert.equal(state.json.completed, true);
+  } finally { token = saved; }
+});
+
+test("skipping an optional question still advances", async () => {
+  const u = await proUser("skip-opt");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "SkipOpt", ...BASE_PROFILE } });
+
+    for (const answer of [
+      { field: "primary_goal", value: "maintain" },
+      { field: "experience", value: "beginner" },
+      { field: "training_location", value: "home" },
+      { field: "equipment_list", values: ["bodyweight"] },
+      { field: "training_days", value: "3" },
+      { field: "session_minutes", value: "25" },
+    ]) {
+      await api("/coach/onboarding", { method: "POST", body: answer });
+    }
+
+    const beforeSkip = await api("/coach/onboarding");
+    assert.equal(beforeSkip.json.next.field, "average_sleep_hours");
+    assert.equal(beforeSkip.json.next.skippable, true);
+
+    const afterSkip = await api("/coach/onboarding", {
+      method: "POST", body: { field: "average_sleep_hours", skip: true } });
+    assert.notEqual(afterSkip.json.next?.field, "average_sleep_hours",
+      "a skipped question must not be asked again");
+  } finally { token = saved; }
+});
+
+test("an unknown onboarding field is rejected rather than silently ignored", async () => {
+  const u = await proUser("badfield");
+  const saved = token; token = u.token;
+  const { status, json } = await api("/coach/onboarding", {
+    method: "POST", body: { field: "favourite_colour", value: "blue" } });
+  token = saved;
+
+  assert.equal(status, 400);
+  assert.equal(json.error, "unknown_field");
 });
