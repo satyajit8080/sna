@@ -14,8 +14,6 @@ struct DashboardView: View {
     @Environment(HealthService.self) private var health
 
     @State private var route: LogRoute?
-    @State private var suggestion: MealSuggestion?
-    @State private var suggestionLoaded = false
     @State private var showPaywall = false
     @State private var showMoreOptions = false
     @State private var showDiary = false
@@ -33,23 +31,6 @@ struct DashboardView: View {
                         sectionHeader("Today Overview", action: nil)
                         overviewCard
                         metricGrid
-
-                        if let suggestion {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Suggested next — not logged yet")
-                                    .font(.jakarta(12, .semibold))
-                                    .foregroundStyle(Theme.secondary)
-                                SuggestionCard(suggestion: suggestion) {
-                                    Task { await loadSuggestion() }
-                                }
-                            }
-                        } else if suggestionLoaded, !dash.meals.isEmpty {
-                            // Says nothing rather than inventing something.
-                            Text("No meal recommendation yet")
-                                .font(.jakarta(12, .semibold))
-                                .foregroundStyle(Theme.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
 
                         sectionHeader("Today's Meals",
                                       action: dash.meals.isEmpty ? nil : ("View All", {
@@ -86,18 +67,9 @@ struct DashboardView: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, Theme.Space.s)
             }
-            .refreshable {
-                await app.refresh()
-                await loadSuggestion()
-            }
+            .refreshable { await app.refresh() }
             .background(Theme.bg)
             .navigationBarHidden(true)
-            .task { await loadSuggestion() }
-            .onChange(of: dash.consumed.calories) { _, _ in
-                // Totals moved, so the old suggestion was priced against a
-                // budget that no longer exists.
-                Task { await loadSuggestion() }
-            }
             .fullScreenCover(item: $route) { LogFlowView(route: $0) }
             .sheet(isPresented: $showPaywall) {
                 PaywallView(context: .general, source: "dashboard")
@@ -290,11 +262,9 @@ struct DashboardView: View {
                        value: "\(dash.activity?.activeKcal ?? 0)",
                        detail: "kcal today", label: "Active Cal")
 
-            MetricTile(icon: "drop.fill", tint: Theme.water,
-                       value: waterLitres(dash.waterMl),
-                       detail: "/\(waterLitres(dash.targets.water_ml))",
-                       label: "Water",
-                       onTap: { adjustWater(250) })
+            WaterTile(consumedMl: dash.waterMl,
+                      targetMl: dash.targets.water_ml,
+                      onAdjust: adjustWater)
         }
     }
 
@@ -311,8 +281,15 @@ struct DashboardView: View {
 
     private func adjustWater(_ ml: Int) {
         guard app.requireAccount(for: "track your water") else { return }
-        withAnimation(Theme.snap) { app.dashboard.waterMl = max(0, app.dashboard.waterMl + ml) }
-        Task { _ = try? await APIClient.shared.logWater(ml: ml) }
+
+        // Clamp locally so the optimistic value can never go negative; the
+        // server applies the same delta.
+        let applied = max(0, app.dashboard.waterMl + ml) - app.dashboard.waterMl
+        guard applied != 0 else { return }
+
+        Haptics.tap()
+        withAnimation(Theme.snap) { app.dashboard.waterMl += applied }
+        Task { _ = try? await APIClient.shared.logWater(ml: applied) }
     }
 
     // MARK: - Meals
@@ -390,12 +367,10 @@ struct DashboardView: View {
         }
     }
 
-    private func loadSuggestion() async {
-        guard !app.isGuest else { return }
-        let fresh = try? await APIClient.shared.nextMealSuggestion()
-        withAnimation(Theme.snap) {
-            suggestion = fresh?.suggestion
-            suggestionLoaded = true
+    private func connectHealth() {
+        Task {
+            await health.requestAuthorization()
+            await app.refresh()
         }
     }
 
@@ -587,5 +562,142 @@ struct PremiumCard: View {
             .card(radius: Theme.Radius.row, padding: 0)
         }
         .buttonStyle(.plain)
+    }
+}
+
+
+/// Water tile with its own +/− controls.
+///
+/// This was tap-to-add-only, which made an accidental double tap unfixable —
+/// hence days showing 4.2 L against a 2.1 L target.
+struct WaterTile: View {
+    let consumedMl: Int
+    let targetMl: Int
+    let onAdjust: (Int) -> Void
+
+    private func litres(_ ml: Int) -> String {
+        "\((Double(ml) / 1000).formatted(.number.precision(.fractionLength(1)))) L"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                IconTile(systemName: "drop.fill", tint: Theme.water)
+                Spacer()
+                Button {
+                    onAdjust(-250)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Theme.water)
+                        .frame(width: 30, height: 30)
+                        .background(Theme.water.opacity(0.10), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(consumedMl <= 0)
+                .opacity(consumedMl <= 0 ? 0.35 : 1)
+
+                Button {
+                    onAdjust(250)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Theme.water, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 6)
+
+            Text(litres(consumedMl))
+                .font(.bigNum)
+                .contentTransition(.numericText())
+            Text("/\(litres(targetMl))")
+                .font(.jakarta(13, .bold))
+                .foregroundStyle(Theme.water)
+
+            Spacer(minLength: 6)
+
+            Text("Water")
+                .font(.caption_)
+                .foregroundStyle(Theme.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 150)
+        .padding(17)
+        .card(padding: 0)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Water, \(litres(consumedMl)) of \(litres(targetMl))")
+    }
+}
+
+
+/// Water tile with both directions.
+///
+/// A single tap-to-add is fine until someone taps twice, and then the day is
+/// wrong with no way to fix it. The minus only appears once there is something
+/// to remove, so the common case stays a one-tap target.
+struct WaterTile: View {
+    let consumedMl: Int
+    let targetMl: Int
+    let onAdd: () -> Void
+    let onRemove: () -> Void
+
+    private func litres(_ ml: Int) -> String {
+        "\((Double(ml) / 1000).formatted(.number.precision(.fractionLength(1)))) L"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                IconTile(systemName: "drop.fill", tint: Theme.water)
+                Spacer()
+                if consumedMl > 0 {
+                    Button {
+                        Haptics.tap()
+                        onRemove()
+                    } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Theme.water)
+                            .frame(width: 28, height: 28)
+                            .background(Theme.water.opacity(0.10), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove 250 millilitres")
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            Text(litres(consumedMl))
+                .font(.bigNum)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .contentTransition(.numericText())
+
+            Text("/\(litres(targetMl))")
+                .font(.jakarta(13, .bold))
+                .foregroundStyle(Theme.water)
+
+            Spacer(minLength: 6)
+
+            Text("Water")
+                .font(.caption_)
+                .foregroundStyle(Theme.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 150)
+        .padding(17)
+        .card(padding: 0)
+        .contentShape(.rect)
+        .onTapGesture {
+            Haptics.tap()
+            onAdd()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Water, \(litres(consumedMl)) of \(litres(targetMl)). Tap to add 250 millilitres.")
     }
 }
