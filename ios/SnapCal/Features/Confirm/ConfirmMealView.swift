@@ -89,7 +89,11 @@ struct ConfirmMealView: View {
             }
         }
         .alert("Couldn't save", isPresented: .constant(error != nil)) {
-            Button("OK") { error = nil }
+            Button("Try again") {
+                error = nil
+                save()
+            }
+            Button("Keep editing", role: .cancel) { error = nil }
         } message: { Text(error ?? "") }
         .onAppear { if items.isEmpty { items = payload.items } }
     }
@@ -185,7 +189,9 @@ struct ConfirmMealView: View {
             } catch {
                 saving = false
                 await app.refresh()   // roll back the optimistic update
-                self.error = error.localizedDescription
+                // The scan result stays on screen so nothing has to be redone.
+                self.error = (error as? APIError)?.errorDescription
+                    ?? "Couldn't save that meal. Your scan is still here — try again."
             }
         }
     }
