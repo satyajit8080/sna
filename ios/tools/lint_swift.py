@@ -271,6 +271,51 @@ def check_swiftui_types_have_import(path: Path, src: str) -> None:
             break
 
 
+def check_symbols_defined(path: Path, src: str) -> None:
+    """
+    A property or method referenced in a file that never declares it.
+
+    Brace-balance checks pass happily on this, and Xcode only reports it as
+    "cannot find X in scope" on a macOS runner — a full build away.
+
+    Deliberately narrow: it only considers `@State` properties and functions,
+    and only flags a reference when nothing in the file declares that name at
+    all. Cross-file symbols are out of scope, since checking those properly
+    means compiling.
+    """
+    # Every form of declaration, not just `private` ones — an internal method
+    # is just as valid a definition.
+    declared = set()
+    declared |= set(re.findall(r"\bfunc\s+(\w+)", src))
+    declared |= set(re.findall(r"\b(?:var|let)\s+(\w+)", src))
+    declared |= set(re.findall(r"\bcase\s+(\w+)", src))
+
+    # Function parameters, including the `_ label: Type` form where the name
+    # that matters is the second word, and closure captures.
+    for params in re.findall(r"func\s+\w+\s*\(([^)]*)\)", src, re.S):
+        for part in params.split(","):
+            tokens = re.findall(r"\w+", part)
+            if tokens:
+                declared.add(tokens[-2] if len(tokens) > 2 else tokens[0])
+                declared.update(tokens[:2])
+    declared |= set(re.findall(r"\{\s*\[?([\w,\s]+?)\]?\s*in\b", src))
+    declared |= set(re.findall(r"(?:if|guard)\s+let\s+(\w+)", src))
+
+    referenced = set()
+    for m in re.finditer(r"await\s+(\w+)\s*\(", src):
+        referenced.add(m.group(1))
+    for m in re.finditer(r"(?<![.\w])(\w+)\s*==\s*\"", src):
+        referenced.add(m.group(1))
+
+    missing = sorted(n for n in referenced - declared
+                     if n[0].islower() and len(n) > 3)
+
+    for name in missing:
+        line_no = next((i for i, line in enumerate(src.split("\n"), 1)
+                        if re.search(rf"(?<![.\w]){name}\b", line)), 0)
+        fail(f"{path.name}:{line_no}: '{name}' is used but never declared in this file")
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -291,6 +336,7 @@ for path in APP:
     check_import_placement(path, src)
     check_no_duplicate_declarations(path, src)
     check_swiftui_types_have_import(path, src)
+    check_symbols_defined(path, src)
     check_no_fabricated_food(path, src)
 
 # Test fixtures may name any food — they are never rendered to a user.
