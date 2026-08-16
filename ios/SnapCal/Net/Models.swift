@@ -24,11 +24,33 @@ struct FoodItem: Codable, Identifiable, Hashable {
 
     var gramsPerUnit: Double { quantity > 0 ? grams / quantity : grams }
 
+    /// Household units arrive from the model in many spellings — "grams",
+    /// "gram", "g.", "Grams". Anything that means grams becomes "g" so the row
+    /// shows "50 g" instead of pluralising into "0.5 gramss".
+    var normalisedUnit: String {
+        let raw = unit.trimmingCharacters(in: .whitespaces).lowercased()
+        if ["g", "gram", "grams", "gm", "gms", "g.", "gramme", "grammes"].contains(raw) {
+            return "g"
+        }
+        if ["ml", "millilitre", "millilitres", "milliliter", "milliliters"].contains(raw) {
+            return "ml"
+        }
+        // Strip a trailing plural so "slices" + "s" never happens.
+        if raw.hasSuffix("s"), raw.count > 3, !raw.hasSuffix("ss") {
+            return String(raw.dropLast())
+        }
+        return raw.isEmpty ? "serving" : raw
+    }
+
+    /// True when the portion is expressed in raw weight rather than a
+    /// countable unit — the stepper works in grams for these.
+    var isWeightBased: Bool { normalisedUnit == "g" || normalisedUnit == "ml" }
+
     /// Local recompute on stepper changes. No network, no model.
     mutating func setQuantity(_ q: Double) {
         let per = gramsPerUnit
         quantity = max(0.25, q)
-        grams = (unit == "g") ? quantity : (per * quantity).rounded()
+        grams = isWeightBased ? quantity : (per * quantity).rounded()
     }
 
     enum CodingKeys: String, CodingKey {
