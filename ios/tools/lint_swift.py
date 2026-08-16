@@ -240,6 +240,37 @@ def check_no_duplicate_declarations(path: Path, src: str) -> None:
                 methods[signature] = line_no
 
 
+# SwiftUI types that need `import SwiftUI`. UIKit's UIImage and UIColor are
+# deliberately absent — they resolve under `import UIKit`.
+SWIFTUI_ONLY = [
+    "Color", "Font", "Angle", "Alignment", "Edge", "AnyView",
+    "EnvironmentObject", "ObservedObject", "StateObject", "ViewBuilder",
+]
+
+
+def check_swiftui_types_have_import(path: Path, src: str) -> None:
+    """
+    A SwiftUI type used in a file that only imports Foundation.
+
+    Xcode reports this as "cannot find type 'Color' in scope", which is only
+    visible on a macOS runner. It usually means presentation has leaked into a
+    layer that should not depend on SwiftUI at all.
+    """
+    imports = set(re.findall(r"^import (\w+)", src, re.M))
+    if "SwiftUI" in imports:
+        return
+
+    body = re.sub(r"//[^\n]*", "", src)          # ignore comments
+    body = re.sub(r'"[^"]*"', '""', body)         # and string literals
+
+    for name in SWIFTUI_ONLY:
+        for m in re.finditer(rf"(?<![.\w]){name}\b", body):
+            line_no = body[:m.start()].count("\n") + 1
+            fail(f"{path.name}:{line_no}: uses SwiftUI type '{name}' "
+                 f"but the file imports only {', '.join(sorted(imports)) or 'nothing'}")
+            break
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -259,6 +290,7 @@ for path in APP:
     check_swiftui_import(path, src)
     check_import_placement(path, src)
     check_no_duplicate_declarations(path, src)
+    check_swiftui_types_have_import(path, src)
     check_no_fabricated_food(path, src)
 
 # Test fixtures may name any food — they are never rendered to a user.
