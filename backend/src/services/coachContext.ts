@@ -31,6 +31,30 @@ export type CoachContext = {
   creditedKcal?: number;
   recentMeals: string[];
   streakDays: number;
+  waterMl?: number;
+  waterTargetMl?: number;
+  sleepMinutes?: number;
+  /** Most recent sessions, newest first — drives focus and recovery advice. */
+  recentWorkouts?: Array<{
+    date: string;
+    focus: string;
+    minutes: number | null;
+    effort: number | null;
+    exercises: Array<{ exercise: string; sets: number; reps: number | null; weight_kg: number | null }>;
+  }>;
+  fitness?: {
+    gymAccess: boolean;
+    equipment: string;
+    experience: string;
+    trainingDays: number;
+    sessionMinutes: number;
+    injuries: string[];
+    primaryGoal?: string;
+    trainingLocation?: string;
+    profileCompleted: boolean;
+  };
+  /** Findings from recent history — see services/patterns.ts. */
+  patterns?: string[];
   avgCalories7d?: number;
   preferences?: { diet?: string; cuisines: string[]; dislikes: string[]; allergies: string[] };
 };
@@ -38,9 +62,10 @@ export type CoachContext = {
 export async function buildContext(userId: string, tz: string): Promise<CoachContext> {
   const day = localDate(tz);
 
-  const [profile, targets, today, weights, activity, meals, avg, prefs, streak] = await Promise.all([
+  const [profile, targets, today, weights, activity, meals, avg, prefs, streak,
+         water, fitness, workouts] = await Promise.all([
     one<any>(`SELECT name, goal, goal_weight_kg, start_weight_kg, country FROM profiles WHERE user_id = $1`, [userId]),
-    one<any>(`SELECT calories, protein_g, carbs_g, fat_g FROM nutrition_targets WHERE user_id = $1`, [userId]),
+    one<any>(`SELECT calories, protein_g, carbs_g, fat_g, water_ml FROM nutrition_targets WHERE user_id = $1`, [userId]),
     one<any>(`SELECT ROUND(SUM(i.grams * i.kcal_100g    / 100))::int AS calories,
                      ROUND(SUM(i.grams * i.protein_100g / 100))::int AS protein_g,
                      ROUND(SUM(i.grams * i.carbs_100g   / 100))::int AS carbs_g,
@@ -59,6 +84,25 @@ export async function buildContext(userId: string, tz: string): Promise<CoachCon
     one<any>(`SELECT diet, cuisines, dislikes, allergies FROM food_preferences WHERE user_id = $1`, [userId]),
     one<any>(`SELECT COUNT(DISTINCT logged_on)::int AS n FROM meals
                WHERE user_id = $1 AND logged_on > CURRENT_DATE - 7`, [userId]),
+    one<any>(`SELECT COALESCE(SUM(ml),0)::int AS ml FROM water_logs
+               WHERE user_id = $1 AND logged_on = $2`, [userId, day]),
+    one<any>(`SELECT gym_access, equipment, experience, training_days,
+                     session_minutes, injuries, primary_goal, training_location,
+                     equipment_list, limitations, profile_completed
+                FROM fitness_profile WHERE user_id = $1`, [userId]),
+    // Recent sessions with their exercises, so today's recommendation can
+    // avoid repeating yesterday and can progress from real weights.
+    q<any>(`SELECT w.performed_on, w.focus, w.minutes, w.perceived_effort,
+                   COALESCE(json_agg(json_build_object(
+                     'exercise', s.exercise, 'sets', s.sets,
+                     'reps', s.reps, 'weight_kg', s.weight_kg
+                   ) ORDER BY s.position) FILTER (WHERE s.id IS NOT NULL), '[]') AS exercises
+              FROM workouts w
+              LEFT JOIN workout_sets s ON s.workout_id = w.id
+             WHERE w.user_id = $1 AND w.performed_on > CURRENT_DATE - 14
+             GROUP BY w.id
+             ORDER BY w.performed_on DESC
+             LIMIT 5`, [userId]),
   ]);
 
   const current = weights[0]?.weight_kg;
@@ -83,6 +127,32 @@ export async function buildContext(userId: string, tz: string): Promise<CoachCon
     recentMeals: meals.map((m: any) => m.name),
     streakDays: streak?.n ?? 0,
     avgCalories7d: avg?.avg ?? undefined,
+    waterMl: water?.ml ?? 0,
+    waterTargetMl: targets?.water_ml ?? undefined,
+    sleepMinutes: undefined,
+    recentWorkouts: workouts.map((w: any) => ({
+      date: String(w.performed_on).slice(0, 10),
+      focus: w.focus,
+      minutes: w.minutes ?? null,
+      effort: w.perceived_effort ?? null,
+      exercises: w.exercises ?? [],
+    })),
+    fitness: fitness ? {
+      gymAccess: fitness.gym_access,
+      // The multi-select list is richer than the legacy single column; fall
+      // back to it only when onboarding has not run.
+      equipment: fitness.equipment_list?.length
+        ? fitness.equipment_list.join(", ")
+        : fitness.equipment,
+      experience: fitness.experience,
+      trainingDays: fitness.training_days,
+      sessionMinutes: fitness.session_minutes,
+      injuries: [...(fitness.injuries ?? []), ...(fitness.limitations ?? [])]
+        .filter((x: string) => x && x !== "none"),
+      primaryGoal: fitness.primary_goal ?? undefined,
+      trainingLocation: fitness.training_location ?? undefined,
+      profileCompleted: fitness.profile_completed ?? false,
+    } : undefined,
     preferences: prefs ? {
       diet: prefs.diet ?? undefined,
       cuisines: prefs.cuisines ?? [],
@@ -103,6 +173,33 @@ export async function complete(
   const started = Date.now();
 
   if (cfg.AI_PROVIDER === "mock") {
+    // A workout-shaped fixture when the caller asked for one, so the planner
+    // path is exercisable in CI without spending anything.
+    if (opts.json && system.includes("program training sessions")) {
+      return {
+        text: JSON.stringify({
+          workout_title: "Full Body Strength",
+          goal: "general health",
+          warmup: ["5 min easy cardio", "Dynamic mobility"],
+          exercises: [
+            { exercise_name: "Leg Press", sets: 3, reps: "8-12", rest_seconds: 90,
+              instructions: "Drive through mid-foot, don't lock out.", targets: "quads, glutes" },
+            { exercise_name: "Chest Press", sets: 3, reps: "8-12", rest_seconds: 90,
+              instructions: "Elbows about 45 degrees from your ribs.", targets: "chest, triceps" },
+            { exercise_name: "Lat Pulldown", sets: 3, reps: "8-12", rest_seconds: 75,
+              instructions: "Lead with the elbows, not the hands.", targets: "back, biceps" },
+            { exercise_name: "Plank", sets: 3, reps: "30-45 sec", rest_seconds: 45,
+              instructions: "Ribs down, squeeze glutes.", targets: "core" },
+          ],
+          optional_cardio: "15 min moderate walking",
+          cooldown: ["Hamstring stretch", "Chest doorway stretch"],
+          coach_note: "Straightforward session to build a base.",
+        }),
+        usage: { model: "mock", inputTokens: 0, cachedTokens: 0, outputTokens: 0,
+                 costUsd: 0, latencyMs: 20, escalated: false },
+      };
+    }
+
     return {
       text: opts.json
         ? JSON.stringify({ days: [{ date: new Date().toISOString().slice(0, 10), meals: [
