@@ -2544,3 +2544,42 @@ test("a proven lever is surfaced only once there is evidence for it", async () =
       "a new user must never be told something has worked for them before");
   } finally { token = saved; }
 });
+
+test("a misconfigured testing flag warns but never stops the server booting", async () => {
+  // Regression: DEV_UNLOCK_PREMIUM with NODE_ENV=production used to throw at
+  // boot, so the container started, never listened, and every healthcheck
+  // failed. An optional testing flag must not be able to take the service
+  // down — it is already inert in production.
+  const { execFileSync } = await import("node:child_process");
+
+  const check = (env) =>
+    execFileSync("node", ["-e", `
+      import("./dist/config.js")
+        .then(m => { m.assertProviderConfigured(); console.log("BOOTS:" + m.premiumUnlocked); })
+        .catch(e => console.log("THROWS:" + e.message));
+    `], {
+      env: { ...process.env, DATABASE_URL: "x",
+             JWT_SECRET: "0123456789012345678901234567890123", ...env },
+      encoding: "utf8",
+    }).trim();
+
+  const misconfigured = check({
+    NODE_ENV: "production", DEV_UNLOCK_PREMIUM: "true",
+    AI_PROVIDER: "openai", OPENAI_API_KEY: "sk-test",
+  });
+  assert.match(misconfigured, /^BOOTS:/, "must still boot");
+  assert.match(misconfigured, /BOOTS:false/, "and the flag must be inert");
+
+  // The mock provider is different: it serves fabricated foods that are
+  // indistinguishable from a real scan, so it stays fatal.
+  const mockInProd = check({ NODE_ENV: "production", AI_PROVIDER: "mock" });
+  assert.match(mockInProd, /^THROWS:/);
+  assert.match(mockInProd, /fabricated/);
+
+  // Non-production, flag on: unlocked as intended.
+  const testing = check({
+    NODE_ENV: "development", DEV_UNLOCK_PREMIUM: "true",
+    AI_PROVIDER: "openai", OPENAI_API_KEY: "sk-test",
+  });
+  assert.match(testing, /BOOTS:true/);
+});
