@@ -16,13 +16,15 @@ struct DashboardView: View {
     @State private var suggestion: MealSuggestion?
     @State private var showPaywall = false
     @State private var showMoreOptions = false
+    @State private var showDiary = false
+    @State private var showProgress = false
+    @State private var showSettings = false
 
     private var dash: Dashboard { app.dashboard }
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottom) {
-                ScrollView {
+            ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Space.l) {
                         greeting
                         if dash.streakDays > 0 { streakCard }
@@ -31,7 +33,10 @@ struct DashboardView: View {
                         metricGrid
 
                         sectionHeader("Today's Meals",
-                                      action: dash.meals.isEmpty ? nil : ("View All", { }))
+                                      action: dash.meals.isEmpty ? nil : ("View All", {
+                                          Haptics.tap()
+                                          showDiary = true
+                                      }))
                         mealList
 
                         if let suggestion {
@@ -42,24 +47,35 @@ struct DashboardView: View {
 
                         coachInsight
 
-                        if !entitlements.isPro { PremiumCard() }
+                        if !entitlements.isPro {
+                            let scan = entitlements.entitlements.foodScan
+                            Button {
+                                entitlements.present(.foodScan, source: "dashboard_badge")
+                            } label: {
+                                Text(scan.isExhausted ? "Free scans used — go unlimited"
+                                                      : scan.badge(noun: "AI scan"))
+                                    .font(.jakarta(11, .semibold))
+                                    .foregroundStyle(scan.isExhausted ? Theme.accent : Theme.secondary)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+
+                            PremiumCard()
+                        }
 
                         Text("Calorie and macro figures are AI estimates, not clinical measurements.")
                             .font(.jakarta(11))
                             .foregroundStyle(Theme.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
 
-                        Color.clear.frame(height: 96)   // room for the CTA
-                    }
-                    .padding(.horizontal, Theme.gutter)
-                    .padding(.top, Theme.Space.s)
+                    Color.clear.frame(height: 86)   // clears the tab bar
                 }
-                .refreshable {
-                    await app.refresh()
-                    await loadSuggestion()
-                }
-
-                scanCTA
+                .padding(.horizontal, Theme.gutter)
+                .padding(.top, Theme.Space.s)
+            }
+            .refreshable {
+                await app.refresh()
+                await loadSuggestion()
             }
             .background(Theme.bg)
             .navigationBarHidden(true)
@@ -73,6 +89,9 @@ struct DashboardView: View {
             .sheet(isPresented: $showPaywall) {
                 PaywallView(context: .general, source: "dashboard")
             }
+            .sheet(isPresented: $showDiary) { DiaryView() }
+            .sheet(isPresented: $showProgress) { ProgressHubView() }
+            .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("Add food", isPresented: $showMoreOptions, titleVisibility: .visible) {
                 Button("Upload a photo") { start(.library) }
                 Button("Describe it") { start(.text) }
@@ -87,12 +106,29 @@ struct DashboardView: View {
     // MARK: - Header
 
     private var greeting: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(salutation)
-                .font(.title)
-            Text("You're doing great. Let's crush your goal today.")
-                .font(.jakarta(12, .medium))
-                .foregroundStyle(Theme.secondary)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(salutation)
+                    .font(.title)
+                Text("You're doing great. Let's crush your goal today.")
+                    .font(.jakarta(12, .medium))
+                    .foregroundStyle(Theme.secondary)
+            }
+
+            Spacer(minLength: Theme.Space.s)
+
+            // With four tabs there is no Settings tab, so this is the only way
+            // in — and account deletion lives behind it.
+            Button {
+                Haptics.tap()
+                showSettings = true
+            } label: {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 26))
+                    .foregroundStyle(Theme.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Profile and settings")
         }
         .padding(.top, Theme.Space.l)
     }
@@ -129,6 +165,11 @@ struct DashboardView: View {
                 .font(.caption_)
                 .foregroundStyle(Theme.streak)
         }
+        .contentShape(.rect)
+        .onTapGesture {
+            Haptics.tap()
+            showProgress = true
+        }
         .padding(.horizontal, 7)
         .padding(.vertical, 6)
         .background(Theme.streak.opacity(0.05),
@@ -141,9 +182,25 @@ struct DashboardView: View {
 
     private func sectionHeader(_ title: String,
                                action: (String, () -> Void)?) -> some View {
-        HStack {
+        HStack(spacing: Theme.Space.m) {
             Text(title).font(.section)
             Spacer()
+
+            // Text, voice, barcode and search live here. The Scan tab covers
+            // the camera; without this the other inputs are unreachable.
+            if title == "Today's Meals" {
+                Button {
+                    Haptics.tap()
+                    showMoreOptions = true
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add food another way")
+            }
+
             if let action {
                 Button(action.0, action: action.1)
                     .font(.caption_)
@@ -306,55 +363,6 @@ struct DashboardView: View {
                     .stroke(Theme.accent.opacity(0.4), lineWidth: 1)
             )
         }
-    }
-
-    // MARK: - Scan CTA
-
-    private var scanCTA: some View {
-        VStack(spacing: Theme.Space.s) {
-            if !entitlements.isPro {
-                let scan = entitlements.entitlements.foodScan
-                Button {
-                    entitlements.present(.foodScan, source: "dashboard_badge")
-                } label: {
-                    Text(scan.isExhausted ? "Free scans used — go unlimited"
-                                          : scan.badge(noun: "AI scan"))
-                        .font(.jakarta(11, .semibold))
-                        .foregroundStyle(scan.isExhausted ? Theme.accent : Theme.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(spacing: Theme.Space.s) {
-                Button {
-                    Haptics.commit()
-                    start(.camera)
-                } label: {
-                    Label("Scan Food", systemImage: "camera.fill")
-                }
-                .buttonStyle(PrimaryButtonStyle())
-
-                Button {
-                    Haptics.tap()
-                    showMoreOptions = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 54, height: 54)
-                        .background(Theme.card, in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, Theme.gutter)
-        .padding(.bottom, Theme.Space.s)
-        .background(
-            LinearGradient(colors: [Theme.bg.opacity(0), Theme.bg, Theme.bg],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 150)
-                .allowsHitTesting(false),
-            alignment: .bottom
-        )
     }
 
     // MARK: - Actions
