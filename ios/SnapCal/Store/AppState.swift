@@ -29,6 +29,15 @@ final class AppState {
     var isRefreshing = false
     var banner: String?
 
+    /// Profile bits the Home header needs. Cached from /profile so the greeting
+    /// does not wait on a second request.
+    var profileFirstName = ""
+    var startWeightKg: Double?
+
+    /// One-line coach line for the Home insight card. Reuses the free
+    /// suggestion endpoint's reason text — no extra AI call.
+    var coachInsight: String?
+
     /// Optimistic local copy so the ring animates the instant a meal is saved,
     /// before the dashboard round-trip lands.
     func applyLocally(_ items: [FoodItem], slot: MealSlot) {
@@ -52,6 +61,8 @@ final class AppState {
     func enterGuestMode() {
         isGuest = true
         dashboard = .guestSample
+        profileFirstName = ""
+        coachInsight = "Great job hitting your protein goal! Try a 10-minute walk after dinner."
         phase = .ready
     }
 
@@ -105,6 +116,8 @@ final class AppState {
         do {
             dashboard = try await APIClient.shared.dashboard()
             quota = try? await APIClient.shared.usage()
+            await loadProfileBits()
+            coachInsight = try? await APIClient.shared.coachInsight()
             phase = .ready
         } catch APIError.unauthorized {
             await APIClient.shared.setToken(nil)
@@ -116,6 +129,13 @@ final class AppState {
         }
     }
 
+    /// Name and start weight for the header. Cheap and rarely changes.
+    private func loadProfileBits() async {
+        guard let profile = try? await APIClient.shared.profile() else { return }
+        profileFirstName = profile.name.split(separator: " ").first.map(String.init) ?? ""
+        startWeightKg = profile.startWeightKg
+    }
+
     func refresh() async {
         // A guest has no token; refreshing would just 401 in a loop.
         guard !isGuest else { return }
@@ -125,6 +145,7 @@ final class AppState {
             withAnimation(Theme.snap) { dashboard = d }
         }
         quota = try? await APIClient.shared.usage()
+        coachInsight = try? await APIClient.shared.coachInsight()
     }
 
     func signOut() async {
