@@ -41,6 +41,17 @@ private struct ErrorBody: Decodable {
     let reason: String?
     let usage: FeatureUsage?
     let quota: Quota?
+    let issues: [ValidationIssue]?
+
+    struct ValidationIssue: Decodable {
+        let path: [String]?
+        let message: String?
+
+        var readable: String {
+            let field = (path ?? []).filter { Int($0) == nil }.last ?? "value"
+            return "\(field): \(message ?? "invalid")"
+        }
+    }
 }
 
 actor APIClient {
@@ -126,7 +137,19 @@ actor APIClient {
         case (402, _):                        throw APIError.scanLimitReached(used: body?.quota?.used ?? 0,
                                                                               limit: body?.quota?.limit ?? 2)
         case (422, "no_food_detected"):       throw APIError.noFoodDetected
-        default:                              throw APIError.server(body?.message ?? "Something went wrong.")
+        case (400, "validation_failed"):
+            // Name the field the server rejected. "Something went wrong" on a
+            // save gives neither the user nor us anything to act on.
+            let detail = body?.issues?.prefix(2).map(\.readable).joined(separator: ", ")
+            throw APIError.server(detail.map { "The server rejected this meal (\($0))." }
+                                  ?? "The server rejected this meal.")
+
+        default:
+            #if DEBUG
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            print("[APIClient] \(http.statusCode) \(r.url?.path ?? "") → \(raw.prefix(500))")
+            #endif
+            throw APIError.server(body?.message ?? "Something went wrong. (\(http.statusCode))")
         }
     }
 
