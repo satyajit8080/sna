@@ -20,6 +20,7 @@
 		4419F66B9CC939CBE1F04394 /* SubscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4510BFFE580F76787E8182ED /* SubscriptionManager.swift */; };
 		471D248C81DC62152E49EF0F /* OnboardingFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7FA4143272759FA567DF7C /* OnboardingFlow.swift */; };
 		5602F9018620934328230811 /* DiaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C028B68F3247E08503691247 /* DiaryView.swift */; };
+		57A6D9648F85747598844594 /* PriorityCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1CCDBF47A3DC475F9EE5DF /* PriorityCard.swift */; };
 		5EDB72ED70472116CA8BBFCA /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32E25871917A3FACCFEBC13D /* AuthView.swift */; };
 		7A63BC8FD5F0BBBD6C90B94E /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA44F6BD29A7628F0D60711 /* APIClient.swift */; };
 		810E446ACD3F8D8F8041590E /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D80176967442EDFAA5BAD9B /* Theme.swift */; };
@@ -33,6 +34,7 @@
 		B54816AE0CFAB108A5128625 /* HealthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FA441D3926561A1463246FF /* HealthService.swift */; };
 		B799B8FEE284A7F756E8FB2E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C218B5722E6D23781BAFC304 /* Models.swift */; };
 		BF1735D3E05F5821C0EC7BEF /* ProgressHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D0BD5332ABF094E26CE5AC1 /* ProgressHubView.swift */; };
+		C107C6D59E33B0B45F6ABAD4 /* BrainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C6F9983D128875355C4BE9D /* BrainView.swift */; };
 		C535138D18F62D79C45EF08F /* SnapCalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6427B5B98FB60CE4D8A9D750 /* SnapCalApp.swift */; };
 		CB501156A83647F4302A8E1D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CAB397664F36CD5F6452C474 /* Assets.xcassets */; };
 		D8E82869F7B8C5E4AF04BC96 /* ConfirmMealView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF60245C106E56ACFB1800FA /* ConfirmMealView.swift */; };
@@ -74,10 +76,12 @@
 		3048FA1AD25714E0936F55FF /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Keychain.swift"; sourceTree = "<group>"; };
 		7D80176967442EDFAA5BAD9B /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Theme.swift"; sourceTree = "<group>"; };
 		C23A515D55189B2EDCF25408 /* BarcodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BarcodeScannerView.swift"; sourceTree = "<group>"; };
+		7C6F9983D128875355C4BE9D /* BrainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrainView.swift"; sourceTree = "<group>"; };
 		4A82D5A53D8C939638ED0E0D /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CoachView.swift"; sourceTree = "<group>"; };
 		8D8BF47C81BA01D3A9E6C5DA /* SuggestionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SuggestionCard.swift"; sourceTree = "<group>"; };
 		CF60245C106E56ACFB1800FA /* ConfirmMealView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConfirmMealView.swift"; sourceTree = "<group>"; };
 		B8FD910563D48DD7EE1B0784 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DashboardView.swift"; sourceTree = "<group>"; };
+		FF1CCDBF47A3DC475F9EE5DF /* PriorityCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PriorityCard.swift"; sourceTree = "<group>"; };
 		C028B68F3247E08503691247 /* DiaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DiaryView.swift"; sourceTree = "<group>"; };
 		5FA441D3926561A1463246FF /* HealthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HealthService.swift"; sourceTree = "<group>"; };
 		7D0BD5332ABF094E26CE5AC1 /* ProgressHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProgressHubView.swift"; sourceTree = "<group>"; };
@@ -203,6 +207,14 @@
 			path = "Barcode";
 			sourceTree = "<group>";
 		};
+		27A5697B16D5903B44E84C94 /* Brain */ = {
+			isa = PBXGroup;
+			children = (
+				7C6F9983D128875355C4BE9D /* BrainView.swift */,
+			);
+			path = "Brain";
+			sourceTree = "<group>";
+		};
 		ACEC81E669F3E8B19602E985 /* Coach */ = {
 			isa = PBXGroup;
 			children = (
@@ -224,6 +236,7 @@
 			isa = PBXGroup;
 			children = (
 				B8FD910563D48DD7EE1B0784 /* DashboardView.swift */,
+				FF1CCDBF47A3DC475F9EE5DF /* PriorityCard.swift */,
 			);
 			path = "Dashboard";
 			sourceTree = "<group>";
@@ -324,6 +337,7 @@
 			isa = PBXGroup;
 			children = (
 				251B36A77A44B6D5A062E924 /* Barcode */,
+				27A5697B16D5903B44E84C94 /* Brain */,
 				ACEC81E669F3E8B19602E985 /* Coach */,
 				443F81F3ACC69297AFB4721B /* Confirm */,
 				655EB38641A1C83C08C8EAA2 /* Dashboard */,
@@ -538,10 +552,12 @@
 				FB3B0557F6744CBF3511623D /* Keychain.swift in Sources */,
 				810E446ACD3F8D8F8041590E /* Theme.swift in Sources */,
 				37AA5A6937B7506FE8BB23FE /* BarcodeScannerView.swift in Sources */,
+				C107C6D59E33B0B45F6ABAD4 /* BrainView.swift in Sources */,
 				E3AE1E9DA880189E64E84D29 /* CoachView.swift in Sources */,
 				29D6CF67AFD7C9C345416273 /* SuggestionCard.swift in Sources */,
 				D8E82869F7B8C5E4AF04BC96 /* ConfirmMealView.swift in Sources */,
 				EB9633292F7FF87E24453AFA /* DashboardView.swift in Sources */,
+				57A6D9648F85747598844594 /* PriorityCard.swift in Sources */,
 				5602F9018620934328230811 /* DiaryView.swift in Sources */,
 				B54816AE0CFAB108A5128625 /* HealthService.swift in Sources */,
 				BF1735D3E05F5821C0EC7BEF /* ProgressHubView.swift in Sources */,
