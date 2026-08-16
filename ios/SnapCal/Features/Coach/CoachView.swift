@@ -9,6 +9,8 @@ struct CoachView: View {
     @State private var draft = ""
     @State private var thinking = false
     @State private var suggestion: MealSuggestion?
+    /// Intent of the most recent reply — decides which card, if any, follows.
+    @State private var lastIntent: String?
     @State private var workoutPlan: WorkoutPlan?
     @State private var generatingWorkout = false
     @State private var showFitnessOnboarding = false
@@ -220,36 +222,6 @@ struct CoachView: View {
                         }
                         .buttonStyle(.plain)
                     }
-
-                    if lastIntent == "workout_request" {
-                        Button {
-                            Haptics.tap()
-                            Task { await generateWorkout() }
-                        } label: {
-                            HStack(spacing: 10) {
-                                if generatingWorkout {
-                                    ProgressView().tint(Theme.accent)
-                                } else {
-                                    Image(systemName: "figure.strengthtraining.traditional")
-                                }
-                                Text(generatingWorkout ? "Building your session…"
-                                                       : "Open this as a session")
-                                    .font(.jakarta(14, .semibold))
-                                Spacer(minLength: 0)
-                                if !generatingWorkout {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                            }
-                            .foregroundStyle(Theme.accent)
-                            .padding(14)
-                            .card(radius: Theme.Radius.row, padding: 0)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(generatingWorkout)
-                        .transition(.opacity)
-                    }
-
                     if let suggestion {
                         SuggestionCard(suggestion: suggestion) {
                             withAnimation(Theme.snap) { self.suggestion = nil }
@@ -318,6 +290,22 @@ struct CoachView: View {
         // inset for it. Reserve its height here or the composer sits under it.
         .padding(.bottom, SnapTabBar.height + Theme.Space.s)
         .background(Theme.card)
+    }
+
+    /// Builds a structured session from the same context the reply used.
+    private func generateWorkout() async {
+        guard app.requireAccount(for: "generate workouts") else { return }
+        generatingWorkout = true
+        defer { generatingWorkout = false }
+
+        do {
+            workoutPlan = try await APIClient.shared.generateWorkout()
+        } catch {
+            messages.append(CoachMessage(
+                role: "assistant",
+                content: (error as? APIError)?.errorDescription
+                    ?? "Couldn't build a session just now — try again in a moment."))
+        }
     }
 
     private func send(_ text: String) {
