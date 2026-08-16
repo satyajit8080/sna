@@ -635,3 +635,111 @@ struct BrainMemoryTests {
         #expect(m.confidence == 1.0)
     }
 }
+
+/// Structured workouts. The plan is data the user works through, so decoding
+/// has to survive the fields the backend legitimately leaves null.
+struct WorkoutPlanTests {
+
+    private let json = """
+    {"id":"p1","workout_title":"Lower Body Strength","goal":"lose","focus":"lower",
+     "duration_minutes":45,"warmup":["5 min easy cardio"],
+     "exercises":[
+       {"exercise_name":"Leg Press","sets":3,"reps":"8-12","rest_seconds":90,
+        "suggested_weight_kg":42.5,
+        "progression_note":"Up from 40kg — you hit the top of the range twice.",
+        "instructions":"Drive through mid-foot.","targets":"quads, glutes"},
+       {"exercise_name":"Plank","sets":3,"reps":"30-45 sec","rest_seconds":45,
+        "suggested_weight_kg":null,
+        "progression_note":"No history for this one — start light.",
+        "instructions":"Ribs down.","targets":"core"}],
+     "optional_cardio":"15 min walking","cooldown":["Hamstring stretch"],
+     "coach_note":"Straightforward session."}
+    """.data(using: .utf8)!
+
+    @Test("a plan decodes with weights, ranges and rest")
+    func decodePlan() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        #expect(plan.exercises.count == 2)
+        #expect(plan.durationMinutes == 45)
+        #expect(plan.exercises[0].suggestedWeightKg == 42.5)
+        #expect(plan.exercises[0].restSeconds == 90)
+    }
+
+    @Test("a missing weight is null, never zero, and is explained")
+    func absentWeight() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        let plank = plan.exercises[1]
+
+        // Zero kilos and "we don't know yet" are different things, and showing
+        // 0 would look like an instruction to lift nothing.
+        #expect(plank.suggestedWeightKg == nil)
+        #expect(plank.progressionNote?.isEmpty == false)
+    }
+
+    @Test("reps stay a range rather than a false single number")
+    func repRanges() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        #expect(plan.exercises[0].reps == "8-12")
+        #expect(plan.exercises[1].reps == "30-45 sec")
+    }
+
+    @Test("a recovery session is recognisable as one")
+    func recoveryDetection() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        #expect(!plan.isRecovery)
+
+        let recovery = """
+        {"id":null,"workout_title":"Recovery","goal":"lose","focus":"mobility",
+         "duration_minutes":20,"warmup":[],"exercises":[],
+         "optional_cardio":null,"cooldown":[],"coach_note":"Take it easy."}
+        """.data(using: .utf8)!
+        #expect(try JSONDecoder().decode(WorkoutPlan.self, from: recovery).isRecovery)
+    }
+}
+
+struct FitnessOnboardingTests {
+
+    @Test("a question decodes with its options and progress")
+    func decodeQuestion() throws {
+        let json = """
+        {"completed":false,"answered":2,"total":8,
+         "welcome":"Good to meet you, Satya.",
+         "next":{"field":"training_location","question":"Where will you train?",
+                 "options":[{"value":"gym","label":"Gym"},
+                            {"value":"home","label":"Home"}],
+                 "multiSelect":false,"step":3,"total":8,"skippable":false}}
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(OnboardingState.self, from: json)
+        #expect(state.completed == false)
+        #expect(state.next?.options.count == 2)
+        #expect(state.next?.step == 3)
+        #expect(state.next?.multiSelect == false)
+    }
+
+    @Test("a completed state has no question and no welcome")
+    func decodeCompleted() throws {
+        let json = """
+        {"completed":true,"answered":8,"total":8,"next":null,"welcome":null}
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(OnboardingState.self, from: json)
+        #expect(state.completed)
+        #expect(state.next == nil)
+        // A returning user must not be greeted as though it were their first day.
+        #expect(state.welcome == nil)
+    }
+
+    @Test("a multi-select question is flagged as one")
+    func multiSelect() throws {
+        let json = """
+        {"completed":false,"answered":3,"total":8,"welcome":null,
+         "next":{"field":"equipment_list","question":"What do you have access to?",
+                 "options":[{"value":"dumbbells","label":"Dumbbells"}],
+                 "multiSelect":true,"step":4,"total":8,"skippable":false}}
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(OnboardingState.self, from: json)
+        #expect(state.next?.multiSelect == true)
+    }
+}
