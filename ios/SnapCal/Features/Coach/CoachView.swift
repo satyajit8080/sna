@@ -9,6 +9,10 @@ struct CoachView: View {
     @State private var draft = ""
     @State private var thinking = false
     @State private var suggestion: MealSuggestion?
+    @State private var workoutPlan: WorkoutPlan?
+    @State private var generatingWorkout = false
+    @State private var showFitnessOnboarding = false
+    @State private var needsFitnessProfile = false
     @State private var error: String?
     @FocusState private var focused: Bool
 
@@ -36,10 +40,25 @@ struct CoachView: View {
                     }
                 }
             }
+            .sheet(item: $workoutPlan) { plan in
+                WorkoutSessionView(plan: plan)
+            }
+            .sheet(isPresented: $showFitnessOnboarding) {
+                FitnessOnboardingView {
+                    needsFitnessProfile = false
+                }
+            }
             .task {
                 Analytics.track(.coachOpened)
                 guard !app.isGuest else { return }
                 messages = (try? await APIClient.shared.coachHistory()) ?? []
+
+                // Training advice without knowing their equipment or experience
+                // is guesswork, so offer to fix that once rather than caveating
+                // every answer.
+                if let onboarding = try? await APIClient.shared.onboardingState() {
+                    needsFitnessProfile = !onboarding.completed
+                }
                 suggestions = (try? await APIClient.shared.coachSuggestions()) ?? []
             }
             .alert("Coach unavailable", isPresented: .constant(error != nil)) {
@@ -119,6 +138,118 @@ struct CoachView: View {
                     // Only ever set from a reply that actually recommended
                     // something — never fetched on open, never on a general
                     // question.
+                    // The chat reply answers the question; the card is the
+                    // thing you can actually work through and log.
+                    if needsFitnessProfile {
+                        Button {
+                            Haptics.tap()
+                            showFitnessOnboarding = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "figure.run.circle")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Tell me about your training")
+                                        .font(.jakarta(14, .semibold))
+                                    Text("A few quick questions and I can plan properly")
+                                        .font(.jakarta(11, .medium))
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if lastIntent == "workout_request" {
+                        Button {
+                            Haptics.tap()
+                            Task { await generateWorkout() }
+                        } label: {
+                            HStack(spacing: 10) {
+                                if generatingWorkout {
+                                    ProgressView().tint(Theme.accent)
+                                } else {
+                                    Image(systemName: "figure.strengthtraining.traditional")
+                                }
+                                Text(generatingWorkout ? "Building your session…"
+                                                       : "Open this as a session")
+                                    .font(.jakarta(14, .semibold))
+                                Spacer(minLength: 0)
+                                if !generatingWorkout {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(generatingWorkout)
+                        .transition(.opacity)
+                    }
+
+                    // The reply answers the question; this card is the thing
+                    // you can actually work through and log.
+                    if needsFitnessProfile {
+                        Button {
+                            Haptics.tap()
+                            showFitnessOnboarding = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "figure.run.circle")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Tell me about your training")
+                                        .font(.jakarta(14, .semibold))
+                                    Text("A few quick questions and I can plan properly")
+                                        .font(.jakarta(11, .medium))
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if lastIntent == "workout_request" {
+                        Button {
+                            Haptics.tap()
+                            Task { await generateWorkout() }
+                        } label: {
+                            HStack(spacing: 10) {
+                                if generatingWorkout {
+                                    ProgressView().tint(Theme.accent)
+                                } else {
+                                    Image(systemName: "figure.strengthtraining.traditional")
+                                }
+                                Text(generatingWorkout ? "Building your session…"
+                                                       : "Open this as a session")
+                                    .font(.jakarta(14, .semibold))
+                                Spacer(minLength: 0)
+                                if !generatingWorkout {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(generatingWorkout)
+                        .transition(.opacity)
+                    }
+
                     if let suggestion {
                         SuggestionCard(suggestion: suggestion) {
                             withAnimation(Theme.snap) { self.suggestion = nil }
@@ -207,6 +338,7 @@ struct CoachView: View {
             do {
                 let result = try await APIClient.shared.askCoach(question)
                 withAnimation(Theme.snap) {
+                    lastIntent = result.intent
                     messages.append(CoachMessage(role: "assistant", content: result.answer))
                     // The server sends a card only when the answer made a
                     // recommendation, so a nil here clears any previous card
