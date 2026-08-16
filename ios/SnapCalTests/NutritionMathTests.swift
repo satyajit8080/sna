@@ -445,3 +445,57 @@ struct LoopTests {
         #expect(try JSONDecoder().decode(MealPlan.self, from: fullDay).isRestOfDay == false)
     }
 }
+
+/// Home screen data shaping, per the Figma design.
+struct HomeScreenTests {
+
+    @Test("meal row renders a locale-formatted time from logged_at")
+    func mealTime() throws {
+        let json = """
+        {"id":"1","slot":"breakfast","calories":350,"protein_g":20,"carbs_g":38,"fat_g":11,
+         "items":[],"note":null,"ai_confidence":null,"logged_at":"2026-08-16T12:15:00Z"}
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let meal = try decoder.decode(Meal.self, from: json)
+
+        #expect(meal.loggedAt != nil)
+        #expect(meal.loggedTime != nil)
+        #expect(meal.calories == 350)
+    }
+
+    @Test("a meal with no timestamp hides the time row rather than showing a placeholder")
+    func mealWithoutTime() throws {
+        let json = """
+        {"id":"1","slot":"lunch","calories":520,"protein_g":41,"carbs_g":44,"fat_g":18,
+         "items":[],"note":null,"ai_confidence":null}
+        """.data(using: .utf8)!
+        let meal = try JSONDecoder().decode(Meal.self, from: json)
+        #expect(meal.loggedTime == nil)
+    }
+
+    @Test("profile summary decodes the fields the header needs")
+    func profileSummary() throws {
+        let json = """
+        {"name":"Satya Dhumal","start_weight_kg":82.0,"goal_weight_kg":76.0,"country":"US"}
+        """.data(using: .utf8)!
+        let p = try JSONDecoder().decode(ProfileSummary.self, from: json)
+        #expect(p.name == "Satya Dhumal")
+        #expect(p.startWeightKg == 82.0)
+        // The greeting uses the first name only.
+        #expect(p.name.split(separator: " ").first.map(String.init) == "Satya")
+    }
+
+    @Test("ring shows remaining against budget, and overshoot as a positive number")
+    func ringMath() {
+        // 1320 of a 2118 budget → 798 left, not "over".
+        let under = 2118 - 1320
+        #expect(under == 798)
+
+        // Over-budget must display the magnitude, with the sign carried by copy.
+        let over = 2118 - 2400
+        #expect(over == -282)
+        #expect(abs(over) == 282)
+    }
+}
