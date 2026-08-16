@@ -17,6 +17,10 @@ final class AppState {
     /// first action that needs a server round-trip.
     private(set) var isGuest = false
 
+    /// Namespaces the on-device cache so two accounts on one device stay
+    /// separate.
+    private var cacheKey = "anonymous"
+
     /// Set when a guest taps something that needs an account; drives the sheet.
     var guestPromptFeature: String?
 
@@ -56,13 +60,14 @@ final class AppState {
             dashboard.remaining.carbs_g -= c
             dashboard.remaining.fat_g -= f
         }
+        DashboardCache.save(dashboard, userKey: cacheKey)
     }
 
     func enterGuestMode() {
         isGuest = true
-        dashboard = .guestSample
+        dashboard = .guest
         profileFirstName = ""
-        coachInsight = "Great job hitting your protein goal! Try a 10-minute walk after dinner."
+        coachInsight = "Sign up to start tracking — your first scan takes a few seconds."
         phase = .ready
     }
 
@@ -112,20 +117,34 @@ final class AppState {
     }
 
     func bootstrap() async {
-        guard await APIClient.shared.token != nil else { phase = .welcome; return }
+        guard let token = await APIClient.shared.token else { phase = .welcome; return }
+        cacheKey = DashboardCache.userKey(for: token)
+
+        // Show the last known numbers immediately so a cold launch never looks
+        // like the history was wiped. Replaced as soon as the server answers.
+        if let cached = DashboardCache.load(userKey: cacheKey, today: DashboardCache.localToday) {
+            dashboard = cached
+        }
+
         do {
-            dashboard = try await APIClient.shared.dashboard()
+            let fresh = try await APIClient.shared.dashboard()
+            dashboard = fresh
+            DashboardCache.save(fresh, userKey: cacheKey)
             quota = try? await APIClient.shared.usage()
             await loadProfileBits()
             coachInsight = try? await APIClient.shared.coachInsight()
             phase = .ready
         } catch APIError.unauthorized {
+            // Only a genuine auth failure clears state.
             await APIClient.shared.setToken(nil)
+            DashboardCache.clear()
+            dashboard = .placeholder
             phase = .welcome
         } catch {
-            // Offline launch still shows the shell; the ring fills when we reconnect.
+            // Offline or a server blip: keep whatever we already had rather
+            // than replacing real history with zeros.
             phase = .ready
-            banner = error.localizedDescription
+            banner = "Couldn't reach SnapCal. Showing your last saved day."
         }
     }
 
@@ -141,8 +160,13 @@ final class AppState {
         guard !isGuest else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+
+        // A failed refresh leaves the previous values in place. Overwriting
+        // with an empty dashboard is what made data look lost.
         if let d = try? await APIClient.shared.dashboard() {
             withAnimation(Theme.snap) { dashboard = d }
+            DashboardCache.save(d, userKey: cacheKey)
+            banner = nil
         }
         quota = try? await APIClient.shared.usage()
         coachInsight = try? await APIClient.shared.coachInsight()
@@ -150,8 +174,15 @@ final class AppState {
 
     func signOut() async {
         await APIClient.shared.setToken(nil)
+        // Nothing from this account may survive to the next one on this device.
+        DashboardCache.clear()
         isGuest = false
         guestPromptFeature = nil
+        cacheKey = "anonymous"
+        profileFirstName = ""
+        startWeightKg = nil
+        coachInsight = nil
+        quota = nil
         dashboard = .placeholder
         phase = .welcome
     }
