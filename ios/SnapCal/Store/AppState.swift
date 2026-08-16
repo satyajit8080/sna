@@ -21,6 +21,13 @@ final class AppState {
     /// separate.
     private var cacheKey = "anonymous"
 
+    /// Last date the learning cycle ran, so it happens once a day rather than
+    /// on every foreground.
+    private var lastLearnCycle: String {
+        get { UserDefaults.standard.string(forKey: "brain.lastCycle") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "brain.lastCycle") }
+    }
+
     /// Set when a guest taps something that needs an account; drives the sheet.
     var guestPromptFeature: String?
 
@@ -153,6 +160,21 @@ final class AppState {
         guard let profile = try? await APIClient.shared.profile() else { return }
         profileFirstName = profile.name.split(separator: " ").first.map(String.init) ?? ""
         startWeightKg = profile.startWeightKg
+    }
+
+    /// Measures what recent advice did, then updates the brain.
+    ///
+    /// Once a day, in the background, failures ignored. Without this call the
+    /// memory layer never learns anything — it was built to be driven from the
+    /// client precisely so a dormant account costs nothing.
+    func runLearningCycleIfDue() async {
+        guard !isGuest, phase == .ready else { return }
+
+        let today = DashboardCache.localToday
+        guard lastLearnCycle != today else { return }
+        lastLearnCycle = today
+
+        _ = try? await APIClient.shared.runLearnCycle()
     }
 
     func refresh() async {
