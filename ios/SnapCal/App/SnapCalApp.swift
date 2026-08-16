@@ -27,7 +27,10 @@ struct SnapCalApp: App {
                     // a stale morning message can't survive.
                     await notifications.rescheduleAll()
                     // Activity is supplementary; a failure here never blocks launch.
-                    await health.syncToday()
+                    await health.syncToday(force: true)
+                    health.startObserving()
+                    // A walk mid-session should move the ring without a manual pull.
+                    health.onUpdate = { await app.refresh() }
                 }
                 .onOpenURL { url in
                     notifications.pendingDeeplink = url.absoluteString
