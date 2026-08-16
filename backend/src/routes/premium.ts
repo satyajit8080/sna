@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { q, one } from "../db.js";
+import { q, one, tx } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { adminUserIds, cfg, usdaKey } from "../config.js";
 import { searchUsdaMany } from "../nutrition/usda.js";
@@ -9,7 +9,13 @@ import { COACH_SYSTEM, MEAL_PLAN_SYSTEM } from "../ai/prompts.js";
 import { buildContext, complete, parseJson } from "../services/coachContext.js";
 import { chat, cheapestModels } from "../ai/openrouter.js";
 import { suggestNextMeal } from "../services/suggest.js";
-import { classify, isOnTopic, answerContainsRefusal } from "../services/coachIntent.js";
+import { onboardingState, welcomeLine } from "../services/coachOnboarding.js";
+import { topPatterns } from "../services/patterns.js";
+import { generateWorkout, savePlan } from "../services/workoutPlanner.js";
+import {
+  classify, isOnTopic, answerContainsRefusal, guardFor,
+  maxTokensFor, keepsStructure, validateResponse,
+} from "../services/coachIntent.js";
 import { activityFor, recordActivity, activityHistory } from "../services/activity.js";
 import {
   entitlementsFor, reserve, settle, release, subscriptionFor,
@@ -43,8 +49,21 @@ export default async function routes(app: FastifyInstance) {
   app.post("/coach/ask", { preHandler: requireAuth }, async (req) => {
     const { question } = z.object({ question: z.string().min(2).max(300) }).parse(req.body);
 
+    // Classification first: it decides which context is worth gathering and
+    // how large a response to pay for.
+    const intent = classify(question);
+    const guard = guardFor(question);
+    const onTopic = isOnTopic(question);
+
     const answer = await metered(req, "coach", async () => {
       const context = await buildContext(req.userId, req.tz);
+
+      // Patterns are arithmetic over logged history, not model output, so they
+      // cannot hallucinate. Only gathered where they change the answer — a
+      // calorie check does not need a fortnight of trends.
+      const patterns = ["daily_plan", "progress", "workout_request"].includes(intent)
+        ? await topPatterns(req.userId, 3)
+        : [];
 
       // Only the last exchange is replayed. Full history would grow the bill
       // linearly with no benefit for single-turn coaching questions.
@@ -87,22 +106,52 @@ export default async function routes(app: FastifyInstance) {
         goal: context.goal ?? null,
         diet: context.preferences?.diet ?? null,
         allergies: context.preferences?.allergies ?? [],
+        water_ml: context.waterMl ?? 0,
+        water_target_ml: context.waterTargetMl ?? null,
+        recent_workouts: (context.recentWorkouts ?? []).map((w) => ({
+          date: w.date, focus: w.focus, minutes: w.minutes, effort: w.effort,
+          exercises: w.exercises.map((e) => ({
+            exercise: e.exercise, sets: e.sets, reps: e.reps, weight_kg: e.weight_kg,
+          })),
+        })),
+        fitness_profile: context.fitness ?? null,
+        patterns_noticed: patterns,
       };
 
-      const intent = classify(question);
-      const onTopic = isOnTopic(question);
-
-      // A short, explicit instruction per turn beats hoping the system prompt
-      // covers every phrasing.
+      /**
+       * Per-turn steer.
+       *
+       * The system prompt sets the coach's character; this says what *this*
+       * message needs. Guards come first because they must hold regardless of
+       * what the question is otherwise about.
+       */
       const steer =
-        !onTopic
-          ? "This question is not about food, nutrition, activity or progress. Say in one short sentence that you can only help with those. Do NOT mention their calories."
-        : intent === "recommendation"
-          ? "The user is asking for a food recommendation. Name one specific food and say in a few words why it fits their remaining calories or protein. Do NOT ask them to scan or search anything."
-        : intent === "analysis"
-          ? "The user is asking about food they have eaten. Use meals_today. If the food is not there, say it needs scanning or searching."
+        guard === "urgent"
+          ? "The user may be describing a medical emergency. Tell them plainly to seek urgent medical help now. Do not offer nutrition or training advice."
+        : guard === "medical"
+          ? "This touches on medication or diagnosis. Say a doctor or pharmacist is the right person, name no medication or dose, then offer help with the food, training or recovery side if there is one."
+        : guard === "brand"
+          ? "They are asking which product or brand to buy. Do not name a brand. Explain what to compare — protein per serving, ingredients, cost, tolerance — and answer any other part of their question fully."
+        : guard === "live_data"
+          ? "They are asking about live availability, price or opening hours, which you cannot verify. Say so in one clause, then answer the general part of the question properly."
+        : !onTopic
+          ? "This is not about food, nutrition, training, activity, sleep or their progress. Say briefly that this is outside what you help with, and offer what you do cover. Do NOT mention their calorie numbers."
+        : intent === "workout_request"
+          ? "Give a complete session: warm-up, exercises with sets and reps, rest between sets, and a cool-down. Respect their equipment, time and experience from the context. Use recentWorkouts to choose today's focus and to avoid repeating what they trained most recently. If they have trained hard several days running, recommend recovery instead."
+        : intent === "daily_plan"
+          ? "Give a short structured plan for today covering nutrition, activity and training, based on their actual numbers. Lead with the single highest-impact thing. Keep it to a few short lines."
+        : intent === "meal_recommendation"
+          ? "Recommend specific food. Say in a few words why it fits their remaining calories or protein. Never ask them to scan or search anything."
+        : intent === "food_analysis"
+          ? "They are asking about food they have eaten. Use meals_today. If it is not there, say it needs scanning or searching."
+        : intent === "hydration"
+          ? "Answer using their water intake and target. Do not push excessive intake."
+        : intent === "activity"
+          ? "Answer using their step count and target. If they have already been active, say so rather than pushing more."
+        : intent === "sleep"
+          ? "Give practical sleep and recovery habits. Do not diagnose a sleep disorder; suggest a professional for persistent problems."
         : intent === "progress"
-          ? "The user is asking about their progress. Answer using their numbers."
+          ? "Answer using their weight trend, streak and averages. One imperfect day is not failure."
           : "Answer briefly and practically.";
 
       const messages = [
@@ -115,27 +164,29 @@ export default async function routes(app: FastifyInstance) {
         { role: "user" as const, content: `${JSON.stringify(facts)}\n${question}` },
       ];
 
-      const { text, usage } = await chat(messages, 110);
+      const { text, usage } = await chat(messages, maxTokensFor(intent));
 
-      // Keep at most two sentences. Truncating to one, as this did before, cut
-      // answers mid-thought and made the coach look wrong rather than terse.
-      const reply = text
-        .replace(/\s+/g, " ")
-        .split(/(?<=[.!?])\s/)
-        .slice(0, 2)
-        .join(" ")
-        .trim()
-        .slice(0, 260)
-        || "Log a meal and ask again — I need today's numbers first.";
+      // Workouts and day plans are structured; everything else is trimmed to
+      // keep the coach terse and the bill small.
+      const cleaned = keepsStructure(intent)
+        ? text.trim().slice(0, 1400)
+        : text.replace(/\s+/g, " ").split(/(?<=[.!?])\s/).slice(0, 3).join(" ").trim().slice(0, 400);
 
-      await q(`INSERT INTO coach_messages (user_id, role, content) VALUES ($1,'user',$2), ($1,'assistant',$3)`,
-        [req.userId, question, reply]);
+      // Last line of defence: the model is instructed on medication and brands,
+      // but instruction-following is probabilistic and these are the two places
+      // where being wrong matters most.
+      const reply = validateResponse(cleaned, guard)
+        ?? (cleaned || "Tell me a bit more and I'll help.");
 
-      // A card only when the user asked for one AND the answer actually made a
-      // recommendation. Showing "Maple Glazed Salmon" under the words "I'll
-      // need the food scanned first" is the contradiction this prevents.
+      await q(`INSERT INTO coach_messages (user_id, role, content, intent)
+               VALUES ($1,'user',$2,$4), ($1,'assistant',$3,$4)`,
+        [req.userId, question, reply, intent]);
+
+      // A card only when a meal was actually requested and actually given.
       const shouldSuggest =
-        onTopic && intent === "recommendation" && !answerContainsRefusal(reply);
+        onTopic && guard === null &&
+        intent === "meal_recommendation" &&
+        !answerContainsRefusal(reply);
 
       const suggestion = shouldSuggest
         ? await suggestNextMeal(req.userId, req.tz, context)
@@ -334,6 +385,267 @@ export default async function routes(app: FastifyInstance) {
     await q(`UPDATE nutrition_targets SET activity_credit = $2, updated_at = now()
               WHERE user_id = $1`, [req.userId, mode]);
     return activityFor(req.userId, req.tz);
+  });
+
+  /**
+   * Conversational fitness onboarding.
+   *
+   * The server decides the next question so it can skip anything SnapCal
+   * already knows and anything made irrelevant by an earlier answer.
+   */
+  app.get("/coach/onboarding", { preHandler: requireAuth }, async (req) => {
+    const [state, profile] = await Promise.all([
+      onboardingState(req.userId),
+      one<any>(`SELECT name, goal FROM profiles WHERE user_id = $1`, [req.userId]),
+    ]);
+
+    return {
+      ...state,
+      welcome: state.completed
+        ? null
+        : welcomeLine(profile?.name?.split(" ")[0], profile?.goal),
+    };
+  });
+
+  app.post("/coach/onboarding", { preHandler: requireAuth }, async (req, reply) => {
+    // `nullish` rather than `optional`: a client sending both keys will pass
+    // null for the one it isn't using, and rejecting that stalls onboarding
+    // mid-sequence with a validation error the user cannot act on.
+    const { field, value, values, skip } = z.object({
+      field: z.string().max(40),
+      value: z.string().max(60).nullish(),
+      values: z.array(z.string().max(60)).max(10).nullish(),
+      skip: z.boolean().default(false),
+    }).parse(req.body);
+
+    // Ensure a row exists before any targeted update.
+    await q(`INSERT INTO fitness_profile (user_id) VALUES ($1)
+             ON CONFLICT (user_id) DO NOTHING`, [req.userId]);
+
+    if (!skip) {
+      switch (field) {
+        case "primary_goal":
+          await q(`UPDATE fitness_profile SET primary_goal = $2, updated_at = now()
+                    WHERE user_id = $1`, [req.userId, value ?? null]);
+          break;
+        case "experience":
+          await q(`UPDATE fitness_profile SET experience = $2, updated_at = now()
+                    WHERE user_id = $1`, [req.userId, value ?? "unknown"]);
+          break;
+        case "training_location":
+          await q(`UPDATE fitness_profile SET training_location = $2,
+                          gym_access = ($2 IN ('gym','both')), updated_at = now()
+                    WHERE user_id = $1`, [req.userId, value ?? null]);
+          break;
+        case "equipment_list":
+          await q(`UPDATE fitness_profile SET equipment_list = $2, updated_at = now()
+                    WHERE user_id = $1`, [req.userId, values ?? []]);
+          break;
+        case "training_days":
+          await q(`UPDATE fitness_profile SET training_days = $2, updated_at = now()
+                    WHERE user_id = $1`, [req.userId, Number(value) || 3]);
+          break;
+        case "session_minutes":
+          await q(`UPDATE fitness_profile SET session_minutes = $2, updated_at = now()
+                    WHERE user_id = $1`, [req.userId, Number(value) || 45]);
+          break;
+        case "average_sleep_hours":
+          await q(`UPDATE fitness_profile SET average_sleep_hours = $2, updated_at = now()
+                    WHERE user_id = $1`, [req.userId, Number(value) || null]);
+          break;
+        case "limitations_asked":
+          await q(`UPDATE fitness_profile SET limitations = $2, updated_at = now()
+                    WHERE user_id = $1`,
+            [req.userId, (values ?? []).filter((v) => v !== "none")]);
+          break;
+        default:
+          return reply.code(400).send({ error: "unknown_field", field });
+      }
+    }
+
+    // Recorded even when skipped: the question was asked and answered, and it
+    // must not come round again.
+    await q(`UPDATE fitness_profile
+                SET answered_fields = (
+                      SELECT ARRAY(SELECT DISTINCT unnest(answered_fields || $2::text)))
+              WHERE user_id = $1`, [req.userId, field]);
+
+    const state = await onboardingState(req.userId);
+
+    // The last answer completes the profile.
+    if (!state.next && !state.completed) {
+      await q(`UPDATE fitness_profile
+                  SET profile_completed = true, completed_at = now()
+                WHERE user_id = $1`, [req.userId]);
+      return { ...(await onboardingState(req.userId)), justCompleted: true };
+    }
+
+    // `limitations_asked` is the final step; answering it finishes onboarding.
+    if (field === "limitations_asked") {
+      await q(`UPDATE fitness_profile
+                  SET profile_completed = true, completed_at = now()
+                WHERE user_id = $1`, [req.userId]);
+      return { ...(await onboardingState(req.userId)), justCompleted: true };
+    }
+
+    return state;
+  });
+
+  /**
+   * Structured workout the client can render as a card and log set by set.
+   *
+   * Separate from /coach/ask because the response is data, not prose — chat
+   * text cannot be started, ticked off, or turned into history.
+   */
+  app.post("/coach/workout", { preHandler: requireAuth }, async (req) => {
+    const opts = z.object({
+      minutes: z.number().int().min(10).max(180).optional(),
+      focus: z.enum(["upper", "lower", "full_body", "push", "pull",
+                     "cardio", "mobility"]).optional(),
+    }).parse(req.body ?? {});
+
+    const plan = await metered(req, "coach", async () => {
+      const context = await buildContext(req.userId, req.tz);
+      const { plan, usage } = await generateWorkout(req.userId, context, {
+        minutesOverride: opts.minutes,
+        focusOverride: opts.focus,
+      });
+
+      const saved = await savePlan(req.userId, plan, localDate(req.tz));
+      return { value: { id: saved?.id ?? null, ...plan }, usages: [usage] };
+    });
+
+    return { ...plan, entitlements: await entitlementsFor(req.userId) };
+  });
+
+  /** Patterns over recent history. Free — arithmetic, no model call. */
+  app.get("/coach/patterns", { preHandler: requireAuth }, async (req) => ({
+    patterns: await topPatterns(req.userId, 5),
+  }));
+
+  // ── training ──────────────────────────────────────────────────────────────
+  // Without a training log the coach recommends the same session every day and
+  // cannot suggest progression from real weights.
+
+  app.get("/fitness/profile", { preHandler: requireAuth }, async (req) =>
+    (await one(`SELECT gym_access, equipment, experience, training_days,
+                       session_minutes, injuries
+                  FROM fitness_profile WHERE user_id = $1`, [req.userId]))
+    ?? { gym_access: false, equipment: "none", experience: "unknown",
+         training_days: 3, session_minutes: 45, injuries: [] });
+
+  app.put("/fitness/profile", { preHandler: requireAuth }, async (req) => {
+    const p = z.object({
+      gym_access: z.boolean().optional(),
+      equipment: z.enum(["none", "bands", "dumbbells", "home_gym", "full_gym"]).optional(),
+      experience: z.enum(["unknown", "beginner", "intermediate", "advanced"]).optional(),
+      training_days: z.number().int().min(0).max(7).optional(),
+      session_minutes: z.number().int().min(10).max(180).optional(),
+      injuries: z.array(z.string().max(40)).max(10).optional(),
+    }).parse(req.body);
+
+    // Values go in the INSERT as well as the UPDATE: a first write does not
+    // hit the conflict path, so a SET-only clause would silently store
+    // defaults and discard everything the user just chose.
+    return one(
+      `INSERT INTO fitness_profile
+         (user_id, gym_access, equipment, experience, training_days, session_minutes, injuries)
+       VALUES ($1,
+               COALESCE($2, false),
+               COALESCE($3, 'none'),
+               COALESCE($4, 'unknown'),
+               COALESCE($5, 3),
+               COALESCE($6, 45),
+               COALESCE($7, '{}'::text[]))
+       ON CONFLICT (user_id) DO UPDATE SET
+         gym_access      = COALESCE($2, fitness_profile.gym_access),
+         equipment       = COALESCE($3, fitness_profile.equipment),
+         experience      = COALESCE($4, fitness_profile.experience),
+         training_days   = COALESCE($5, fitness_profile.training_days),
+         session_minutes = COALESCE($6, fitness_profile.session_minutes),
+         injuries        = COALESCE($7, fitness_profile.injuries),
+         updated_at      = now()
+       RETURNING gym_access, equipment, experience, training_days, session_minutes, injuries`,
+      [req.userId, p.gym_access ?? null, p.equipment ?? null, p.experience ?? null,
+       p.training_days ?? null, p.session_minutes ?? null, p.injuries ?? null]);
+  });
+
+  app.post("/workouts", { preHandler: requireAuth }, async (req) => {
+    const w = z.object({
+      performed_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      focus: z.enum(["upper", "lower", "full_body", "push", "pull",
+                     "cardio", "mobility", "rest"]),
+      minutes: z.number().int().min(1).max(360).optional(),
+      perceived_effort: z.number().int().min(1).max(10).optional(),
+      notes: z.string().max(300).optional(),
+      /** Set when this session came from a generated plan. */
+      plan_id: z.string().uuid().optional(),
+      exercises: z.array(z.object({
+        exercise: z.string().min(1).max(60),
+        sets: z.number().int().min(1).max(20),
+        reps: z.number().int().min(1).max(100).optional(),
+        weight_kg: z.number().min(0).max(500).optional(),
+      })).max(20).default([]),
+    }).parse(req.body);
+
+    const date = w.performed_on ?? localDate(req.tz);
+
+    return tx(async (c) => {
+      const { rows } = await c.query<{ id: string }>(
+        `INSERT INTO workouts (user_id, performed_on, focus, minutes, perceived_effort, notes)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [req.userId, date, w.focus, w.minutes ?? null,
+         w.perceived_effort ?? null, w.notes ?? null]);
+
+      const id = rows[0]!.id;
+
+      // Close the loop: a completed session marks the plan it came from, so
+      // the next recommendation knows it was actually done.
+      if (w.plan_id) {
+        await c.query(
+          `UPDATE workout_plans SET workout_id = $1
+            WHERE id = $2 AND user_id = $3`,
+          [id, w.plan_id, req.userId]);
+      }
+
+      for (const [i, e] of w.exercises.entries()) {
+        await c.query(
+          `INSERT INTO workout_sets (workout_id, exercise, sets, reps, weight_kg, position)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [id, e.exercise.toLowerCase(), e.sets, e.reps ?? null, e.weight_kg ?? null, i]);
+      }
+      return { id, performed_on: date, focus: w.focus };
+    });
+  });
+
+  app.get("/workouts", { preHandler: requireAuth }, async (req) => {
+    const { days } = z.object({
+      days: z.coerce.number().min(1).max(90).default(14),
+    }).parse(req.query);
+
+    return {
+      days,
+      workouts: await q(
+        `SELECT w.id, w.performed_on, w.focus, w.minutes, w.perceived_effort, w.notes,
+                COALESCE(json_agg(json_build_object(
+                  'exercise', s.exercise, 'sets', s.sets,
+                  'reps', s.reps, 'weight_kg', s.weight_kg
+                ) ORDER BY s.position) FILTER (WHERE s.id IS NOT NULL), '[]') AS exercises
+           FROM workouts w
+           LEFT JOIN workout_sets s ON s.workout_id = w.id
+          WHERE w.user_id = $1 AND w.performed_on > CURRENT_DATE - $2::int
+          GROUP BY w.id
+          ORDER BY w.performed_on DESC`,
+        [req.userId, days]),
+    };
+  });
+
+  app.delete("/workouts/:id", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const gone = await one(
+      `DELETE FROM workouts WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [id, req.userId]);
+    return gone ? { deleted: true } : reply.code(404).send({ error: "not_found" });
   });
 
   // ── notification preferences ──────────────────────────────────────────────
