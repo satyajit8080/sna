@@ -78,14 +78,19 @@ export async function suggestNextMeal(
    * Toronto should not be told to eat dal tadka. Their country decides the
    * default; an explicit cuisine preference always overrides it.
    */
-  const country = context.country ?? "US";
+  /**
+   * Cuisine defaults to North American unless the user has explicitly chosen
+   * otherwise.
+   *
+   * It used to key off `profile.country`, which onboarding fills from the
+   * *device region*. A phone bought in India but used in Sydney reports "IN",
+   * so the coach recommended sabzi and steamed rice to someone eating in
+   * Australia. Region says where a handset was configured; it does not say
+   * what someone wants for dinner. Only an explicit preference does.
+   */
   const preferredCuisines = prefs?.cuisines?.length
     ? prefs.cuisines.map((c) => c.toLowerCase())
-    : country === "IN" ? ["indian"]
-    : country === "GB" ? ["british"]
-    : country === "AU" ? ["american", "british"]
-    : country === "CA" ? ["american", "canadian"]
-    : ["american"];
+    : ["american", "canadian"];
 
   // Foods eaten today, plus anything suggested in the last three days.
   // Without the second list the same top-scoring food is proposed forever,

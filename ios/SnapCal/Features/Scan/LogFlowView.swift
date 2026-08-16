@@ -105,6 +105,17 @@ struct LogFlowView: View {
                     method: LogMode.search.inputMethod, disclaimer: ""
                 ))
             }
+
+        case .manual:
+            // Reached from "Log it manually" after a failed scan. There is
+            // nothing to capture, so go straight to an empty confirm sheet
+            // where the user adds foods by search.
+            FoodSearchView { items in
+                stage = .confirm(AnalysisPayload(
+                    items: items, assumptions: [], confidence: nil,
+                    method: LogMode.manual.inputMethod, disclaimer: ""
+                ))
+            }
         }
     }
 

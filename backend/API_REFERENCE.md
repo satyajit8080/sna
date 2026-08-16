@@ -363,11 +363,142 @@ the user's country for cuisine.
 Safe on every dashboard refresh. Use it to keep the Coach screen useful once
 the AI allowance is spent.
 
+**`intent`** is returned with every answer: `meal_recommendation`,
+`food_analysis`, `workout_request`, `daily_plan`, `progress`, `hydration`,
+`activity`, `sleep`, `education`, `general`. Use it to decide layout — a
+workout answer is a structured block, a calorie check is one line.
+
+Response length scales with intent: workouts up to ~420 tokens, day plans
+~320, ordinary questions ~120. Only `meal_recommendation` can carry a
+`suggestion` card, and only when the answer actually made a recommendation.
+
+**Safety guards** apply before and after the model. Medication, dosing,
+diagnosis, supplement brands, and unverifiable live facts (stock, prices,
+opening hours) are refused with a useful redirect rather than a flat no. A
+suspected emergency returns a fixed message directing the user to urgent care.
+
 ### `GET /coach/history` → last 40 messages, oldest first
 ### `GET /coach/suggestions` → `{ suggestions: ["Can I eat this?", ...] }`
 Free, no AI call. Use to fill the empty state.
 
 ---
+
+## Coach onboarding
+
+First run only. The server decides the next question, so it can skip anything
+SnapCal already knows and anything an earlier answer made irrelevant
+("nowhere regular" removes the equipment, days and duration questions).
+
+### `GET /coach/onboarding`
+```json
+{
+  "completed": false,
+  "answered": 2,
+  "total": 8,
+  "welcome": "Good to meet you, Satya. I've got your calorie targets already — ...",
+  "next": {
+    "field": "training_location",
+    "question": "Where will you train?",
+    "options": [{ "value": "gym", "label": "Gym" }],
+    "multiSelect": false,
+    "step": 3,
+    "total": 8,
+    "skippable": false
+  }
+}
+```
+`welcome` is null for a returning user. `next` is null once complete.
+
+### `POST /coach/onboarding`
+```json
+{ "field": "equipment_list", "values": ["full_gym", "dumbbells"] }
+{ "field": "primary_goal", "value": "lose_fat_keep_muscle" }
+{ "field": "average_sleep_hours", "skip": true }
+```
+Returns the same shape, advanced by one. `justCompleted: true` on the final
+answer. Render `options` as chips; `multiSelect` decides single or multi.
+
+## Structured workouts
+
+### `POST /coach/workout` → `{ "minutes": 30, "focus": "upper" }` (both optional)
+```json
+{
+  "id": "uuid",
+  "workout_title": "Lower Body Strength",
+  "focus": "lower",
+  "duration_minutes": 45,
+  "warmup": ["5 min easy cardio", "Dynamic mobility"],
+  "exercises": [{
+    "exercise_name": "Leg Press",
+    "sets": 3, "reps": "8-12", "rest_seconds": 90,
+    "suggested_weight_kg": 42.5,
+    "progression_note": "Up from 40kg — you hit the top of the range twice.",
+    "instructions": "Drive through mid-foot, don't lock out.",
+    "targets": "quads, glutes"
+  }],
+  "optional_cardio": "15 min moderate walking",
+  "cooldown": ["Hamstring stretch"],
+  "coach_note": "Straightforward session to build a base."
+}
+```
+
+Render as a card the user can work through, not a chat bubble. Focus rotates
+from recent sessions; four consecutive training days returns a recovery
+session instead.
+
+**`suggested_weight_kg` is computed from logged history, never by the model** —
+null when there is none, with `progression_note` explaining why. Weight only
+increases after the top of the rep range was hit twice, capped at ~5%.
+
+Costs one AI request against the coach allowance.
+
+### Closing the loop
+`POST /workouts` accepts `plan_id`. Passing it marks the plan as completed, and
+that session becomes the history the next recommendation reads.
+
+### `GET /coach/patterns`
+```json
+{ "patterns": [
+  "Protein has averaged 78g against a 144g target — short on 6 of 9 logged days.",
+  "Steps drop to about 2,100 at weekends versus 7,400 on weekdays."
+] }
+```
+Free — arithmetic over logged history, no model call. Empty until there are at
+least four logged days.
+
+## Training
+
+The coach cannot program sensibly without history — it will otherwise suggest
+the same session daily and cannot progress from real weights.
+
+### `GET /fitness/profile` · `PUT /fitness/profile`
+```json
+{ "gym_access": true, "equipment": "full_gym", "experience": "beginner",
+  "training_days": 4, "session_minutes": 60, "injuries": [] }
+```
+`equipment`: `none|bands|dumbbells|home_gym|full_gym`.
+`experience`: `unknown|beginner|intermediate|advanced` — unknown programs
+beginner-safe, never assume competence.
+
+### `POST /workouts`
+```json
+{
+  "performed_on": "2026-08-16",
+  "focus": "upper",
+  "minutes": 55,
+  "perceived_effort": 7,
+  "exercises": [
+    { "exercise": "Bench Press", "sets": 3, "reps": 10, "weight_kg": 40 }
+  ]
+}
+```
+`focus`: `upper|lower|full_body|push|pull|cardio|mobility|rest`.
+
+### `GET /workouts?days=14` · `DELETE /workouts/{id}`
+
+Logged sessions feed `/coach/ask` automatically: the last 14 days decide
+today's focus, flag when recovery is the better answer, and supply the weights
+progression is suggested from.
 
 ## Meal Planner — Premium only
 

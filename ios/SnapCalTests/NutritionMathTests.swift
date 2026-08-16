@@ -488,3 +488,54 @@ struct HomeScreenTests {
         #expect(abs(over) == 282)
     }
 }
+
+/// Unit handling. The model returns household units in many spellings; the row
+/// pluralised blindly and produced "0.5 gramss".
+struct UnitNormalisationTests {
+
+    private func item(unit: String, quantity: Double = 1, grams: Double = 100) -> FoodItem {
+        FoodItem(foodId: nil, name: "x", quantity: quantity, unit: unit, grams: grams,
+                 kcal100g: 100, protein100g: 5, carbs100g: 10, fat100g: 3,
+                 confidence: 1, isEstimate: true)
+    }
+
+    @Test("every spelling of grams collapses to g")
+    func gramSpellings() {
+        for raw in ["g", "G", "gram", "grams", "Grams", "gm", "gms", "g.", "gramme", "grammes"] {
+            #expect(item(unit: raw).normalisedUnit == "g", "\(raw) should normalise to g")
+            #expect(item(unit: raw).isWeightBased)
+        }
+    }
+
+    @Test("countable units are singularised, never double-pluralised")
+    func countableUnits() {
+        #expect(item(unit: "slices").normalisedUnit == "slice")
+        #expect(item(unit: "eggs").normalisedUnit == "egg")
+        #expect(item(unit: "serving").normalisedUnit == "serving")
+        #expect(!item(unit: "slice").isWeightBased)
+
+        // "glass" ends in s but is not a plural.
+        #expect(item(unit: "glass").normalisedUnit == "glass")
+    }
+
+    @Test("an empty unit falls back to serving rather than blank")
+    func emptyUnit() {
+        #expect(item(unit: "").normalisedUnit == "serving")
+        #expect(item(unit: "   ").normalisedUnit == "serving")
+    }
+
+    @Test("weight-based quantity edits track grams one-to-one")
+    func weightBasedStepping() {
+        var i = item(unit: "grams", quantity: 100, grams: 100)
+        i.setQuantity(150)
+        #expect(i.grams == 150, "grams unit must step in grams, not multiply a portion")
+        #expect(i.calories == 150)
+    }
+
+    @Test("countable quantity edits scale grams by the per-unit weight")
+    func countableStepping() {
+        var i = item(unit: "slice", quantity: 2, grams: 60)
+        i.setQuantity(3)
+        #expect(i.grams == 90, "3 slices at 30g each")
+    }
+}

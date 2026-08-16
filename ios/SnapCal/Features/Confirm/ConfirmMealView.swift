@@ -174,6 +174,14 @@ struct ConfirmMealView: View {
 
     private func save() {
         saving = true
+
+        // Normalise before sending: the server stores what it is given, and a
+        // stray "grams" unit would come back and re-break the label.
+        items = items.map { item in
+            var copy = item
+            copy.unit = item.normalisedUnit
+            return copy
+        }
         // Ring updates immediately; the network call is a background detail.
         app.applyLocally(items, slot: slot)
 
@@ -204,12 +212,15 @@ struct FoodRow: View {
     let onDelete: () -> Void
 
     private var unitLabel: String {
-        item.unit == "g" ? "g" : item.unit + (item.quantity == 1 ? "" : "s")
+        let unit = item.normalisedUnit
+        if item.isWeightBased { return unit }
+        return item.quantity == 1 ? unit : unit + "s"
     }
 
     private var portionLabel: String {
-        item.unit == "g"
-            ? "\(Int(item.grams)) g"
+        // Weight-based portions read as grams; countable ones as "2 slices".
+        item.isWeightBased
+            ? "\(Int(item.grams)) \(item.normalisedUnit)"
             : "\(item.quantity.formatted(.number.precision(.fractionLength(0...1)))) \(unitLabel)"
     }
 
@@ -220,7 +231,7 @@ struct FoodRow: View {
                     Text(item.name.capitalized)
                         .font(.jakarta(16, .semibold))
                         .lineLimit(2)
-                    if item.unit != "g" {
+                    if !item.isWeightBased {
                         Text("\(Int(item.grams)) g")
                             .font(.jakarta(12, .medium))
                             .foregroundStyle(Theme.secondary)
@@ -287,11 +298,11 @@ struct FoodRow: View {
         .disabled(delta < 0 && item.grams <= 5)
     }
 
-    private var stepSize: Double { item.unit == "g" ? 10 : 0.5 }
+    private var stepSize: Double { item.isWeightBased ? 10 : 0.5 }
 
     private func adjust(_ delta: Double) {
         withAnimation(Theme.quick) {
-            if item.unit == "g" {
+            if item.isWeightBased {
                 item.grams = max(5, item.grams + delta)
                 item.quantity = item.grams
             } else {
