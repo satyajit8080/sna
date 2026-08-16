@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DiaryView: View {
     @Environment(AppState.self) private var app
+    @Environment(\.dismiss) private var dismiss
     @State private var offsetDays = 0
 
     private var meals: [Meal] { app.dashboard.meals }
@@ -91,6 +92,11 @@ struct DiaryView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Diary")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .refreshable { await app.refresh() }
             .overlay {
                 if meals.isEmpty {
