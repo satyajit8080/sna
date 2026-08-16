@@ -4,12 +4,71 @@ import { SYSTEM, TEXT_SYSTEM } from "./prompts.js";
 import { parseJson } from "../util/json.js";
 import { ProviderError, type AIProvider, type AnalysisResult, type ProviderResponse, type Usage } from "./types.js";
 
-const URL = "https://api.openai.com/v1/responses";
+const RESPONSES_URL = "https://api.openai.com/v1/responses";
+const CHAT_URL = "https://api.openai.com/v1/chat/completions";
+
+/**
+ * Models that exist on essentially every account. Used when the configured
+ * model is rejected — a wrong AI_MODEL should degrade to a working scan, not
+ * fail every request.
+ */
+const SAFE_VISION_MODELS = ["gpt-4o", "gpt-4o-mini"];
 
 type Call = { raw: string; usage: Usage };
 
+/** Chat Completions shape — broadly available, used as the fallback path. */
+async function callChat(model: string, system: string, content: unknown[],
+                        started: number, escalated: boolean): Promise<Call> {
+  const messages = [
+    { role: "system", content: system },
+    {
+      role: "user",
+      content: content.map((c: any) =>
+        c.type === "input_image"
+          ? { type: "image_url", image_url: { url: c.image_url, detail: "low" } }
+          : { type: "text", text: c.text }),
+    },
+  ];
+
+  const res = await fetch(CHAT_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${cfg.OPENAI_API_KEY}` },
+    body: JSON.stringify({
+      model, messages, max_tokens: 400,
+      response_format: { type: "json_object" },
+    }),
+    signal: AbortSignal.timeout(cfg.AI_TIMEOUT_MS),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    const err = new ProviderError(`openai chat ${res.status} (${model}): ${detail.slice(0, 300)}`,
+                                  [], res.status >= 500 || res.status === 429, res.status);
+    (err as any).providerStatus = res.status;
+    (err as any).providerBody = detail.slice(0, 500);
+    throw err;
+  }
+
+  const json: any = await res.json();
+  const u = json.usage ?? {};
+  const input = u.prompt_tokens ?? 0;
+  const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+  const output = u.completion_tokens ?? 0;
+
+  return {
+    raw: json.choices?.[0]?.message?.content ?? "",
+    usage: {
+      model: json.model ?? model,
+      inputTokens: input, cachedTokens: cached, outputTokens: output,
+      costUsd: costUsd(model, input, cached, output),
+      latencyMs: Date.now() - started,
+      escalated,
+    },
+  };
+}
+
 async function callOnce(model: string, system: string, content: unknown[], started: number, escalated: boolean): Promise<Call> {
-  const res = await fetch(URL, {
+  const res = await fetch(RESPONSES_URL, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${cfg.OPENAI_API_KEY}` },
     body: JSON.stringify({
@@ -58,19 +117,46 @@ async function callOnce(model: string, system: string, content: unknown[], start
 }
 
 /** Retries only transient failures, with jittered backoff, bounded by AI_MAX_RETRIES. */
+/**
+ * Tries the configured model on the Responses API, then the same model on Chat
+ * Completions, then known-good vision models.
+ *
+ * A 400/404 means the account cannot use that model — retrying it is pointless,
+ * but the scan can still succeed elsewhere. This is what turned a mistyped
+ * AI_MODEL into "Something went wrong" on every single scan.
+ */
 async function call(model: string, system: string, content: unknown[], escalated = false): Promise<Call> {
+  const attempts: Array<{ model: string; fn: typeof callOnce }> = [
+    { model, fn: callOnce },
+    { model, fn: callChat },
+    ...SAFE_VISION_MODELS
+      .filter((m) => m !== model)
+      .map((m) => ({ model: m, fn: callChat })),
+  ];
+
   let last: unknown;
-  for (let attempt = 0; attempt <= cfg.AI_MAX_RETRIES; attempt++) {
-    const started = Date.now();
-    try {
-      return await callOnce(model, system, content, started, escalated);
-    } catch (e: any) {
-      last = e;
-      const transient = e instanceof ProviderError ? e.retryable : e?.name === "TimeoutError";
-      if (!transient || attempt === cfg.AI_MAX_RETRIES) break;
-      await new Promise((r) => setTimeout(r, 250 * 2 ** attempt + Math.random() * 200));
+
+  for (const attempt of attempts) {
+    for (let retry = 0; retry <= cfg.AI_MAX_RETRIES; retry++) {
+      const started = Date.now();
+      try {
+        return await attempt.fn(attempt.model, system, content, started, escalated);
+      } catch (e: any) {
+        last = e;
+        const status = e?.providerStatus ?? e?.status;
+        const transient = e instanceof ProviderError ? e.retryable : e?.name === "TimeoutError";
+
+        // 401 is a bad key: no other model will help.
+        if (status === 401 || status === 403) throw e;
+        // 400/404 means this model is unusable — move on immediately.
+        if (status === 400 || status === 404) break;
+        if (!transient || retry === cfg.AI_MAX_RETRIES) break;
+
+        await new Promise((r) => setTimeout(r, 250 * 2 ** retry + Math.random() * 200));
+      }
     }
   }
+
   throw last;
 }
 
