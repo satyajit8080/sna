@@ -2,8 +2,24 @@ import SwiftUI
 import PhotosUI
 
 enum LogMode: String, Identifiable {
-    case camera, library, text, voice, barcode, search
+    case camera, library, text, voice, barcode, search, manual
     var id: String { rawValue }
+
+    /// The value the backend's `input_method` enum accepts.
+    ///
+    /// `camera` and `library` are *capture* mechanisms; the server records how
+    /// the food was identified, and both are photo scans. Sending the raw case
+    /// name was rejected as an invalid enum value on every camera scan.
+    var inputMethod: String {
+        switch self {
+        case .camera, .library: "photo"
+        case .text:             "text"
+        case .voice:            "voice"
+        case .barcode:          "barcode"
+        case .search:           "search"
+        case .manual:           "manual"
+        }
+    }
 }
 
 struct LogRoute: Identifiable {
@@ -86,7 +102,7 @@ struct LogFlowView: View {
             FoodSearchView { items in
                 stage = .confirm(AnalysisPayload(
                     items: items, assumptions: [], confidence: 1,
-                    method: "search", disclaimer: ""
+                    method: LogMode.search.inputMethod, disclaimer: ""
                 ))
             }
         }
@@ -129,7 +145,8 @@ struct LogFlowView: View {
                 }
                 Button("Log it manually") {
                     stage = .confirm(AnalysisPayload(
-                        items: [], assumptions: [], confidence: nil, method: "manual", disclaimer: ""
+                        items: [], assumptions: [], confidence: nil,
+                        method: LogMode.manual.inputMethod, disclaimer: ""
                     ))
                 }
                 .buttonStyle(SecondaryButtonStyle())
@@ -172,7 +189,7 @@ struct LogFlowView: View {
                         items: res.foods,
                         assumptions: res.assumptions,
                         confidence: res.confidence,
-                        method: route.mode == .library ? "photo" : route.mode.rawValue,
+                        method: route.mode.inputMethod,
                         disclaimer: res.disclaimer
                     ))
                 }
