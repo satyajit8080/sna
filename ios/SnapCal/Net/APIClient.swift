@@ -348,10 +348,15 @@ actor APIClient {
         try await get("notifications/morning", as: MorningMessage.self)
     }
 
-    func syncHealth(steps: Int?, activeKcal: Int?, exerciseMin: Int?) async throws {
-        struct Body: Encodable { let steps: Int?; let active_kcal: Int?; let exercise_min: Int? }
+    func syncHealth(steps: Int?, activeKcal: Int?, exerciseMin: Int?,
+                    distanceM: Int? = nil) async throws {
+        struct Body: Encodable {
+            let steps: Int?; let active_kcal: Int?
+            let exercise_min: Int?; let distance_m: Int?
+        }
         _ = try await post("health/daily",
-                           Body(steps: steps, active_kcal: activeKcal, exercise_min: exerciseMin),
+                           Body(steps: steps, active_kcal: activeKcal,
+                                exercise_min: exerciseMin, distance_m: distanceM),
                            as: Empty.self)
     }
 
