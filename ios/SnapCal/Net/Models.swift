@@ -100,6 +100,18 @@ enum MealSlot: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct ProfileSummary: Codable {
+    let name: String
+    let startWeightKg: Double?
+    let goalWeightKg: Double?
+    let country: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, startWeightKg = "start_weight_kg"
+        case goalWeightKg = "goal_weight_kg", country
+    }
+}
+
 struct Meal: Codable, Identifiable, Hashable {
     var id: String
     var slot: MealSlot
@@ -110,10 +122,16 @@ struct Meal: Codable, Identifiable, Hashable {
     var items: [FoodItem]
     var note: String?
     var aiConfidence: Double?
+    var loggedAt: Date?
+
+    /// "8:15 AM" for the meal row, in the device's locale.
+    var loggedTime: String? {
+        loggedAt.map { $0.formatted(date: .omitted, time: .shortened) }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, slot, calories, protein_g, carbs_g, fat_g, items, note
-        case aiConfidence = "ai_confidence"
+        case aiConfidence = "ai_confidence", loggedAt = "logged_at"
     }
 }
 
@@ -187,7 +205,7 @@ struct Dashboard: Codable {
                     FoodItem(foodId: nil, name: "Oatmeal", quantity: 1, unit: "bowl", grams: 220,
                              kcal100g: 84, protein100g: 3, carbs100g: 15, fat100g: 1.7,
                              confidence: 1, isEstimate: false),
-                 ], note: nil, aiConfidence: nil),
+                 ], note: nil, aiConfidence: nil, loggedAt: nil),
             Meal(id: "sample-2", slot: .lunch, calories: 520, protein_g: 41, carbs_g: 44, fat_g: 18,
                  items: [
                     FoodItem(foodId: nil, name: "Turkey sandwich", quantity: 1, unit: "sandwich", grams: 240,
@@ -196,7 +214,7 @@ struct Dashboard: Codable {
                     FoodItem(foodId: nil, name: "Side salad", quantity: 1, unit: "bowl", grams: 120,
                              kcal100g: 83, protein100g: 2, carbs100g: 4, fat100g: 6.5,
                              confidence: 1, isEstimate: false),
-                 ], note: nil, aiConfidence: nil),
+                 ], note: nil, aiConfidence: nil, loggedAt: nil),
             Meal(id: "sample-3", slot: .dinner, calories: 385, protein_g: 27, carbs_g: 39, fat_g: 13,
                  items: [
                     FoodItem(foodId: nil, name: "Grilled chicken", quantity: 1, unit: "breast", grams: 130,
@@ -205,7 +223,7 @@ struct Dashboard: Codable {
                     FoodItem(foodId: nil, name: "Rice", quantity: 1, unit: "cup", grams: 150,
                              kcal100g: 130, protein100g: 2.7, carbs100g: 28, fat100g: 0.3,
                              confidence: 1, isEstimate: false),
-                 ], note: nil, aiConfidence: nil),
+                 ], note: nil, aiConfidence: nil, loggedAt: nil),
         ],
         activity: DashboardActivity(steps: 6200, activeKcal: 240, creditedKcal: 120,
                                     exerciseMin: 22, kcalSource: "healthkit"),
