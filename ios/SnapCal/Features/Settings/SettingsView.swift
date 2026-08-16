@@ -86,6 +86,11 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .sheet(isPresented: $showPaywall) { PaywallView(context: .general, source: "settings") }
             .sheet(isPresented: $showGuestAuth) {
                 AuthView(startingMode: .signUp) { onboarded in
