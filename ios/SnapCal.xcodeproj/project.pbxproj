@@ -10,6 +10,7 @@
 		0B40ECC0E33B79FE1B0AD8F7 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F6A12D29145759DCB7AB81F /* AppState.swift */; };
 		0B751F067668F657F012DD4F /* Entitlements.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD2584CA71871575CF81DF1F /* Entitlements.swift */; };
 		0D218423093A1EDF9877F917 /* LogFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DDB6BB913F33698197002C4 /* LogFlowView.swift */; };
+		1294B1B1589AE6242829FC19 /* DashboardCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0874EA85838DECA91181158E /* DashboardCache.swift */; };
 		136BFD0DD1D10E51D5AC1C6D /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD1A85386436132C2DEBEBB /* RootView.swift */; };
 		23B8A3B68DD7F1EEAED23120 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098B0A7475ED6BD5394CE249 /* NotificationService.swift */; };
 		29D6CF67AFD7C9C345416273 /* SuggestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D8BF47C81BA01D3A9E6C5DA /* SuggestionCard.swift */; };
@@ -99,6 +100,7 @@
 		A5EFB556F6455338F57762EC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info.plist"; sourceTree = "<group>"; };
 		FF59BCE1C4C1D1DB8666D876 /* SnapCal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "SnapCal.entitlements"; sourceTree = "<group>"; };
 		8F6A12D29145759DCB7AB81F /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState.swift"; sourceTree = "<group>"; };
+		0874EA85838DECA91181158E /* DashboardCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DashboardCache.swift"; sourceTree = "<group>"; };
 		DA99E3C3FDB307BE3496F9A8 /* EntitlementStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EntitlementStore.swift"; sourceTree = "<group>"; };
 		4510BFFE580F76787E8182ED /* SubscriptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SubscriptionManager.swift"; sourceTree = "<group>"; };
 		43ABBB5E1D413BAAD2EF7265 /* NutritionMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NutritionMathTests.swift"; sourceTree = "<group>"; };
@@ -363,6 +365,7 @@
 			isa = PBXGroup;
 			children = (
 				8F6A12D29145759DCB7AB81F /* AppState.swift */,
+				0874EA85838DECA91181158E /* DashboardCache.swift */,
 				DA99E3C3FDB307BE3496F9A8 /* EntitlementStore.swift */,
 				4510BFFE580F76787E8182ED /* SubscriptionManager.swift */,
 			);
@@ -558,6 +561,7 @@
 				0B751F067668F657F012DD4F /* Entitlements.swift in Sources */,
 				B799B8FEE284A7F756E8FB2E /* Models.swift in Sources */,
 				0B40ECC0E33B79FE1B0AD8F7 /* AppState.swift in Sources */,
+				1294B1B1589AE6242829FC19 /* DashboardCache.swift in Sources */,
 				91DC0A1B14AE3336F6DF2DE8 /* EntitlementStore.swift in Sources */,
 				4419F66B9CC939CBE1F04394 /* SubscriptionManager.swift in Sources */,
 			);
