@@ -264,3 +264,100 @@ struct MorningMessage: Codable {
     let body: String
     let deeplink: String
 }
+
+
+// MARK: - Daily briefing
+
+/// One of today's 1–3 priorities.
+///
+/// Every action carries a reason. The backend refuses to emit one without it,
+/// and the UI should never render a card that has lost its "why" — an
+/// instruction with no justification is just an app telling someone what to do.
+struct PriorityAction: Codable, Identifiable, Hashable {
+    let id: String
+    let domain: String
+    let action: String
+    let reason: String
+    let confidence: Double
+
+    /// Icon per domain. Kept here rather than in the view so the mapping is
+    /// in one place when new domains are added server-side.
+    var icon: String {
+        switch domain {
+        case "nutrition":  "fork.knife"
+        case "fitness":    "figure.strengthtraining.traditional"
+        case "sleep":      "moon.zzz"
+        case "recovery":   "heart.text.square"
+        case "hydration":  "drop"
+        case "activity":   "figure.walk"
+        default:           "checkmark.circle"
+        }
+    }
+
+    var tint: Color {
+        switch domain {
+        case "nutrition":  Theme.protein
+        case "fitness":    Theme.accent
+        case "sleep":      Theme.water
+        case "recovery":   Theme.streak
+        case "hydration":  Theme.water
+        case "activity":   Theme.steps
+        default:           Theme.accent
+        }
+    }
+}
+
+struct DailyBriefing: Codable {
+    let date: String
+    /// recovery | maintenance | growth. An internal coaching decision — never
+    /// render it as a score.
+    let mode: String
+    let headline: String
+    let actions: [PriorityAction]
+    /// Metrics with no data. Prompt to connect rather than showing a zero.
+    let missing: [String]
+
+    static let empty = DailyBriefing(
+        date: "", mode: "maintenance",
+        headline: "", actions: [], missing: []
+    )
+}
+
+// MARK: - Personal Health Brain
+
+struct BrainMemory: Codable, Identifiable, Hashable {
+    let id: String
+    let content: String
+    let confidence: Double
+    let evidenceCount: Int
+    let userEdited: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, content, confidence
+        case evidenceCount = "evidence_count"
+        case userEdited = "user_edited"
+    }
+}
+
+struct BrainMemories: Codable {
+    let layers: [String: [BrainMemory]]
+    let labels: [String: String]
+    let total: Int
+
+    /// Ordered for display. Routines first — they're the most recognisable,
+    /// which is what makes the whole screen feel accurate rather than creepy.
+    var orderedLayers: [(label: String, memories: [BrainMemory])] {
+        ["routine", "semantic", "preference", "procedural", "episodic"]
+            .compactMap { key in
+                guard let items = layers[key], !items.isEmpty else { return nil }
+                return (labels[key] ?? key.capitalized, items)
+            }
+    }
+}
+
+struct LearnCycleResult: Codable {
+    let outcomesMeasured: Int
+    let memoriesAdded: Int
+    let memoriesUpdated: Int
+    let memoriesReinforced: Int
+}
