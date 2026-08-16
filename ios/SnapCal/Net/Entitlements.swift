@@ -157,6 +157,10 @@ struct CoachAnswer: Codable {
     let answer: String
     let suggestion: MealSuggestion?
     let entitlements: Entitlements
+    /// What the server decided the question was: meal_recommendation,
+    /// workout_request, daily_plan, safety, and so on. Decides which card (if
+    /// any) follows the reply — a safety answer must never carry one.
+    let intent: String?
 }
 
 struct SuggestionResponse: Codable {
@@ -360,4 +364,96 @@ struct LearnCycleResult: Codable {
     let memoriesAdded: Int
     let memoriesUpdated: Int
     let memoriesReinforced: Int
+}
+
+
+// MARK: - Structured workouts
+
+struct PlannedExercise: Codable, Identifiable, Hashable {
+    var id: String { exerciseName }
+    let exerciseName: String
+    let sets: Int
+    /// A range like "8-12", or a hold like "30-45 sec". Never a single number —
+    /// false precision on reps helps nobody.
+    let reps: String
+    let restSeconds: Int
+    /// Only ever derived from weights this person has actually lifted. `nil`
+    /// means no history, and `progressionNote` explains that.
+    let suggestedWeightKg: Double?
+    let progressionNote: String?
+    let instructions: String
+    let targets: String
+
+    enum CodingKeys: String, CodingKey {
+        case exerciseName = "exercise_name"
+        case sets, reps
+        case restSeconds = "rest_seconds"
+        case suggestedWeightKg = "suggested_weight_kg"
+        case progressionNote = "progression_note"
+        case instructions, targets
+    }
+}
+
+struct WorkoutPlan: Codable, Identifiable {
+    let id: String?
+    let workoutTitle: String
+    let focus: String
+    let durationMinutes: Int
+    let warmup: [String]
+    let exercises: [PlannedExercise]
+    let optionalCardio: String?
+    let cooldown: [String]
+    let coachNote: String
+
+    /// A recovery session is a real recommendation, not a failure to program
+    /// one — the UI should say so rather than looking like an empty workout.
+    var isRecovery: Bool { focus == "mobility" || focus == "cardio" }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workoutTitle = "workout_title"
+        case focus
+        case durationMinutes = "duration_minutes"
+        case warmup, exercises
+        case optionalCardio = "optional_cardio"
+        case cooldown
+        case coachNote = "coach_note"
+    }
+}
+
+/// A set the user has actually completed, ready to log.
+struct CompletedSet: Identifiable, Hashable {
+    let id = UUID()
+    var exercise: String
+    var setNumber: Int
+    var reps: Int?
+    var weightKg: Double?
+    var done: Bool = false
+}
+
+// MARK: - Fitness onboarding
+
+struct OnboardingOption: Codable, Identifiable, Hashable {
+    var id: String { value }
+    let value: String
+    let label: String
+}
+
+struct OnboardingQuestion: Codable {
+    let field: String
+    let question: String
+    let options: [OnboardingOption]
+    let multiSelect: Bool
+    let step: Int
+    let total: Int
+    let skippable: Bool
+}
+
+struct OnboardingState: Codable {
+    let completed: Bool
+    let next: OnboardingQuestion?
+    let answered: Int
+    let total: Int
+    /// Only present for a first-time user; nil on return.
+    let welcome: String?
 }
