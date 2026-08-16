@@ -1,0 +1,209 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { q, one } from "../db.js";
+import { requireAuth } from "../middleware/auth.js";
+import { localDate } from "../util/dates.js";
+import { buildHealthState, metricState } from "../services/healthState.js";
+import {
+  allMemories, editMemory, forgetMemory, learnRoutines, learnFromOutcomes, recall,
+} from "../services/brain.js";
+
+/**
+ * Personal Health Brain endpoints.
+ *
+ * Split out of premium.ts deliberately — that file had grown to 30 endpoints
+ * across 11 domains, which makes every change riskier than it needs to be.
+ */
+export default async function routes(app: FastifyInstance) {
+
+  // ── normalized observations ───────────────────────────────────────────────
+  /**
+   * Ingest point for anything measured. One row per metric per day.
+   *
+   * Separate from /health/daily because that endpoint is a HealthKit rollup
+   * with fixed columns; this accepts any metric, from any source, with a
+   * confidence — which is what the state engine needs.
+   */
+  app.post("/observations", { preHandler: requireAuth }, async (req) => {
+    const body = z.object({
+      observations: z.array(z.object({
+        metric: z.string().max(40),
+        value: z.number(),
+        observed_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        source: z.enum(["healthkit", "manual", "derived", "photo"]).default("healthkit"),
+        confidence: z.number().min(0).max(1).default(1),
+      })).min(1).max(200),
+    }).parse(req.body);
+
+    const today = localDate(req.tz);
+    let stored = 0;
+
+    for (const o of body.observations) {
+      await q(
+        `INSERT INTO health_observations
+           (user_id, observed_on, metric, value, source, confidence)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (user_id, observed_on, metric, source)
+         DO UPDATE SET value = EXCLUDED.value,
+                       confidence = EXCLUDED.confidence,
+                       recorded_at = now()`,
+        [req.userId, o.observed_on ?? today, o.metric, o.value, o.source, o.confidence]
+      );
+      stored++;
+    }
+
+    return { stored };
+  });
+
+  /** Health state: trends, baselines and confidence rather than raw numbers. */
+  app.get("/health/state", { preHandler: requireAuth }, async (req) =>
+    buildHealthState(req.userId, localDate(req.tz)));
+
+  app.get("/health/metric/:metric", { preHandler: requireAuth }, async (req) => {
+    const { metric } = z.object({ metric: z.string().max(40) }).parse(req.params);
+    return metricState(req.userId, metric, localDate(req.tz));
+  });
+
+  // ── what SnapCal knows about you ──────────────────────────────────────────
+  /**
+   * Personalization has to be visible and correctable, or it reads as the app
+   * making things up about you.
+   */
+  app.get("/brain/memories", { preHandler: requireAuth }, async (req) => {
+    const rows = await allMemories(req.userId);
+    const byLayer: Record<string, any[]> = {};
+
+    for (const m of rows) {
+      (byLayer[m.layer] ??= []).push({
+        id: m.id,
+        content: m.content,
+        confidence: Number(m.confidence),
+        evidence_count: m.evidence_count,
+        user_edited: m.user_edited,
+        since: m.valid_from,
+      });
+    }
+
+    return {
+      layers: byLayer,
+      total: rows.length,
+      // Plain-language labels for the UI, so the screen never says "semantic".
+      labels: {
+        semantic: "Things I've learned about you",
+        routine: "Your usual patterns",
+        preference: "How you like to be coached",
+        procedural: "What works for you",
+        episodic: "Notable moments",
+      },
+    };
+  });
+
+  app.patch("/brain/memories/:id", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { content } = z.object({ content: z.string().min(3).max(200) }).parse(req.body);
+
+    const updated = await editMemory(req.userId, id, content);
+    return updated ?? reply.code(404).send({ error: "not_found" });
+  });
+
+  app.delete("/brain/memories/:id", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const gone = await forgetMemory(req.userId, id);
+    return gone ? { deleted: true } : reply.code(404).send({ error: "not_found" });
+  });
+
+  /**
+   * Runs extraction over logged behaviour. Cheap and idempotent — consolidation
+   * reinforces rather than duplicating, so calling it repeatedly is safe.
+   */
+  app.post("/brain/learn", { preHandler: requireAuth }, async (req) => {
+    const [routines, outcomes] = await Promise.all([
+      learnRoutines(req.userId),
+      learnFromOutcomes(req.userId),
+    ]);
+
+    const all = [...routines, ...outcomes];
+    return {
+      added: all.filter((r) => r.action === "ADD").length,
+      updated: all.filter((r) => r.action === "UPDATE").length,
+      reinforced: all.filter((r) => r.action === "REINFORCE").length,
+      unchanged: all.filter((r) => r.action === "NOOP").length,
+      details: all,
+    };
+  });
+
+  // ── recommendations and their outcomes ────────────────────────────────────
+  /**
+   * The learning loop. Without recording what was suggested and whether it was
+   * followed, the coach cannot tell a lever that works for this person from
+   * one that does not.
+   */
+  app.get("/recommendations", { preHandler: requireAuth }, async (req) => {
+    const { status } = z.object({
+      status: z.enum(["pending", "accepted", "dismissed", "completed", "all"]).default("pending"),
+    }).parse(req.query);
+
+    const rows = status === "all"
+      ? await q(`SELECT * FROM recommendations WHERE user_id = $1
+                  ORDER BY offered_on DESC LIMIT 50`, [req.userId])
+      : await q(`SELECT * FROM recommendations WHERE user_id = $1 AND status = $2
+                  ORDER BY offered_on DESC LIMIT 50`, [req.userId, status]);
+
+    return { recommendations: rows };
+  });
+
+  app.post("/recommendations/:id/respond", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { status, feedback } = z.object({
+      status: z.enum(["accepted", "dismissed", "completed"]),
+      feedback: z.string().max(300).optional(),
+    }).parse(req.body);
+
+    const updated = await one<any>(
+      `UPDATE recommendations
+          SET status = $3, responded_at = now()
+        WHERE id = $2 AND user_id = $1
+        RETURNING id, domain, action, status`,
+      [req.userId, id, status]
+    );
+
+    if (!updated) return reply.code(404).send({ error: "not_found" });
+
+    if (feedback) {
+      await q(
+        `INSERT INTO recommendation_outcomes
+           (recommendation_id, user_id, user_feedback, direction)
+         VALUES ($1,$2,$3,'unknown')`,
+        [id, req.userId, feedback]
+      );
+    }
+
+    return updated;
+  });
+
+  /** How well advice has landed — powers the procedural memory layer. */
+  app.get("/recommendations/effectiveness", { preHandler: requireAuth }, async (req) => {
+    const rows = await q<any>(
+      `SELECT r.domain,
+              COUNT(*)::int AS offered,
+              COUNT(*) FILTER (WHERE r.status = 'completed')::int AS completed,
+              COUNT(*) FILTER (WHERE r.status = 'dismissed')::int AS dismissed,
+              COUNT(*) FILTER (WHERE o.direction = 'improved')::int AS improved
+         FROM recommendations r
+         LEFT JOIN recommendation_outcomes o ON o.recommendation_id = r.id
+        WHERE r.user_id = $1
+        GROUP BY r.domain
+        ORDER BY offered DESC`,
+      [req.userId]
+    );
+
+    return {
+      by_domain: rows.map((r: any) => ({
+        ...r,
+        completion_rate: r.offered ? Math.round((r.completed / r.offered) * 100) : null,
+      })),
+      // Below this, rates are noise rather than signal.
+      enough_data: rows.some((r: any) => r.offered >= 4),
+    };
+  });
+}
