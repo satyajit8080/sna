@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @Environment(AppState.self) private var app
@@ -37,6 +38,7 @@ struct MainTabs: View {
 
     @State private var tab: Tab = .home
     @State private var scanRoute: LogRoute?
+    @State private var keyboardVisible = false
 
     enum Tab: String, CaseIterable, Hashable {
         case home, scan, coach, meals
@@ -75,16 +77,25 @@ struct MainTabs: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            SnapTabBar(selection: $tab) { selected in
+            // Hidden while typing: on a small screen the keyboard plus the bar
+            // leaves almost no room for the conversation.
+            if !keyboardVisible {
+                SnapTabBar(selection: $tab) { selected in
                 // Scan is an action, not a destination: tapping it opens the
                 // camera and leaves the previous tab underneath.
-                guard selected == .scan else { return false }
-                Haptics.commit()
-                startScan()
-                return true
+                    guard selected == .scan else { return false }
+                    Haptics.commit()
+                    startScan()
+                    return true
+                }
+                .transition(.move(edge: .bottom))
             }
         }
-        .ignoresSafeArea(.keyboard)
+        .animation(Theme.quick, value: keyboardVisible)
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
         .background(Theme.bg)
         .fullScreenCover(item: $scanRoute) { LogFlowView(route: $0) }
         .sheet(item: $entitlements.pendingPaywall) { context in
@@ -127,6 +138,10 @@ struct MainTabs: View {
 /// Custom bar so the labels use the design's type and the Scan tab can act as
 /// a button rather than a destination — neither is possible with `TabView`.
 struct SnapTabBar: View {
+    /// Content height excluding the safe-area inset. Screens with their own
+    /// bottom-anchored UI reserve this so nothing hides behind the bar.
+    static let height: CGFloat = 61
+
     @Binding var selection: MainTabs.Tab
     /// Return true to consume the tap without changing tabs.
     var onSelect: (MainTabs.Tab) -> Bool
