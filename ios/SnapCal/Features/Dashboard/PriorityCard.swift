@@ -1,5 +1,22 @@
 import SwiftUI
 
+extension PriorityAction {
+    /// Domain colour. Lives here rather than in the networking layer because
+    /// it is presentation, not part of the API payload — and `Net/` should not
+    /// need to import SwiftUI.
+    var tint: Color {
+        switch domain {
+        case "nutrition":  Theme.protein
+        case "fitness":    Theme.accent
+        case "sleep":      Theme.water
+        case "recovery":   Theme.streak
+        case "hydration":  Theme.water
+        case "activity":   Theme.steps
+        default:           Theme.accent
+        }
+    }
+}
+
 /// One of today's priorities.
 ///
 /// The reason is not decoration. A coach that says "walk more" is an app
