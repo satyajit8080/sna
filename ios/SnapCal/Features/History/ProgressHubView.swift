@@ -26,6 +26,11 @@ struct ProgressHubView: View {
             }
             .background(Theme.bg)
             .navigationTitle("Progress")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .refreshable { await load() }
             .task { await load() }
             .task(id: range) { history = try? await APIClient.shared.history(range: range) }
