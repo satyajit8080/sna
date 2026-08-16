@@ -369,6 +369,44 @@ actor APIClient {
                            as: Empty.self)
     }
 
+    /// Structured workout. Costs one AI request against the coach allowance.
+    func generateWorkout(minutes: Int? = nil, focus: String? = nil) async throws -> WorkoutPlan {
+        struct Body: Encodable { let minutes: Int?; let focus: String? }
+        return try await post("coach/workout", Body(minutes: minutes, focus: focus),
+                              as: WorkoutPlan.self)
+    }
+
+    /// Logs a finished session. `planId` closes the loop back to the plan it
+    /// came from, so the next recommendation knows it was actually done.
+    func logWorkout(focus: String, minutes: Int, effort: Int?,
+                    planId: String?, exercises: [[String: Any]]) async throws {
+        var payload: [String: Any] = [
+            "focus": focus, "minutes": minutes, "exercises": exercises,
+        ]
+        if let effort { payload["perceived_effort"] = effort }
+        if let planId { payload["plan_id"] = planId }
+
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        _ = try await send(request("workouts", method: "POST", body: body), as: Empty.self)
+    }
+
+    // MARK: - Fitness onboarding
+
+    func onboardingState() async throws -> OnboardingState {
+        try await get("coach/onboarding", as: OnboardingState.self)
+    }
+
+    func answerOnboarding(field: String, value: String? = nil,
+                          values: [String]? = nil, skip: Bool = false) async throws -> OnboardingState {
+        var payload: [String: Any] = ["field": field, "skip": skip]
+        if let value { payload["value"] = value }
+        if let values { payload["values"] = values }
+
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await send(request("coach/onboarding", method: "POST", body: body),
+                              as: OnboardingState.self)
+    }
+
     func brainMemories() async throws -> BrainMemories {
         try await get("brain/memories", as: BrainMemories.self)
     }
