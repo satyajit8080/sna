@@ -203,80 +203,88 @@ struct FoodRow: View {
     @Binding var item: FoodItem
     let onDelete: () -> Void
 
-    @State private var expanded = false
-
     private var unitLabel: String {
         item.unit == "g" ? "g" : item.unit + (item.quantity == 1 ? "" : "s")
     }
 
+    private var portionLabel: String {
+        item.unit == "g"
+            ? "\(Int(item.grams)) g"
+            : "\(item.quantity.formatted(.number.precision(.fractionLength(0...1)))) \(unitLabel)"
+    }
+
     var body: some View {
         VStack(spacing: Theme.Space.s) {
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.name.capitalized)
-                        .font(.system(size: 16, weight: .medium))
-                        .lineLimit(1)
-
-                    Text(item.unit == "g"
-                         ? "\(Int(item.grams)) g"
-                         : "\(item.quantity.formatted(.number.precision(.fractionLength(0...1)))) \(unitLabel) · \(Int(item.grams)) g")
-                        .font(.caption_)
-                        .foregroundStyle(.secondary)
+                        .font(.jakarta(16, .semibold))
+                        .lineLimit(2)
+                    if item.unit != "g" {
+                        Text("\(Int(item.grams)) g")
+                            .font(.jakarta(12, .medium))
+                            .foregroundStyle(Theme.secondary)
+                    }
                 }
 
-                Spacer()
+                Spacer(minLength: Theme.Space.s)
 
                 Text("\(item.calories)")
                     .font(.bigNum)
                     .contentTransition(.numericText())
-            }
-            .contentShape(.rect)
-            .onTapGesture { withAnimation(Theme.snap) { expanded.toggle() } }
 
-            if expanded {
-                VStack(spacing: Theme.Space.m) {
-                    // Every change here is local arithmetic on per-100g values.
-                    // The AI is never called again for a portion tweak.
-                    HStack {
-                        Button {
-                            Haptics.tap()
-                            adjust(-stepSize)
-                        } label: { Image(systemName: "minus.circle.fill").font(.system(size: 28)) }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Text(item.unit == "g"
-                             ? "\(Int(item.grams)) g"
-                             : "\(item.quantity.formatted(.number.precision(.fractionLength(0...1)))) \(unitLabel)")
-                            .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
-                            .contentTransition(.numericText())
-
-                        Spacer()
-
-                        Button {
-                            Haptics.tap()
-                            adjust(stepSize)
-                        } label: { Image(systemName: "plus.circle.fill").font(.system(size: 28)) }
-                            .buttonStyle(.plain).foregroundStyle(Theme.accent)
-                    }
-
-                    HStack(spacing: Theme.Space.l) {
-                        chip("P", item.protein, Theme.protein)
-                        chip("C", item.carbs, Theme.carbs)
-                        chip("F", item.fat, Theme.fat)
-                        Spacer()
-                        Button(role: .destructive, action: onDelete) {
-                            Image(systemName: "trash").font(.system(size: 15))
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Theme.danger)
-                    }
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(Theme.secondary.opacity(0.6))
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .buttonStyle(.plain)
+            }
+
+            // Always visible. Hiding these behind a tap meant a multi-food scan
+            // looked uneditable — the most common thing to correct after a scan
+            // is a portion, so it cannot cost a discovery step.
+            HStack {
+                stepper(-stepSize, "minus")
+
+                Spacer()
+
+                Text(portionLabel)
+                    .font(.jakarta(17, .bold))
+                    .contentTransition(.numericText())
+                    .frame(minWidth: 90)
+
+                Spacer()
+
+                stepper(stepSize, "plus")
+            }
+
+            HStack(spacing: Theme.Space.m) {
+                chip("P", item.protein, Theme.protein)
+                chip("C", item.carbs, Theme.carbs)
+                chip("F", item.fat, Theme.fat)
+                Spacer()
             }
         }
         .card()
+    }
+
+    private func stepper(_ delta: Double, _ icon: String) -> some View {
+        Button {
+            Haptics.tap()
+            adjust(delta)
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(delta < 0 ? Theme.secondary : Theme.accent)
+                .frame(width: 38, height: 38)
+                .background(
+                    (delta < 0 ? Theme.secondary : Theme.accent).opacity(0.10),
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(delta < 0 && item.grams <= 5)
     }
 
     private var stepSize: Double { item.unit == "g" ? 10 : 0.5 }
