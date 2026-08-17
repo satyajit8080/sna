@@ -743,3 +743,70 @@ struct FitnessOnboardingTests {
         #expect(state.next?.multiSelect == true)
     }
 }
+
+/// Paywall content. Every context needs copy that speaks to what the person
+/// just tried to do — a generic pitch after a specific action reads as a toll
+/// booth rather than an offer.
+struct PaywallContentTests {
+
+    @Test("every context has a headline, subhead and benefits")
+    func allContextsPopulated() {
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            #expect(!context.headline.isEmpty)
+            #expect(!context.subhead.isEmpty)
+            #expect(!context.benefits.isEmpty, "\(context.rawValue) has no benefits")
+        }
+    }
+
+    @Test("benefits stay at three or fewer")
+    func benefitsAreShort() {
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            // A long tick list gets skimmed; three specific claims get read.
+            #expect(context.benefits.count <= 3,
+                    "\(context.rawValue) lists \(context.benefits.count) benefits")
+        }
+    }
+
+    @Test("every benefit carries a detail, not just a title")
+    func benefitsAreSpecific() {
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            for benefit in context.benefits {
+                #expect(!benefit.icon.isEmpty)
+                // The detail is what makes a claim credible.
+                #expect(benefit.detail.count > 20,
+                        "\(benefit.title) has no substantive detail")
+            }
+        }
+    }
+
+    @Test("copy makes no promise the product cannot keep")
+    func noOverclaiming() {
+        let banned = ["guarantee", "guaranteed", "cure", "medical advice",
+                      "diagnos", "lose weight fast", "instantly", "100%"]
+
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            let text = ([context.headline, context.subhead]
+                        + context.benefits.flatMap { [$0.title, $0.detail] })
+                .joined(separator: " ")
+                .lowercased()
+
+            for phrase in banned {
+                #expect(!text.contains(phrase),
+                        "\(context.rawValue) promises '\(phrase)'")
+            }
+        }
+    }
+
+    @Test("context-specific copy differs from the generic pitch")
+    func contextsAreDistinct() {
+        let general = PaywallContext.general.headline
+        for context in [PaywallContext.foodScan, .coach, .mealPlan, .workout] {
+            #expect(context.headline != general,
+                    "\(context.rawValue) reuses the generic headline")
+        }
+    }
+}
