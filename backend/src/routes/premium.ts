@@ -10,6 +10,9 @@ import { buildContext, complete, parseJson } from "../services/coachContext.js";
 import { chat, cheapestModels } from "../ai/openrouter.js";
 import { suggestNextMeal } from "../services/suggest.js";
 import * as safety from "../services/safety.js";
+import {
+  readEmotion, emotionalSteer, suppressesCards, isShaming, asksTooMuch,
+} from "../services/emotion.js";
 import { recall, memoriesForPrompt } from "../services/brain.js";
 import { buildHealthState, summariseForPrompt } from "../services/healthState.js";
 import { buildFollowUp, followUpForPrompt, followUpSteer } from "../services/followUp.js";
@@ -70,6 +73,10 @@ export default async function routes(app: FastifyInstance) {
         entitlements: await entitlementsFor(req.userId),
       };
     }
+
+    // How the person is feeling shapes the whole turn, so it is read before
+    // the task intent rather than alongside it.
+    const emotion = readEmotion(question);
 
     // Classification decides which context is worth gathering and how large a
     // response to pay for.
@@ -210,6 +217,7 @@ export default async function routes(app: FastifyInstance) {
           ? "Answer using their weight trend, streak and averages. One imperfect day is not failure."
           : "Answer briefly and practically.")
         + timeSteer
+        + (emotion.state ? " " + emotionalSteer(emotion) : "")
         + (verdict.action === "allow" ? " " + followUpSteer(followUp) : "");
 
       const messages = [
@@ -222,7 +230,14 @@ export default async function routes(app: FastifyInstance) {
         { role: "user" as const, content: `${JSON.stringify(facts)}\n${question}` },
       ];
 
-      let { text, usage } = await chat(messages, maxTokensFor(intent));
+      // An emotional message gets a *shorter* budget, not a longer one. The
+      // failure mode here is a wall of well-meaning suggestions at someone who
+      // needed one sentence of recognition.
+      const budget = emotion.needsAcknowledgement
+        ? Math.min(maxTokensFor(intent), 140)
+        : maxTokensFor(intent);
+
+      let { text, usage } = await chat(messages, budget);
       const usages = [usage];
 
       /**
@@ -253,7 +268,7 @@ export default async function routes(app: FastifyInstance) {
 
       // Workouts and day plans are structured; everything else is trimmed to
       // keep the coach terse and the bill small.
-      const cleaned = keepsStructure(intent)
+      const cleaned = keepsStructure(intent) && !emotion.needsAcknowledgement
         ? text.trim().slice(0, 1400)
         : text.replace(/\s+/g, " ").split(/(?<=[.!?])\s/).slice(0, 3).join(" ").trim().slice(0, 400);
 
@@ -262,9 +277,32 @@ export default async function routes(app: FastifyInstance) {
       // where being wrong matters most.
       // Two independent checks: the older guard-based one and the safety
       // engine's. Both are deterministic, and either can replace the answer.
-      const reply = safety.validate(cleaned, verdict)
+      let reply = safety.validate(cleaned, verdict)
         ?? validateResponse(cleaned, guard)
         ?? (cleaned || "Tell me a bit more and I'll help.");
+
+      /**
+       * Shame and question-stacking are both easy to produce in a coaching
+       * voice and both reliably counterproductive, so they are retried rather
+       * than trusted to the prompt.
+       */
+      if (verdict.action === "allow" && (isShaming(reply) || asksTooMuch(reply))) {
+        const correction = isShaming(reply)
+          ? "That reply blames them for where they are. Rewrite it without any suggestion they should have done better — be curious about what made it hard instead."
+          : "That asked several questions at once, which usually gets none of them answered. Rewrite it with at most one question.";
+
+        const retry = await chat([
+          ...messages,
+          { role: "assistant" as const, content: reply },
+          { role: "user" as const, content: correction },
+        ], budget);
+
+        const retried = retry.text.replace(/\s+/g, " ").trim();
+        if (retried && !isShaming(retried) && !asksTooMuch(retried)) {
+          reply = retried;
+        }
+        usages.push(retry.usage);
+      }
 
       await q(`INSERT INTO coach_messages (user_id, role, content, intent)
                VALUES ($1,'user',$2,$4), ($1,'assistant',$3,$4)`,
@@ -276,6 +314,8 @@ export default async function routes(app: FastifyInstance) {
         // Never put a meal card next to a conversation about restriction or
         // disordered eating.
         !safety.suppressesRecommendations(verdict) &&
+        // No meal card next to a conversation about feeling low.
+        !suppressesCards(emotion) &&
         intent === "meal_recommendation" &&
         !answerContainsRefusal(reply);
 
@@ -283,7 +323,14 @@ export default async function routes(app: FastifyInstance) {
         ? await suggestNextMeal(req.userId, req.tz, context)
         : null;
 
-      return { value: { answer: reply, suggestion, intent }, usages };
+      return {
+        value: {
+          answer: reply, suggestion, intent,
+          // Lets the client soften its presentation — no cards, no confetti.
+          emotional_tone: emotion.state,
+        },
+        usages,
+      };
     });
 
     return { ...answer, entitlements: await entitlementsFor(req.userId) };
