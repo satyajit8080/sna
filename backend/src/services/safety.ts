@@ -187,8 +187,23 @@ export function validate(answer: string, verdict: SafetyVerdict): string | null 
   // A blocked category should never have reached the model at all.
   if (verdict.action === "block" && verdict.response) return verdict.response;
 
-  // Naming a dose is prescribing, whatever the framing around it.
-  if (/\b\d+\s?(mg|mcg|iu|ml)\b/.test(a) && /\b(take|dose|daily|twice|per day|every)\b/.test(a)) {
+  /**
+   * Naming a dose is prescribing, whatever the framing around it.
+   *
+   * `ml` is deliberately absent from the units: water and drinks are measured
+   * in millilitres, and "2000 ml of water daily" was being replaced with a
+   * medication refusal — a false positive that made the coach look broken on
+   * an ordinary hydration answer.
+   *
+   * The trigger also now requires a genuinely pharmaceutical word nearby
+   * rather than any occurrence of "daily", which appears in most sane
+   * nutrition advice.
+   */
+  const dosePattern = /\b\d+(?:\.\d+)?\s?(mg|mcg|µg|iu)\b/;
+  const pharmaceutical =
+    /\b(take|taking|dose|dosage|tablet|capsule|pill|prescri|supplement|medication|medicine|doctor|pharmacist|vitamin)\b/;
+
+  if (dosePattern.test(a) && pharmaceutical.test(a)) {
     return "I can't advise on medication or doses — that's a doctor or pharmacist's call. I'm glad to help with food, training, sleep or recovery instead.";
   }
 
@@ -207,6 +222,42 @@ export function validate(answer: string, verdict: SafetyVerdict): string | null 
   }
 
   return null;
+}
+
+/**
+ * Phrases that mean nothing to a specific person on a specific day.
+ *
+ * Not a hard block — occasionally one is genuinely the right thing to say —
+ * but an answer built entirely from these is a leaflet, and we can tell the
+ * difference by checking whether it cites anything real.
+ */
+const GENERIC_PHRASES = [
+  "balanced meal", "balanced diet", "balanced day",
+  "stay hydrated", "drink plenty of water",
+  "get a good night", "gentle workout", "listen to your body",
+  "eat clean", "healthy fats", "in moderation",
+  "support your goals", "stay consistent",
+];
+
+/**
+ * Whether a reply is generic filler rather than coaching.
+ *
+ * A concrete answer references a number, a food the user logged, or a trend.
+ * One with several stock phrases and no figures at all is the failure mode the
+ * product is trying to avoid.
+ */
+export function isGeneric(answer: string): boolean {
+  const a = answer.toLowerCase();
+
+  const stockPhrases = GENERIC_PHRASES.filter((p) => a.includes(p)).length;
+  if (stockPhrases === 0) return false;
+
+  // Any real figure — calories, grams, steps, times, percentages.
+  const citesData = /\b\d{1,5}\s?(kcal|calories|cal|g\b|grams|steps|kg|ml|hours|hrs|min|%)/.test(a)
+    || /\b\d{1,2}[:.]\d{2}\b/.test(a)
+    || /\b(below|above|against|compared with) your\b/.test(a);
+
+  return !citesData && stockPhrases >= 2;
 }
 
 /** Categories that must never carry a meal card or a workout plan. */
