@@ -3922,3 +3922,318 @@ test("goals are asked once, on the goals screen only", async () => {
     assert.ok(goals.fields.some((f) => f.key === "success_looks_like"));
   } finally { token = saved; }
 });
+
+// ─── scan verdicts: fit for right now, never good food vs bad food ────────
+
+/** A user with a known amount already eaten today. */
+async function scannerWith(eatenKcal, { allergies = [] } = {}) {
+  const u = await proUser("scan");
+  const saved = token; token = u.token;
+
+  await api("/profile", { method: "POST", body: { name: "Scan", ...BASE_PROFILE } });
+  if (allergies.length) {
+    await api("/preferences", { method: "PUT", body: {
+      diet: null, cuisines: [], dislikes: [], allergies } });
+  }
+  if (eatenKcal > 0) {
+    await api("/meals", { method: "POST", body: {
+      slot: "lunch", input_method: "manual",
+      items: [{ name: "rice", quantity: 1, unit: "bowl", grams: eatenKcal / 1.3,
+                kcal_100g: 130, protein_100g: 3, carbs_100g: 28, fat_100g: 1,
+                is_estimate: false }] } });
+  }
+  token = saved;
+  return u;
+}
+
+const PIZZA = [{ name: "pizza", grams: 400, kcal_100g: 280, protein_100g: 11,
+                 carbs_100g: 30, fat_100g: 12, fiber_100g: 2 }];
+const CHICKEN = [{ name: "grilled chicken", grams: 180, kcal_100g: 165,
+                   protein_100g: 31, carbs_100g: 0, fat_100g: 3.6, fiber_100g: 0 }];
+
+test("a meal far over what's left is flagged, with a portion that fits", async () => {
+  const { assessScan } = await import("../dist/services/scanVerdict.js");
+  const u = await scannerWith(1800);
+
+  const verdict = await assessScan(u.uid, "UTC", PIZZA);
+
+  assert.equal(verdict.fit, "poor");
+  // Regression: comparing against the daily *target* rather than the remainder
+  // scored 1120 kcal on 407 left as "slightly over" and returned amber.
+  assert.match(verdict.detail, /1120/);
+  assert.match(verdict.detail, /407/);
+  // Never a refusal — a portion that works is offered instead.
+  assert.ok(verdict.portionHint);
+  assert.match(verdict.detail, /would fit|move to tomorrow/i);
+});
+
+test("a meal taking most of the remaining day is flagged even though it fits", async () => {
+  const { assessScan } = await import("../dist/services/scanVerdict.js");
+  const u = await scannerWith(900);
+
+  const verdict = await assessScan(u.uid, "UTC", PIZZA);
+
+  // Technically within budget, but leaves almost nothing — saying so is the
+  // useful thing here.
+  assert.equal(verdict.fit, "moderate");
+  assert.ok(verdict.reasons.some((r) => /% of what's left/.test(r)));
+});
+
+test("a high-protein meal against a protein gap is a good fit", async () => {
+  const { assessScan } = await import("../dist/services/scanVerdict.js");
+  const u = await scannerWith(900);
+
+  const verdict = await assessScan(u.uid, "UTC", CHICKEN);
+  assert.equal(verdict.fit, "good");
+  assert.ok(verdict.reasons.some((r) => /protein/.test(r)));
+  assert.equal(verdict.alternative, null, "nothing to improve on");
+});
+
+test("an allergen outranks everything else", async () => {
+  const { assessScan } = await import("../dist/services/scanVerdict.js");
+  const u = await scannerWith(400, { allergies: ["peanut"] });
+
+  const verdict = await assessScan(u.uid, "UTC", [{
+    name: "chicken satay with peanut sauce", grams: 250, kcal_100g: 230,
+    protein_100g: 18, carbs_100g: 9, fat_100g: 14, fiber_100g: 1 }]);
+
+  assert.equal(verdict.fit, "poor");
+  assert.match(verdict.detail, /peanut/);
+  // A fact about this person, not a judgement about the food.
+  assert.ok(!/bad|unhealthy|avoid this food/i.test(verdict.detail));
+});
+
+test("with nothing logged the verdict says so rather than pretending", async () => {
+  const { assessScan } = await import("../dist/services/scanVerdict.js");
+  const u = await scannerWith(0);
+
+  const verdict = await assessScan(u.uid, "UTC", CHICKEN);
+
+  // Implying a personalised verdict from no data is the kind of small
+  // dishonesty that costs trust in everything else.
+  assert.equal(verdict.personalised, false);
+  assert.match(verdict.detail, /log|more meals/i);
+});
+
+test("no verdict ever moralises about food", async () => {
+  const { assessScan } = await import("../dist/services/scanVerdict.js");
+
+  const banned = [
+    /\bbad food\b/i, /\bunhealthy\b/i, /\bcheat\b/i, /\bjunk\b/i,
+    /\byou failed\b/i, /\bnever eat\b/i, /\bmust avoid\b/i, /\bforbidden\b/i,
+    /\bguilty\b/i, /\bnaughty\b/i, /\bshould not eat\b/i, /\bclean eating\b/i,
+  ];
+
+  const meals = [PIZZA, CHICKEN,
+    [{ name: "chocolate cake", grams: 150, kcal_100g: 420, protein_100g: 5,
+       carbs_100g: 55, fat_100g: 20, fiber_100g: 2 }],
+    [{ name: "chips", grams: 300, kcal_100g: 320, protein_100g: 4,
+       carbs_100g: 40, fat_100g: 16, fiber_100g: 3 }],
+  ];
+
+  for (const eaten of [0, 600, 1500, 2100]) {
+    const u = await scannerWith(eaten);
+    for (const meal of meals) {
+      const v = await assessScan(u.uid, "UTC", meal);
+      const text = `${v.headline} ${v.detail} ${v.reasons.join(" ")} ${v.alternative ?? ""}`;
+
+      for (const phrase of banned) {
+        assert.ok(!phrase.test(text),
+          `moralising language in verdict for ${meal[0].name} at ${eaten} kcal: "${text}"`);
+      }
+
+      // Even the worst-fitting meal keeps a route to eating it.
+      if (v.fit === "poor" && !/allerg/i.test(text)) {
+        assert.ok(v.portionHint || v.alternative,
+          "a poor fit must still offer a portion or an alternative");
+      }
+    }
+  }
+});
+
+test("the scan endpoint returns a verdict alongside the food", async () => {
+  const u = await proUser("scan-api");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "ScanAPI", ...BASE_PROFILE } });
+
+    const { status, json } = await api("/food/text", { method: "POST", body: {
+      text: "grilled chicken breast and rice" } });
+
+    assert.equal(status, 200);
+    assert.ok(json.verdict, "every scan should carry a verdict");
+    assert.ok(["good", "moderate", "poor", "unknown"].includes(json.verdict.fit));
+    assert.ok(json.verdict.headline);
+    assert.ok(json.verdict.detail);
+    assert.equal(typeof json.verdict.personalised, "boolean");
+  } finally { token = saved; }
+});
+
+// ─── cross-domain chains and felt-vs-measured ─────────────────────────────
+
+/** Seeds the sleep cascade: sleep drops, then activity, training, protein. */
+async function seedCascade(uid) {
+  const obs = [];
+  for (let d = 21; d >= 0; d--) {
+    const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+    obs.push({ metric: "sleep_minutes", value: d <= 8 ? 350 : 460, observed_on: date });
+    obs.push({ metric: "steps", value: d <= 5 ? 3200 : 8600, observed_on: date });
+    obs.push({ metric: "hrv", value: 52, observed_on: date });
+
+    const meal = await db.query(
+      `INSERT INTO meals (user_id, slot, input_method, logged_on)
+       VALUES ($1,'lunch','manual',$2::date) RETURNING id`, [uid, date]);
+    await db.query(
+      `INSERT INTO meal_items (meal_id, name, quantity, unit, grams,
+                               kcal_100g, protein_100g, carbs_100g, fat_100g)
+       VALUES ($1,'meal',1,'bowl',350,150,$2,20,5)`,
+      [meal.rows[0].id, d <= 4 ? 4 : 22]);
+  }
+  await api("/observations", { method: "POST", body: { observations: obs } });
+
+  // Training stops nine days ago.
+  for (let d = 21; d >= 9; d--) {
+    if (d % 3 === 0) {
+      await db.query(
+        `INSERT INTO workouts (user_id, performed_on, focus, minutes)
+         VALUES ($1, CURRENT_DATE - $2::int, 'upper', 45)`, [uid, d]);
+    }
+  }
+}
+
+test("a chain is detected in order, and names where to intervene", async () => {
+  const { detectChains } = await import("../dist/services/chains.js");
+  const u = await proUser("chain");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Chain", ...BASE_PROFILE } });
+    await seedCascade(u.uid);
+
+    const chains = await detectChains(u.uid, "UTC");
+    assert.ok(chains.length > 0, "the cascade should be visible");
+
+    const chain = chains[0];
+    assert.equal(chain.id, "sleep_cascade");
+    assert.ok(chain.links.length >= 3);
+
+    // Ordered by when each started — that ordering is what makes it a chain
+    // rather than a list of symptoms.
+    for (let i = 1; i < chain.links.length; i++) {
+      assert.ok(chain.links[i - 1].startedDaysAgo >= chain.links[i].startedDaysAgo,
+        "links must run oldest first");
+    }
+
+    // The intervention is at the start, not at the loudest symptom. Telling
+    // someone eating badly to eat better misses that sleep moved first.
+    assert.equal(chain.interveneAt, "sleep");
+    assert.match(chain.intervention, /sleep/i);
+    assert.ok(!/eat better|log more/i.test(chain.intervention));
+  } finally { token = saved; }
+});
+
+test("one moving metric is never narrated as a spiral", async () => {
+  const { detectChains } = await import("../dist/services/chains.js");
+  const u = await proUser("chain-single");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Single", ...BASE_PROFILE } });
+
+    // Sleep down, everything else steady.
+    const obs = [];
+    for (let d = 21; d >= 0; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      obs.push({ metric: "sleep_minutes", value: d <= 6 ? 350 : 460, observed_on: date });
+      obs.push({ metric: "steps", value: 8600, observed_on: date });
+      await db.query(
+        `INSERT INTO meals (user_id, slot, input_method, logged_on)
+         VALUES ($1,'lunch','manual',$2::date)`, [u.uid, date]);
+    }
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    // Manufacturing a cascade from a single metric is how an app creates
+    // health anxiety.
+    assert.equal((await detectChains(u.uid, "UTC")).length, 0);
+  } finally { token = saved; }
+});
+
+test("too little history produces no chain at all", async () => {
+  const { detectChains } = await import("../dist/services/chains.js");
+  const u = await proUser("chain-sparse");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Sparse", ...BASE_PROFILE } });
+    assert.equal((await detectChains(u.uid, "UTC")).length, 0);
+  } finally { token = saved; }
+});
+
+test("when the data looks fine and the person feels bad, the person wins", async () => {
+  const { reconcile, detectFeeling } = await import("../dist/services/chains.js");
+  const u = await proUser("felt");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Felt", ...BASE_PROFILE } });
+
+    const obs = [];
+    const today = new Date().toISOString().slice(0, 10);
+    for (let d = 20; d >= 1; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      obs.push({ metric: "sleep_minutes", value: 455, observed_on: date });
+      obs.push({ metric: "hrv", value: 54, observed_on: date });
+    }
+    obs.push({ metric: "sleep_minutes", value: 460, observed_on: today });
+    obs.push({ metric: "hrv", value: 54, observed_on: today });
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    const result = await reconcile(u.uid, "UTC", detectFeeling("I feel completely exhausted"));
+
+    assert.ok(result.conflict);
+    // A device measures time asleep, not how someone feels. Telling them their
+    // data says otherwise is both wrong and the fastest way to lose them.
+    assert.match(result.guidance, /believe them/i);
+    assert.match(result.guidance, /do not say the data/i);
+    assert.match(result.guidance, /stress|workload|illness/i);
+
+    // And no "above your usual by 0%".
+    assert.ok(!/by 0%/.test(result.measured ?? ""));
+  } finally { token = saved; }
+});
+
+test("when the data explains the feeling there is nothing to reconcile", async () => {
+  const { reconcile, detectFeeling } = await import("../dist/services/chains.js");
+  const u = await proUser("felt-explained");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Explained", ...BASE_PROFILE } });
+
+    const obs = [];
+    const today = new Date().toISOString().slice(0, 10);
+    for (let d = 20; d >= 1; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      obs.push({ metric: "sleep_minutes", value: 455, observed_on: date });
+    }
+    obs.push({ metric: "sleep_minutes", value: 320, observed_on: today });
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    const result = await reconcile(u.uid, "UTC", detectFeeling("I'm exhausted"));
+
+    // Sleep is down 30% — saying "your numbers look normal" here would be
+    // plainly wrong.
+    assert.equal(result.conflict, false);
+  } finally { token = saved; }
+});
+
+test("feelings are detected without over-reading ordinary questions", async () => {
+  const { detectFeeling } = await import("../dist/services/chains.js");
+
+  assert.equal(detectFeeling("I'm completely exhausted"), "tired");
+  assert.equal(detectFeeling("I feel low today"), "low");
+  assert.equal(detectFeeling("I feel great"), "great");
+
+  // Reading a mood into a factual question is its own failure.
+  assert.equal(detectFeeling("what should I eat for dinner"), null);
+  assert.equal(detectFeeling("how many calories are left"), null);
+});
