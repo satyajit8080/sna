@@ -316,6 +316,42 @@ def check_symbols_defined(path: Path, src: str) -> None:
         fail(f"{path.name}:{line_no}: '{name}' is used but never declared in this file")
 
 
+def check_no_contradicting_expectations() -> None:
+    """
+    Two tests asserting opposite bounds on the same property.
+
+    A stale assertion left behind after a redesign (`benefits.count >= 4`)
+    survived alongside its replacement (`<= 3`), so the suite could never pass
+    — and it only showed up on a macOS runner, several minutes into a build.
+    """
+    tests = ROOT / "SnapCalTests"
+    if not tests.exists():
+        return
+
+    # property -> {"lower": [(bound, line)], "upper": [(bound, line)]}
+    bounds: dict[str, dict[str, list]] = {}
+
+    for path in sorted(tests.glob("*.swift")):
+        for line_no, line in enumerate(path.read_text().split("\n"), 1):
+            m = re.search(r"#expect\(\s*([\w.]+(?:\.count)?)\s*(>=|<=|>|<)\s*(\d+)", line)
+            if not m:
+                continue
+            prop, op, value = m.group(1), m.group(2), int(m.group(3))
+            # Strip the receiver so `context.benefits.count` and
+            # `ctx.benefits.count` compare as the same property.
+            key = ".".join(prop.split(".")[-2:])
+            entry = bounds.setdefault(key, {"lower": [], "upper": []})
+            entry["lower" if op in (">=", ">") else "upper"].append((value, line_no, path.name))
+
+    for prop, entry in bounds.items():
+        for low, low_line, low_file in entry["lower"]:
+            for high, high_line, high_file in entry["upper"]:
+                if low > high:
+                    fail(f"{low_file}:{low_line}: '{prop} >= {low}' contradicts "
+                         f"'{prop} <= {high}' at {high_file}:{high_line} — "
+                         f"one is a leftover from a redesign")
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -348,6 +384,7 @@ for path in TESTS:
 check_guest_is_empty()
 check_input_method_contract()
 check_exhaustive_switches()
+check_no_contradicting_expectations()
 
 for message in failures:
     print(f"FAIL  {message}")
