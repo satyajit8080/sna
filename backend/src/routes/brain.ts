@@ -8,6 +8,8 @@ import {
   allMemories, editMemory, forgetMemory, learnRoutines, learnFromOutcomes, recall,
 } from "../services/brain.js";
 import { dailyBriefing, runLearningCycle } from "../services/orchestrator.js";
+import { planNotifications, recordEngagement } from "../services/notifications.js";
+import { sleepSummary, clockLabel } from "../services/sleep.js";
 
 /**
  * Personal Health Brain endpoints.
@@ -89,6 +91,95 @@ export default async function routes(app: FastifyInstance) {
    */
   app.post("/coach/learn-cycle", { preHandler: requireAuth }, async (req) =>
     runLearningCycle(req.userId, req.tz));
+
+  // ── sleep ─────────────────────────────────────────────────────────────────
+  /**
+   * Sleep coaching built on timing, not stages.
+   *
+   * A phone can tell when someone fell asleep and woke up; it cannot reliably
+   * tell REM from deep. Regularity is both measurable and actionable, which is
+   * why it is the headline here.
+   */
+  app.get("/sleep/summary", { preHandler: requireAuth }, async (req) => {
+    const summary = await sleepSummary(req.userId, req.tz);
+
+    return {
+      ...summary,
+      // Pre-formatted so the client never has to reason about midnight
+      // wrap-around.
+      avg_bedtime: clockLabel(summary.avgBedtimeMin),
+      avg_wake: clockLabel(summary.avgWakeMin),
+      avg_duration_hours: summary.avgDurationMin == null
+        ? null
+        : Math.round(summary.avgDurationMin / 60 * 10) / 10,
+    };
+  });
+
+  // ── notifications ─────────────────────────────────────────────────────────
+  /**
+   * Today's notifications, already filtered.
+   *
+   * The server decides *what* and *when*; the client schedules locally. There
+   * is no APNs in this app, and this split has a real advantage anyway — the
+   * judgement stays in one place and testable, while delivery survives a
+   * server outage.
+   *
+   * Call once a day on foreground. Returning an empty list is a normal, common
+   * and correct outcome.
+   */
+  app.get("/notifications/plan", { preHandler: requireAuth }, async (req) => {
+    const result = await planNotifications(req.userId, req.tz);
+
+    return {
+      notifications: result.planned.map((n) => ({
+        id: n.id,
+        category: n.category,
+        priority: n.priority,
+        title: n.title,
+        body: n.body,
+        deeplink: n.deeplink ?? null,
+        deliver_at: n.deliverAt,
+      })),
+      // Visible so the decisions can be inspected rather than guessed at.
+      suppressed: result.suppressed,
+    };
+  });
+
+  /**
+   * Engagement. Without this the engine cannot learn which notifications this
+   * person actually wants, and keeps sending ones they never open.
+   */
+  app.post("/notifications/:id/event", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { event } = z.object({
+      event: z.enum(["sent", "opened", "dismissed", "acted"]),
+    }).parse(req.body);
+
+    const result = await recordEngagement(req.userId, id, event);
+    return result ?? reply.code(404).send({ error: "not_found" });
+  });
+
+  /** What the engine has learned about when this person opens things. */
+  app.get("/notifications/engagement", { preHandler: requireAuth }, async (req) => {
+    const rows = await q<any>(
+      `SELECT category,
+              SUM(sent)::int AS sent, SUM(opened)::int AS opened,
+              SUM(dismissed)::int AS dismissed, SUM(acted)::int AS acted
+         FROM notification_engagement
+        WHERE user_id = $1
+        GROUP BY category
+        ORDER BY sent DESC`,
+      [req.userId]
+    );
+
+    return {
+      by_category: rows.map((r: any) => ({
+        ...r,
+        open_rate: r.sent ? Math.round((r.opened / r.sent) * 100) : null,
+      })),
+      enough_data: rows.some((r: any) => r.sent >= 3),
+    };
+  });
 
   // ── what SnapCal knows about you ──────────────────────────────────────────
   /**
