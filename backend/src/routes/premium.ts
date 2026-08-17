@@ -12,6 +12,7 @@ import { suggestNextMeal } from "../services/suggest.js";
 import * as safety from "../services/safety.js";
 import { recall, memoriesForPrompt } from "../services/brain.js";
 import { buildHealthState, summariseForPrompt } from "../services/healthState.js";
+import { buildFollowUp, followUpForPrompt, followUpSteer } from "../services/followUp.js";
 import { onboardingState, welcomeLine } from "../services/coachOnboarding.js";
 import { topPatterns } from "../services/patterns.js";
 import { generateWorkout, savePlan } from "../services/workoutPlanner.js";
@@ -24,7 +25,7 @@ import {
   entitlementsFor, reserve, settle, release, subscriptionFor,
   type Reservation,
 } from "../services/entitlements.js";
-import { localDate, daysAgo } from "../util/dates.js";
+import { localDate, daysAgo, localClock } from "../util/dates.js";
 
 /** reserve → work → settle, so no path can leak a reservation. */
 async function metered<T>(
@@ -85,7 +86,7 @@ export default async function routes(app: FastifyInstance) {
       const wantsDeepContext = ["daily_plan", "progress", "workout_request", "sleep"]
         .includes(intent);
 
-      const [patterns, memories, healthState] = await Promise.all([
+      const [patterns, memories, healthState, followUp] = await Promise.all([
         wantsDeepContext ? topPatterns(req.userId, 3) : Promise.resolve([]),
         // Memory goes to every turn: knowing someone dislikes running matters
         // as much for a one-line answer as for a plan.
@@ -93,6 +94,9 @@ export default async function routes(app: FastifyInstance) {
         wantsDeepContext
           ? buildHealthState(req.userId, localDate(req.tz))
           : Promise.resolve(null),
+        // What was advised, whether it was done, and whether it worked. This
+        // is what turns a series of separate answers into a coaching loop.
+        buildFollowUp(req.userId, req.tz),
       ]);
 
       // Only the last exchange is replayed. Full history would grow the bill
@@ -149,6 +153,11 @@ export default async function routes(app: FastifyInstance) {
         // What the brain has learned. Each carries a certainty so the model
         // hedges on a weak memory instead of asserting it as fact.
         known_about_user: memoriesForPrompt(memories),
+        // Time of day, because advice that ignores the clock is wrong however
+        // good it is otherwise — a gym session is not the right answer at
+        // half past midnight.
+        local_time: localClock(req.tz),
+        previous_advice: followUpForPrompt(followUp),
         // Trends and baselines, not raw numbers — "HRV 42" means nothing
         // without knowing this person's normal.
         health_state: healthState ? summariseForPrompt(healthState) : null,
@@ -161,8 +170,18 @@ export default async function routes(app: FastifyInstance) {
        * message needs. Guards come first because they must hold regardless of
        * what the question is otherwise about.
        */
+      const clock = localClock(req.tz);
+      const timeSteer =
+        clock.partOfDay === "late_night"
+          ? " It is the middle of the night for them. Do not recommend training, a big meal, or anything energising — sleep is the useful answer, and say so briefly without lecturing."
+        : clock.partOfDay === "evening"
+          ? " It is evening for them, so favour things that still fit today and mention tomorrow for anything that does not."
+        : clock.partOfDay === "morning"
+          ? " It is morning for them, so the whole day is still available."
+          : "";
+
       const steer =
-        verdict.instruction ? verdict.instruction
+        (verdict.instruction ? verdict.instruction
         : guard === "urgent"
           ? "The user may be describing a medical emergency. Tell them plainly to seek urgent medical help now. Do not offer nutrition or training advice."
         : guard === "medical"
@@ -189,7 +208,9 @@ export default async function routes(app: FastifyInstance) {
           ? "Give practical sleep and recovery habits. Do not diagnose a sleep disorder; suggest a professional for persistent problems."
         : intent === "progress"
           ? "Answer using their weight trend, streak and averages. One imperfect day is not failure."
-          : "Answer briefly and practically.";
+          : "Answer briefly and practically.")
+        + timeSteer
+        + (verdict.action === "allow" ? " " + followUpSteer(followUp) : "");
 
       const messages = [
         { role: "system" as const, content: COACH_SYSTEM },
@@ -201,7 +222,34 @@ export default async function routes(app: FastifyInstance) {
         { role: "user" as const, content: `${JSON.stringify(facts)}\n${question}` },
       ];
 
-      const { text, usage } = await chat(messages, maxTokensFor(intent));
+      let { text, usage } = await chat(messages, maxTokensFor(intent));
+      const usages = [usage];
+
+      /**
+       * One retry when the answer is stock filler.
+       *
+       * "Have a balanced meal with protein, carbs and healthy fats" fits any
+       * person on any day, which makes it worthless as coaching. Retrying with
+       * a blunter instruction costs one cheap call and usually fixes it; a
+       * second failure means the data genuinely isn't there to be specific
+       * about, and the answer stands.
+       */
+      if (verdict.action === "allow" && safety.isGeneric(text)) {
+        const retry = await chat([
+          ...messages,
+          { role: "assistant" as const, content: text },
+          { role: "user" as const, content:
+            "That was generic — it would fit anyone. Rewrite it using the actual numbers " +
+            "in the context: what they ate, what's left, their steps, their trends. " +
+            "If there isn't enough logged to be specific, say that instead." },
+        ], maxTokensFor(intent));
+
+        // Only take the retry if it is actually better.
+        if (!safety.isGeneric(retry.text) && retry.text.trim().length > 0) {
+          text = retry.text;
+        }
+        usages.push(retry.usage);
+      }
 
       // Workouts and day plans are structured; everything else is trimmed to
       // keep the coach terse and the bill small.
@@ -235,7 +283,7 @@ export default async function routes(app: FastifyInstance) {
         ? await suggestNextMeal(req.userId, req.tz, context)
         : null;
 
-      return { value: { answer: reply, suggestion, intent }, usages: [usage] };
+      return { value: { answer: reply, suggestion, intent }, usages };
     });
 
     return { ...answer, entitlements: await entitlementsFor(req.userId) };
@@ -706,11 +754,32 @@ export default async function routes(app: FastifyInstance) {
       food_logging: z.boolean().optional(),
       coach_reminder: z.boolean().optional(),
       premium_offers: z.boolean().optional(),
+      quiet_start: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+      quiet_end: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+      daily_limit: z.number().int().min(0).max(10).optional(),
+      muted_categories: z.array(z.string().max(20)).max(12).optional(),
+      target_bedtime: z.string().regex(/^\d{2}:\d{2}$/).nullish(),
+      target_wake_time: z.string().regex(/^\d{2}:\d{2}$/).nullish(),
       permission: z.enum(["undetermined", "granted", "denied"]).optional(),
     }).parse(req.body);
 
+    // Values go in the INSERT as well as the UPDATE. A first write does not
+    // hit the conflict path, so a SET-only clause silently stored defaults and
+    // discarded everything the user just chose — quiet hours and the master
+    // switch included.
     return one(
-      `INSERT INTO notification_prefs (user_id, timezone) VALUES ($1,$2)
+      `INSERT INTO notification_prefs
+         (user_id, timezone, daily_coach, morning_hour, morning_minute,
+          meal_reminders, food_logging, coach_reminder, premium_offers,
+          permission, quiet_start, quiet_end, daily_limit, muted_categories,
+          target_bedtime, target_wake_time)
+       VALUES ($1, $2,
+               COALESCE($3, true), COALESCE($4, 8), COALESCE($5, 0),
+               COALESCE($6, true), COALESCE($7, true), COALESCE($8, false),
+               COALESCE($9, true), COALESCE($10, 'undetermined'),
+               COALESCE($11::time, '22:00'), COALESCE($12::time, '07:00'),
+               COALESCE($13, 3), COALESCE($14, '{}'::text[]),
+               $15::time, $16::time)
        ON CONFLICT (user_id) DO UPDATE SET
          daily_coach    = COALESCE($3, notification_prefs.daily_coach),
          morning_hour   = COALESCE($4, notification_prefs.morning_hour),
@@ -720,11 +789,19 @@ export default async function routes(app: FastifyInstance) {
          coach_reminder = COALESCE($8, notification_prefs.coach_reminder),
          premium_offers = COALESCE($9, notification_prefs.premium_offers),
          permission     = COALESCE($10, notification_prefs.permission),
+         quiet_start    = COALESCE($11::time, notification_prefs.quiet_start),
+         quiet_end      = COALESCE($12::time, notification_prefs.quiet_end),
+         daily_limit    = COALESCE($13, notification_prefs.daily_limit),
+         muted_categories = COALESCE($14, notification_prefs.muted_categories),
+         target_bedtime   = COALESCE($15::time, notification_prefs.target_bedtime),
+         target_wake_time = COALESCE($16::time, notification_prefs.target_wake_time),
          timezone = $2, updated_at = now()
        RETURNING *`,
       [req.userId, req.tz, p.daily_coach ?? null, p.morning_hour ?? null, p.morning_minute ?? null,
        p.meal_reminders ?? null, p.food_logging ?? null, p.coach_reminder ?? null,
-       p.premium_offers ?? null, p.permission ?? null]);
+       p.premium_offers ?? null, p.permission ?? null,
+       p.quiet_start ?? null, p.quiet_end ?? null, p.daily_limit ?? null,
+       p.muted_categories ?? null, p.target_bedtime ?? null, p.target_wake_time ?? null]);
   });
 
   /**
