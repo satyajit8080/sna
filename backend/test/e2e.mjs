@@ -20,6 +20,25 @@ let userId;
 /// check that the coach behaves differently in the middle of the night.
 let tzHeader = "UTC";
 
+/**
+ * A timezone where it is currently mid-afternoon.
+ *
+ * The briefing deliberately behaves differently at night — it drops to a single
+ * sleep action — so any test about ordinary briefing behaviour has to pin the
+ * clock, or it passes all day and fails after 22:00 UTC.
+ */
+const DAYTIME_TZ = (() => {
+  const zones = ["UTC", "Asia/Kolkata", "America/New_York", "Asia/Tokyo",
+                 "Europe/London", "Australia/Sydney", "America/Los_Angeles",
+                 "Pacific/Honolulu", "Asia/Dubai"];
+  for (const tz of zones) {
+    const hour = Number(new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz, hour: "2-digit", hour12: false }).format(new Date()));
+    if (hour >= 9 && hour <= 16) return tz;
+  }
+  return "UTC";
+})();
+
 async function api(path, { method = "GET", body, form, auth = true } = {}) {
   const headers = { "X-Timezone": tzHeader };
   if (auth && token) headers.authorization = `Bearer ${token}`;
@@ -2298,6 +2317,8 @@ test("one user's memories are invisible to another", async () => {
 // ─── orchestrator: state + memory → ranked, explainable actions ────────────
 
 test("briefing gives at most three actions, each with a reason", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const u = await proUser("brief");
   const saved = token; token = u.token;
   try {
@@ -2315,10 +2336,12 @@ test("briefing gives at most three actions, each with a reason", async () => {
       assert.ok(a.id, "actions are persisted so outcomes can be measured");
       assert.ok(a.triggeredBy.length > 0, "the trigger is recorded for later analysis");
     }
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("a fresh user is asked to log before anything else", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const u = await proUser("fresh");
   const saved = token; token = u.token;
   try {
@@ -2329,10 +2352,12 @@ test("a fresh user is asked to log before anything else", async () => {
     assert.ok(json.actions.some((a) => /log/i.test(a.action)),
       `expected a logging prompt, got: ${json.actions.map((a) => a.action).join(" | ")}`);
     assert.ok(json.missing.length > 0, "no health data yet, and it says so");
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("the briefing is idempotent within a day", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const u = await proUser("idem");
   const saved = token; token = u.token;
   try {
@@ -2352,10 +2377,12 @@ test("the briefing is idempotent within a day", async () => {
         WHERE user_id = $1 AND offered_on = CURRENT_DATE`, [u.uid]);
     assert.equal(stored.rows[0].n, first.json.actions.length,
       "no duplicate recommendations were written");
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("recovery mode asks for less, and says why", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const u = await proUser("recov");
   const saved = token; token = u.token;
   try {
@@ -2381,7 +2408,7 @@ test("recovery mode asks for less, and says why", async () => {
     assert.ok(recovery, "an under-recovered day should suggest taking it easy");
     // The reason must cite the actual signal, not a generic platitude.
     assert.match(recovery.reason, /slept|heart rate|sessions/i);
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("one action per domain — three nutrition tips would read as nagging", async () => {
@@ -2501,6 +2528,8 @@ test("unanswered recommendations expire so completion rates stay honest", async 
 });
 
 test("no action is generated from data the system doesn't have", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const u = await proUser("nodata2");
   const saved = token; token = u.token;
   try {
@@ -2514,10 +2543,12 @@ test("no action is generated from data the system doesn't have", async () => {
         `"${a.reason}" implies history that does not exist`);
     }
     assert.ok(json.missing.includes("sleep"));
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("a proven lever is surfaced only once there is evidence for it", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const fresh = await proUser("lever-a");
   const experienced = await proUser("lever-b");
   const saved = token;
@@ -2552,7 +2583,7 @@ test("a proven lever is surfaced only once there is evidence for it", async () =
       "a lever proven by outcomes should surface for the experienced user");
     assert.ok(!provenIn(withoutHistory),
       "a new user must never be told something has worked for them before");
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("a misconfigured testing flag warns but never stops the server booting", async () => {
@@ -3258,6 +3289,8 @@ test("a late-eating association is only claimed with enough nights either side",
 });
 
 test("a sleep finding reaches the daily briefing", async () => {
+  // Pinned to daytime: at night the briefing correctly collapses to sleep only.
+  const savedTz = tzHeader; tzHeader = DAYTIME_TZ;
   const u = await proUser("sleep-briefing");
   const saved = token; token = u.token;
   try {
@@ -3273,7 +3306,7 @@ test("a sleep finding reaches the daily briefing", async () => {
       // The reason cites the actual scatter, not a generic claim.
       assert.match(sleep.reason, /\d+ minutes|swings|below/i);
     }
-  } finally { token = saved; }
+  } finally { token = saved; tzHeader = savedTz; }
 });
 
 test("weekend shift is direction-correct across midnight", async () => {
@@ -3335,4 +3368,126 @@ test("the regularity score matches what counts as irregular in practice", async 
       }
     } finally { token = saved; }
   }
+});
+
+// ─── emotional intelligence, and not making things worse ──────────────────
+
+test("emotional weight is read before the task intent", async () => {
+  const { readEmotion, suppressesCards } = await import("../dist/services/emotion.js");
+
+  const overwhelmed = readEmotion("I'm completely exhausted and everything is too much");
+  assert.equal(overwhelmed.state, "overwhelmed");
+  assert.equal(overwhelmed.intensity, "high");
+  assert.ok(overwhelmed.needsAcknowledgement);
+  // A meal card next to "everything is too much" is the app not listening.
+  assert.ok(suppressesCards(overwhelmed));
+
+  const discouraged = readEmotion("I feel like giving up, nothing is working");
+  assert.equal(discouraged.state, "discouraged");
+  assert.ok(suppressesCards(discouraged));
+
+  const good = readEmotion("Really pleased with this week");
+  assert.equal(good.state, "positive");
+  // Something going well should still be able to carry a suggestion.
+  assert.ok(!suppressesCards(good));
+});
+
+test("a question with a tired preamble is still a question", async () => {
+  const { readEmotion } = await import("../dist/services/emotion.js");
+
+  // Being solemn at someone who asked a practical question is its own failure.
+  const asking = readEmotion("I'm shattered, what should I eat for dinner?");
+  assert.equal(asking.needsAcknowledgement, false,
+    "a direct question should still get answered");
+
+  const venting = readEmotion("I'm completely shattered");
+  assert.ok(venting.needsAcknowledgement);
+});
+
+test("ordinary questions carry no emotional read at all", async () => {
+  const { readEmotion } = await import("../dist/services/emotion.js");
+
+  // Reading distress into a neutral message is patronising.
+  for (const q of ["What should I eat for dinner?",
+                   "How many calories do I have left?",
+                   "What workout should I do today?",
+                   "How much protein is in chicken?"]) {
+    assert.equal(readEmotion(q).state, null, `"${q}" was read as emotional`);
+  }
+});
+
+test("shaming language is caught however gently it is phrased", async () => {
+  const { isShaming } = await import("../dist/services/emotion.js");
+
+  for (const answer of [
+    "Why didn't you log yesterday?",
+    "You should have stuck to the plan.",
+    "That was a bad food choice.",
+    "You are not going to reach 76kg like this.",
+    "You're never going to lose it eating like that.",
+    "There's no excuse for skipping three sessions.",
+  ]) {
+    assert.ok(isShaming(answer), `not caught: "${answer}"`);
+  }
+
+  // Curiosity about what made it hard is the opposite of blame.
+  for (const answer of [
+    "That sounds like a hard week. What got in the way?",
+    "You're 60g short on protein — dinner can close it.",
+    "You've logged 12 days straight, which is the part that matters.",
+  ]) {
+    assert.ok(!isShaming(answer), `false positive: "${answer}"`);
+  }
+});
+
+test("stacked questions are caught even with one question mark", async () => {
+  const { asksTooMuch } = await import("../dist/services/emotion.js");
+
+  // Four questions wearing one coat. Counting question marks alone misses it,
+  // and it reliably gets none of them answered.
+  assert.ok(asksTooMuch("How was your sleep, stress, nutrition and mood?"));
+  assert.ok(asksTooMuch("How did you sleep? And your energy? What about food?"));
+
+  assert.ok(!asksTooMuch("How did you feel when you woke up — refreshed or exhausted?"));
+  assert.ok(!asksTooMuch("You have 900 calories left. Protein is the gap."));
+  // A statement mentioning several topics is fine; only the question counts.
+  assert.ok(!asksTooMuch("Your sleep and stress both look lower this week. How did today feel?"));
+});
+
+test("a message about feeling low never returns a meal card", async () => {
+  const u = await proUser("emotion-card");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Low", ...BASE_PROFILE } });
+
+    for (const message of [
+      "I'm completely overwhelmed with everything right now",
+      "I feel like giving up on all of this",
+      "I've been really down this week",
+    ]) {
+      const { status, json } = await api("/coach/ask", { method: "POST", body: { question: message } });
+      assert.equal(status, 200);
+      assert.equal(json.suggestion, null, `a card was attached to: "${message}"`);
+      assert.ok(json.emotional_tone, "the tone should be reported so the UI can soften");
+    }
+  } finally { token = saved; }
+});
+
+test("the emotional steer tells the model what not to do", async () => {
+  const { readEmotion, emotionalSteer } = await import("../dist/services/emotion.js");
+
+  const overwhelmed = emotionalSteer(readEmotion("everything is too much right now"));
+  assert.match(overwhelmed, /no lists|one small thing/i);
+
+  const discouraged = emotionalSteer(readEmotion("I want to give up, nothing works"));
+  // Selling the goal back to someone who is done with it does not help.
+  assert.match(discouraged, /do not sell the goal|motivational/i);
+
+  const exhausted = emotionalSteer(readEmotion("I'm completely drained"));
+  assert.match(exhausted, /do not open with advice/i);
+
+  // Only one question, when acknowledgement is needed.
+  assert.match(overwhelmed, /at most one question/i);
+
+  assert.equal(emotionalSteer(readEmotion("what should I eat")), "");
 });
