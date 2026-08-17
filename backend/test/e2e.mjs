@@ -16,9 +16,12 @@ const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
 let token;
 let userId;
+/// Overridable so a test can pretend to be in a different timezone — used to
+/// check that the coach behaves differently in the middle of the night.
+let tzHeader = "UTC";
 
 async function api(path, { method = "GET", body, form, auth = true } = {}) {
-  const headers = { "X-Timezone": "Asia/Kolkata" };
+  const headers = { "X-Timezone": tzHeader };
   if (auth && token) headers.authorization = `Bearer ${token}`;
   if (body) headers["content-type"] = "application/json";
 
@@ -542,7 +545,14 @@ test("dashboard day boundary follows the user's timezone", async () => {
 });
 
 test("dashboard reports its timezone and reset instant", async () => {
+  // Asserts the header that was actually sent rather than a hardcoded zone, so
+  // the test still means something if the default changes.
+  const saved = tzHeader;
+  tzHeader = "Asia/Kolkata";
+
   const { status, json } = await api("/dashboard");
+  tzHeader = saved;
+
   assert.equal(status, 200);
   assert.equal(json.timezone, "Asia/Kolkata");
   assert.ok(new Date(json.resets_at) > new Date());
@@ -2582,4 +2592,747 @@ test("a misconfigured testing flag warns but never stops the server booting", as
     AI_PROVIDER: "openai", OPENAI_API_KEY: "sk-test",
   });
   assert.match(testing, /BOOTS:true/);
+});
+
+// ─── time of day, and dose false positives ────────────────────────────────
+
+test("hydration and nutrition answers are not mistaken for medication", async () => {
+  const { validate } = await import("../dist/services/safety.js");
+  const allow = { category: null, action: "allow" };
+
+  // Regression: "2000 ml of water daily" was replaced with a medication
+  // refusal, which made an ordinary hydration answer look broken. `ml` is a
+  // drink measure, not a drug dose.
+  for (const answer of [
+    "Aim for about 2000 ml of water daily.",
+    "Have 500 ml with each meal.",
+    "Around 2.5 L, so roughly 800 ml more today.",
+    "Get 30-40 g of protein per day.",
+    "Aim for 8000 steps daily.",
+    "A 250 ml glass of milk has about 120 calories.",
+  ]) {
+    assert.equal(validate(answer, allow), null,
+      `"${answer}" must not be treated as medication advice`);
+  }
+
+  // Real doses still blocked.
+  for (const answer of [
+    "Take 500 mg twice daily.",
+    "The usual dose is 400 IU of vitamin D.",
+    "Your doctor may suggest 1000 mcg — ask them.",
+  ]) {
+    assert.ok(validate(answer, allow) !== null,
+      `"${answer}" must be blocked`);
+  }
+});
+
+test("the clock is classified correctly for coaching", async () => {
+  const { localClock } = await import("../dist/util/dates.js");
+
+  const clock = localClock("UTC");
+  assert.ok(clock.hour >= 0 && clock.hour <= 23);
+  assert.match(clock.time, /^\d{2}:\d{2}$/);
+  assert.ok(["late_night", "morning", "afternoon", "evening"].includes(clock.partOfDay));
+
+  // An invalid timezone must not crash a coach request.
+  const fallback = localClock("Not/AZone");
+  assert.ok(Number.isFinite(fallback.hour));
+});
+
+test("late at night the briefing offers sleep, not a workout", async () => {
+  const u = await proUser("night");
+  const saved = token; token = u.token;
+
+  try {
+    // A timezone where it is currently the middle of the night, whatever the
+    // server clock says.
+    const nightTz = (() => {
+      for (const tz of ["Pacific/Kiritimati", "Asia/Kolkata", "America/Los_Angeles",
+                        "UTC", "Asia/Tokyo", "Europe/London", "Pacific/Honolulu"]) {
+        const hour = Number(new Intl.DateTimeFormat("en-GB", {
+          timeZone: tz, hour: "2-digit", hour12: false }).format(new Date()));
+        if (hour >= 22 || hour < 5) return tz;
+      }
+      return null;
+    })();
+
+    if (!nightTz) return;   // no qualifying zone right now; nothing to assert
+
+    tzHeader = nightTz;
+    await api("/profile", { method: "POST", body: { name: "Night", ...BASE_PROFILE } });
+
+    const { json } = await api("/coach/briefing");
+
+    // One thing at midnight. A list of priorities for a day that is over reads
+    // as an app that has not noticed the time.
+    assert.ok(json.actions.length <= 1,
+      `expected at most one late-night action, got ${json.actions.length}`);
+
+    for (const a of json.actions) {
+      assert.notEqual(a.domain, "fitness",
+        "a workout must not be suggested in the middle of the night");
+      assert.notEqual(a.domain, "activity",
+        "a walk must not be suggested in the middle of the night");
+    }
+  } finally {
+    tzHeader = "UTC";
+    token = saved;
+  }
+});
+
+// ─── follow-up: yesterday's advice reaches today's answer ─────────────────
+
+test("the coach can see what it advised, and whether it happened", async () => {
+  const { buildFollowUp, followUpForPrompt } = await import("../dist/services/followUp.js");
+  const u = await proUser("followup");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Follow", ...BASE_PROFILE } });
+
+    // Yesterday's suggestion, never answered.
+    await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+       VALUES ($1,'sleep','Wind down by 10:30','Sleep below baseline',
+               CURRENT_DATE - 1, 'pending')`, [u.uid]);
+
+    // And one from three days ago that was done and helped.
+    const older = await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+       VALUES ($1,'activity','Take a 20 minute walk','Steps below usual',
+               CURRENT_DATE - 3, 'completed') RETURNING id`, [u.uid]);
+    await db.query(
+      `INSERT INTO recommendation_outcomes (recommendation_id, user_id, metric, direction)
+       VALUES ($1,$2,'steps','improved')`, [older.rows[0].id, u.uid]);
+
+    const followUp = await buildFollowUp(u.uid, "UTC");
+
+    assert.equal(followUp.recent.length, 2);
+    // Yesterday's unanswered suggestion is the one worth asking about.
+    assert.ok(followUp.awaitingAnswer);
+    assert.match(followUp.awaitingAnswer.action, /Wind down/);
+
+    const forPrompt = followUpForPrompt(followUp);
+    assert.equal(forPrompt.awaiting_answer.offered, "yesterday");
+    assert.equal(forPrompt.recent_advice.length, 2);
+    assert.ok(forPrompt.recent_advice.some((r) => r.followed));
+  } finally { token = saved; }
+});
+
+test("advice from a week ago is not resurfaced as a question", async () => {
+  const { buildFollowUp } = await import("../dist/services/followUp.js");
+  const u = await proUser("stale");
+
+  await db.query(
+    `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+     VALUES ($1,'sleep','Wind down early','r', CURRENT_DATE - 5, 'pending')`, [u.uid]);
+
+  const followUp = await buildFollowUp(u.uid, "UTC");
+  // Nobody wants to be asked on Friday whether they took Monday's walk.
+  assert.equal(followUp.awaitingAnswer, null);
+  assert.equal(followUp.recent.length, 1, "it is still context, just not a question");
+});
+
+test("repeatedly ignored advice is flagged so it stops being repeated", async () => {
+  const { buildFollowUp, followUpSteer } = await import("../dist/services/followUp.js");
+  const u = await proUser("ignored");
+
+  for (let i = 2; i <= 7; i++) {
+    await db.query(
+      `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+       VALUES ($1,'hydration','Drink more water','r', CURRENT_DATE - $2::int, 'dismissed')`,
+      [u.uid, i]);
+  }
+
+  const followUp = await buildFollowUp(u.uid, "UTC");
+  assert.ok(followUp.ignores.includes("hydration"));
+
+  const steer = followUpSteer(followUp);
+  assert.match(steer, /not acted on/i);
+  assert.match(steer, /smaller version|focus elsewhere/i);
+});
+
+test("advice repeated in the last two days is called out to the model", async () => {
+  const { buildFollowUp, followUpSteer } = await import("../dist/services/followUp.js");
+  const u = await proUser("repeat");
+
+  await db.query(
+    `INSERT INTO recommendations (user_id, domain, action, reason, offered_on, status)
+     VALUES ($1,'nutrition','Make your next meal protein-led','r',
+             CURRENT_DATE - 1, 'pending')`, [u.uid]);
+
+  const steer = followUpSteer(await buildFollowUp(u.uid, "UTC"));
+  assert.match(steer, /already said this/i);
+  assert.match(steer, /protein-led/);
+});
+
+test("generic filler is detected, concrete advice is not", async () => {
+  const { isGeneric } = await import("../dist/services/safety.js");
+
+  // The exact shape seen on device: reasonable words, no reference to
+  // anything true about this person today.
+  assert.ok(isGeneric(
+    "Let's get you started with a balanced day. Have a balanced meal with " +
+    "protein, carbs and healthy fats, and stay hydrated."));
+  assert.ok(isGeneric(
+    "Consider a gentle workout and listen to your body. Stay consistent to support your goals."));
+
+  // Anything citing real figures is coaching, even if it uses a stock phrase.
+  assert.ok(!isGeneric("You're 60g short on protein with one meal left — make it protein-led."));
+  assert.ok(!isGeneric("A balanced meal works here: you have 900 kcal left and 45g of protein to go."));
+  assert.ok(!isGeneric("You're at 2,100 steps against a usual 7,400."));
+  assert.ok(!isGeneric("It's 00:24 — sleep matters more than the last 300 calories tonight."));
+});
+
+test("a medication question still gets useful help alongside the boundary", async () => {
+  const { assess } = await import("../dist/services/safety.js");
+  const verdict = assess("what medicine should I take for my cold");
+
+  assert.equal(verdict.category, "medication");
+  assert.equal(verdict.action, "steer");
+  // A bare refusal is a failure — the boundary is on prescribing, not on
+  // being useful about food, sleep and recovery.
+  assert.match(verdict.instruction, /help fully|food, training, sleep/i);
+});
+
+// ─── notification engine: the default answer is no ────────────────────────
+
+/** Gives a user enough history that the engine has something to reason about. */
+async function seedHistory(uid, { days = 21, sleepMin = 440, steps = 8000,
+                                  restingHr = 54, logMeals = true } = {}) {
+  const obs = [];
+  for (let d = days; d >= 1; d--) {
+    const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+    obs.push({ metric: "sleep_minutes", value: sleepMin, observed_on: date });
+    obs.push({ metric: "steps", value: steps, observed_on: date });
+    obs.push({ metric: "resting_hr", value: restingHr, observed_on: date });
+
+    if (logMeals) {
+      await db.query(
+        `INSERT INTO meals (user_id, slot, input_method, logged_on)
+         VALUES ($1,'lunch','manual',$2::date)`, [uid, date]);
+    }
+  }
+  await api("/observations", { method: "POST", body: { observations: obs } });
+}
+
+test("a brand-new user with no data gets no notifications at all", async () => {
+  const u = await proUser("notif-new");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "New", ...BASE_PROFILE } });
+
+    const { status, json } = await api("/notifications/plan");
+    assert.equal(status, 200);
+
+    // Nothing is known, so there is nothing worth interrupting anyone for.
+    // Silence is the correct output, not a fallback.
+    assert.equal(json.notifications.length, 0,
+      `expected silence, got: ${json.notifications.map((n) => n.title).join(", ")}`);
+  } finally { token = saved; }
+});
+
+test("notifications never exceed the user's daily limit", async () => {
+  const u = await proUser("notif-limit");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Limit", ...BASE_PROFILE } });
+    await api("/notifications/prefs", { method: "PUT", body: {
+      daily_limit: 2, quiet_start: "23:00", quiet_end: "06:00" } });
+
+    // Plenty to talk about: poor recovery, low steps, protein gap.
+    await seedHistory(u.uid, { sleepMin: 450, steps: 9000 });
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 300, observed_on: today },
+      { metric: "resting_hr", value: 66, observed_on: today },
+      { metric: "steps", value: 900, observed_on: today },
+    ] } });
+
+    const { json } = await api("/notifications/plan");
+    assert.ok(json.notifications.length <= 2,
+      `daily limit of 2 exceeded: ${json.notifications.length}`);
+
+    // And anything dropped is recorded, not silently lost.
+    if (json.suppressed.length) {
+      assert.ok(json.suppressed.every((s) => s.reason));
+    }
+  } finally { token = saved; }
+});
+
+test("quiet hours suppress everything non-critical", async () => {
+  const u = await proUser("notif-quiet");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Quiet", ...BASE_PROFILE } });
+    // Quiet all day: nothing may be scheduled.
+    await api("/notifications/prefs", { method: "PUT", body: {
+      quiet_start: "00:00", quiet_end: "23:59", daily_limit: 5 } });
+
+    await seedHistory(u.uid, { sleepMin: 450 });
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 290, observed_on: today },
+      { metric: "resting_hr", value: 68, observed_on: today },
+    ] } });
+
+    const { json } = await api("/notifications/plan");
+    assert.equal(json.notifications.length, 0);
+    assert.ok(json.suppressed.some((s) => s.reason === "quiet hours"),
+      "the reason must be recorded so the decision is inspectable");
+  } finally { token = saved; }
+});
+
+test("a muted category is never sent, however important the engine thinks it is", async () => {
+  const u = await proUser("notif-mute");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Mute", ...BASE_PROFILE } });
+    await api("/notifications/prefs", { method: "PUT", body: {
+      muted_categories: ["hydration", "achievement", "recovery"], daily_limit: 5 } });
+
+    await seedHistory(u.uid);
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 280, observed_on: today },
+      { metric: "resting_hr", value: 70, observed_on: today },
+    ] } });
+
+    const { json } = await api("/notifications/plan");
+    for (const n of json.notifications) {
+      assert.ok(!["hydration", "achievement", "recovery"].includes(n.category),
+        `${n.category} was muted but sent anyway`);
+    }
+  } finally { token = saved; }
+});
+
+test("the same notification is never planned twice in a day", async () => {
+  const u = await proUser("notif-dupe");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Dupe", ...BASE_PROFILE } });
+    await seedHistory(u.uid);
+
+    const first = await api("/notifications/plan");
+    const second = await api("/notifications/plan");
+
+    // Re-planning is safe: the second call adds nothing.
+    assert.equal(second.json.notifications.length, 0);
+    if (first.json.notifications.length > 0) {
+      assert.ok(second.json.suppressed.some((s) => s.reason === "already planned today"));
+    }
+
+    const stored = await db.query(
+      `SELECT dedupe_key, COUNT(*)::int AS n FROM notification_plan
+        WHERE user_id = $1 AND planned_on = CURRENT_DATE
+        GROUP BY dedupe_key HAVING COUNT(*) > 1`, [u.uid]);
+    assert.equal(stored.rows.length, 0, "a duplicate reached the database");
+  } finally { token = saved; }
+});
+
+test("a category the user never opens stops being sent", async () => {
+  const u = await proUser("notif-ignored");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Ignored", ...BASE_PROFILE } });
+
+    // Six hydration notifications, none opened.
+    for (let hour of [15, 15, 15, 16, 16, 15]) {
+      await db.query(
+        `INSERT INTO notification_engagement (user_id, category, hour, sent, opened, dismissed)
+         VALUES ($1,'hydration',$2,1,0,1)
+         ON CONFLICT (user_id, category, hour)
+         DO UPDATE SET sent = notification_engagement.sent + 1,
+                       dismissed = notification_engagement.dismissed + 1`,
+        [u.uid, hour]);
+    }
+
+    await seedHistory(u.uid);
+    const { json } = await api("/notifications/plan");
+
+    // Continuing to send it is how people disable notifications entirely,
+    // after which there is no channel left at all.
+    assert.ok(!json.notifications.some((n) => n.category === "hydration"),
+      "a repeatedly ignored category must stop being sent");
+  } finally { token = saved; }
+});
+
+test("every notification carries a reason it could be justified by", async () => {
+  const u = await proUser("notif-why");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Why", ...BASE_PROFILE } });
+    await api("/notifications/prefs", { method: "PUT", body: { daily_limit: 5 } });
+    await seedHistory(u.uid, { sleepMin: 450 });
+
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 300, observed_on: today },
+      { metric: "resting_hr", value: 67, observed_on: today },
+    ] } });
+
+    await api("/notifications/plan");
+
+    const rows = await db.query(
+      `SELECT title, body, rationale, score FROM notification_plan
+        WHERE user_id = $1 AND planned_on = CURRENT_DATE`, [u.uid]);
+
+    for (const row of rows.rows) {
+      // If we cannot say why it was sent, it should not have been sent.
+      assert.ok(row.rationale && row.rationale.length > 5,
+        `"${row.title}" has no rationale`);
+      assert.ok(row.score > 0);
+      assert.ok(row.body.length > 10);
+    }
+  } finally { token = saved; }
+});
+
+test("engagement is recorded and shapes later decisions", async () => {
+  const u = await proUser("notif-engage");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Engage", ...BASE_PROFILE } });
+    await seedHistory(u.uid, { sleepMin: 450 });
+
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 295, observed_on: today },
+      { metric: "resting_hr", value: 68, observed_on: today },
+    ] } });
+
+    const plan = await api("/notifications/plan");
+    if (plan.json.notifications.length === 0) return;
+
+    const first = plan.json.notifications[0];
+    const opened = await api(`/notifications/${first.id}/event`, {
+      method: "POST", body: { event: "opened" } });
+    assert.equal(opened.status, 200);
+
+    const engagement = await api("/notifications/engagement");
+    const row = engagement.json.by_category.find((r) => r.category === first.category);
+    assert.ok(row);
+    assert.equal(row.opened, 1);
+
+    const status = await db.query(
+      `SELECT status FROM notification_plan WHERE id = $1`, [first.id]);
+    assert.equal(status.rows[0].status, "opened");
+  } finally { token = saved; }
+});
+
+test("recovery outranks encouragement when both apply", async () => {
+  const u = await proUser("notif-priority");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Priority", ...BASE_PROFILE } });
+    await api("/notifications/prefs", { method: "PUT", body: { daily_limit: 1 } });
+
+    // 30-day streak (an achievement) alongside genuinely poor recovery.
+    await seedHistory(u.uid, { days: 30, sleepMin: 450 });
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 280, observed_on: today },
+      { metric: "resting_hr", value: 70, observed_on: today },
+    ] } });
+
+    const { json } = await api("/notifications/plan");
+    if (json.notifications.length === 0) return;
+
+    // With room for one, a health signal beats a congratulation.
+    assert.notEqual(json.notifications[0].category, "achievement",
+      "an achievement outranked a recovery warning");
+  } finally { token = saved; }
+});
+
+test("turning notifications off means exactly zero", async () => {
+  const u = await proUser("notif-off");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Off", ...BASE_PROFILE } });
+    await api("/notifications/prefs", { method: "PUT", body: { daily_coach: false } });
+    await seedHistory(u.uid);
+
+    const { json } = await api("/notifications/plan");
+    assert.equal(json.notifications.length, 0);
+    assert.equal(json.suppressed[0].reason, "notifications off");
+  } finally { token = saved; }
+});
+
+test("notification copy never leaks malformed numbers or third person", async () => {
+  const u = await proUser("notif-copy");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Copy", ...BASE_PROFILE } });
+    await api("/notifications/prefs", { method: "PUT", body: { daily_limit: 5 } });
+
+    // Meals logged with no items — the shape that produced "averaged NaNg
+    // against 148g, short on 0 of 0 days".
+    for (let d = 14; d >= 1; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      await db.query(
+        `INSERT INTO meals (user_id, slot, input_method, logged_on)
+         VALUES ($1,'lunch','manual',$2::date)`, [u.uid, date]);
+    }
+    await seedHistory(u.uid, { sleepMin: 450, logMeals: false });
+
+    const today = new Date().toISOString().slice(0, 10);
+    await api("/observations", { method: "POST", body: { observations: [
+      { metric: "sleep_minutes", value: 290, observed_on: today },
+      { metric: "resting_hr", value: 68, observed_on: today },
+    ] } });
+
+    await api("/notifications/plan");
+
+    const rows = await db.query(
+      `SELECT title, body FROM notification_plan
+        WHERE user_id = $1 AND planned_on = CURRENT_DATE`, [u.uid]);
+
+    for (const row of rows.rows) {
+      const text = `${row.title} ${row.body}`;
+      assert.ok(!/NaN|undefined|null/.test(text), `malformed value in: "${text}"`);
+      assert.ok(!/0 of 0/.test(text), `empty statistic in: "${text}"`);
+
+      // The rationale is written for us; the body is written for the user.
+      // "You slept 34% below their usual" is what happens when they share one.
+      assert.ok(!/\btheir\b/.test(text), `third-person copy shown to the user: "${text}"`);
+    }
+  } finally { token = saved; }
+});
+
+// ─── sleep coaching: timing, not stages ───────────────────────────────────
+
+/** Writes a run of nights with controllable bedtime scatter. */
+async function seedSleep(uid, { nights = 14, bedtime = 1380, jitter = 10,
+                                duration = 450, weekendShift = 0 } = {}) {
+  const obs = [];
+  for (let d = nights; d >= 1; d--) {
+    const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+    const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+    const isWeekend = weekday === 5 || weekday === 6;
+
+    const offset = ((d * 37) % (jitter * 2)) - jitter;   // deterministic scatter
+    const start = bedtime + offset + (isWeekend ? weekendShift : 0);
+
+    obs.push({ metric: "sleep_start_min", value: ((start % 1440) + 1440) % 1440, observed_on: date });
+    obs.push({ metric: "sleep_end_min", value: ((start + duration) % 1440 + 1440) % 1440, observed_on: date });
+    obs.push({ metric: "sleep_minutes", value: duration, observed_on: date });
+  }
+  await api("/observations", { method: "POST", body: { observations: obs } });
+}
+
+test("sleep summary reports timing and regularity, never stages", async () => {
+  const u = await proUser("sleep-basic");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Sleep", ...BASE_PROFILE } });
+    await seedSleep(u.uid, { bedtime: 1380, jitter: 8, duration: 450 });
+
+    const { status, json } = await api("/sleep/summary");
+    assert.equal(status, 200);
+    assert.ok(json.nights >= 10);
+    assert.equal(json.avg_duration_hours, 7.5);
+    assert.match(json.avg_bedtime, /^\d{2}:\d{2}$/);
+
+    // A tight schedule should score well.
+    assert.ok(json.regularityScore > 70,
+      `expected a regular schedule, scored ${json.regularityScore}`);
+
+    // Consumer wearables cannot reliably tell REM from deep, so we never claim
+    // to. Anything resembling a stage breakdown is a bug.
+    const text = JSON.stringify(json).toLowerCase();
+    for (const banned of ["rem", "deep_sleep", "deepsleep", "light_sleep", "sleep_stage"]) {
+      assert.ok(!text.includes(banned), `stage data leaked: ${banned}`);
+    }
+  } finally { token = saved; }
+});
+
+test("an irregular schedule is the headline finding", async () => {
+  const u = await proUser("sleep-irregular");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Irregular", ...BASE_PROFILE } });
+    // Bedtime scattered across nearly three hours.
+    await seedSleep(u.uid, { bedtime: 1380, jitter: 85, duration: 440 });
+
+    const { json } = await api("/sleep/summary");
+    assert.ok(json.regularityScore < 60,
+      `expected a poor regularity score, got ${json.regularityScore}`);
+
+    const top = json.insights[0];
+    assert.equal(top.kind, "irregular_bedtime");
+    assert.ok(top.action, "the headline finding must be actionable");
+    // Consistency is more achievable than "sleep more" and at least as well
+    // supported, so that is what it asks for.
+    assert.match(top.action, /same half-hour|window/i);
+  } finally { token = saved; }
+});
+
+test("bedtimes either side of midnight average correctly", async () => {
+  const u = await proUser("sleep-midnight");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Midnight", ...BASE_PROFILE } });
+    // Half before midnight, half after — a naive mean gives roughly midday.
+    await seedSleep(u.uid, { bedtime: 1435, jitter: 25, duration: 430 });
+
+    const { json } = await api("/sleep/summary");
+    const hour = Number(json.avg_bedtime.slice(0, 2));
+
+    assert.ok(hour >= 22 || hour <= 2,
+      `average bedtime came out at ${json.avg_bedtime} — midnight wrap is broken`);
+    // And the scatter is small, not the ~12h a naive average would imply.
+    assert.ok(json.bedtimeVarianceMin < 60);
+  } finally { token = saved; }
+});
+
+test("a large weekend shift is named without being moralised about", async () => {
+  const u = await proUser("sleep-weekend");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Weekend", ...BASE_PROFILE } });
+    // Two hours later on Friday and Saturday nights.
+    await seedSleep(u.uid, { nights: 21, bedtime: 1350, jitter: 10,
+                             duration: 440, weekendShift: 120 });
+
+    const { json } = await api("/sleep/summary");
+    const shift = json.insights.find((i) => i.kind === "weekend_shift");
+
+    assert.ok(shift, `expected a weekend finding, got: ${json.insights.map((i) => i.kind).join(", ")}`);
+    assert.ok(json.weekendShiftMin >= 60);
+    assert.ok(shift.action);
+    // No scolding: it names the cost and offers a smaller change.
+    assert.ok(!/should not|bad habit|stop/i.test(shift.action));
+  } finally { token = saved; }
+});
+
+test("too little data produces an honest answer, not a made-up one", async () => {
+  const u = await proUser("sleep-sparse");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Sparse", ...BASE_PROFILE } });
+    await seedSleep(u.uid, { nights: 2 });
+
+    const { json } = await api("/sleep/summary");
+    assert.equal(json.insights.length, 1);
+    assert.equal(json.insights[0].kind, "insufficient_data");
+    assert.equal(json.insights[0].confidence, "low");
+
+    // With two nights there is no pattern to report, and claiming one would be
+    // worse than silence.
+    assert.equal(json.regularityScore, null);
+  } finally { token = saved; }
+});
+
+test("no sleep data at all offers to connect Health", async () => {
+  const u = await proUser("sleep-none");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "None", ...BASE_PROFILE } });
+
+    const { json } = await api("/sleep/summary");
+    assert.equal(json.nights, 0);
+    assert.equal(json.avgDurationMin, null);
+    assert.match(json.insights[0].action, /Apple Health/i);
+  } finally { token = saved; }
+});
+
+test("a late-eating association is only claimed with enough nights either side", async () => {
+  const u = await proUser("sleep-meals");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Meals", ...BASE_PROFILE } });
+    await seedSleep(u.uid, { nights: 20, bedtime: 1380, jitter: 12, duration: 450 });
+
+    // Only two late nights — below the threshold for saying anything.
+    for (let d = 1; d <= 2; d++) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      await db.query(
+        `INSERT INTO meals (user_id, slot, input_method, logged_on, logged_at)
+         VALUES ($1,'dinner','manual',$2::date, ($2 || ' 22:00')::timestamptz)`,
+        [u.uid, date]);
+    }
+
+    const { json } = await api("/sleep/summary");
+    assert.ok(!json.insights.some((i) => i.kind === "late_eating"),
+      "an association was claimed from two nights of data");
+  } finally { token = saved; }
+});
+
+test("a sleep finding reaches the daily briefing", async () => {
+  const u = await proUser("sleep-briefing");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Brief", ...BASE_PROFILE } });
+    await seedSleep(u.uid, { nights: 18, bedtime: 1380, jitter: 90, duration: 435 });
+
+    const { json } = await api("/coach/briefing");
+    const sleep = json.actions.find((a) => a.domain === "sleep");
+
+    if (sleep) {
+      assert.ok(sleep.reason.length > 10);
+      assert.ok(sleep.triggeredBy.includes("sleep"));
+      // The reason cites the actual scatter, not a generic claim.
+      assert.match(sleep.reason, /\d+ minutes|swings|below/i);
+    }
+  } finally { token = saved; }
+});
+
+test("weekend shift is direction-correct across midnight", async () => {
+  const { sleepSummary } = await import("../dist/services/sleep.js");
+  const u = await proUser("sleep-wrap");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Wrap", ...BASE_PROFILE } });
+
+    // Weekdays 22:30, weekends 00:30 — a real +2h shift that a naive
+    // subtraction reports as −22h.
+    const obs = [];
+    for (let d = 21; d >= 1; d--) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+      const isWeekend = weekday === 5 || weekday === 6;
+      const start = isWeekend ? 30 : 1350;
+
+      obs.push({ metric: "sleep_start_min", value: start, observed_on: date });
+      obs.push({ metric: "sleep_end_min", value: (start + 440) % 1440, observed_on: date });
+      obs.push({ metric: "sleep_minutes", value: 440, observed_on: date });
+    }
+    await api("/observations", { method: "POST", body: { observations: obs } });
+
+    const summary = await sleepSummary(u.uid, "UTC");
+    assert.ok(summary.weekendShiftMin > 0, "a later weekend bedtime must be positive");
+    assert.ok(Math.abs(summary.weekendShiftMin - 120) < 15,
+      `expected roughly +120 minutes, got ${summary.weekendShiftMin}`);
+  } finally { token = saved; }
+});
+
+test("the regularity score matches what counts as irregular in practice", async () => {
+  const { sleepSummary } = await import("../dist/services/sleep.js");
+
+  // A standard deviation near 50 minutes means bedtime moves by well over an
+  // hour across a week. The first calibration scored that 77/100 — comfortably
+  // "fine" — which would have told people their sleep was steady when it
+  // plainly was not.
+  const cases = [
+    { jitter: 8,  expect: "steady" },
+    { jitter: 85, expect: "irregular" },
+  ];
+
+  for (const { jitter, expect } of cases) {
+    const u = await proUser(`sleep-cal-${jitter}`);
+    const saved = token; token = u.token;
+    try {
+      await api("/profile", { method: "POST", body: { name: "Cal", ...BASE_PROFILE } });
+      await seedSleep(u.uid, { nights: 16, bedtime: 1380, jitter, duration: 440 });
+
+      const summary = await sleepSummary(u.uid, "UTC");
+      if (expect === "steady") {
+        assert.ok(summary.regularityScore >= 80,
+          `${jitter}min jitter scored ${summary.regularityScore}, expected steady`);
+      } else {
+        assert.ok(summary.regularityScore < 60,
+          `${jitter}min jitter scored ${summary.regularityScore}, expected irregular`);
+      }
+    } finally { token = saved; }
+  }
 });
