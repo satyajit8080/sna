@@ -5,6 +5,7 @@ import { recall, learnRoutines, learnFromOutcomes, type Memory } from "./brain.j
 import { dailyBalance } from "./budget.js";
 import { activityFor } from "./activity.js";
 import * as safety from "./safety.js";
+import { topSleepInsight } from "./sleep.js";
 
 /**
  * The coach orchestrator.
@@ -56,16 +57,20 @@ type Signals = {
   workoutsThisWeek: number;
   trainingDays: number;
   lastWorkoutDaysAgo: number | null;
+  /** The single sleep finding worth acting on, if there is one. */
+  sleepInsight: Awaited<ReturnType<typeof topSleepInsight>>;
   /** Local hour, so a routine deviation can be judged against the clock. */
   hourOfDay: number | null;
   isWeekend: boolean;
+  /** 22:00–04:59. Past the point where training or a big meal helps. */
+  isLateNight: boolean;
 };
 
 async function gatherSignals(userId: string, tz: string): Promise<Signals> {
   const today = localDate(tz);
 
-  const [state, memories, targets, consumed, water, activity, workouts, fitness] =
-    await Promise.all([
+  const [state, memories, targets, consumed, water, activity, workouts, fitness,
+         sleepInsight] = await Promise.all([
       buildHealthState(userId, today),
       recall(userId, { limit: 12 }),
       one<any>(`SELECT calories, protein_g, water_ml FROM nutrition_targets WHERE user_id = $1`,
@@ -85,7 +90,8 @@ async function gatherSignals(userId: string, tz: string): Promise<Signals> {
            FROM workouts
           WHERE user_id = $1 AND performed_on > CURRENT_DATE - 7`, [userId]),
       one<any>(`SELECT training_days FROM fitness_profile WHERE user_id = $1`, [userId]),
-    ]);
+      topSleepInsight(userId, tz),
+    ]) as any;
 
   const balance = dailyBalance(targets, consumed, activity);
 
@@ -99,6 +105,7 @@ async function gatherSignals(userId: string, tz: string): Promise<Signals> {
     memories,
     hourOfDay: Number.isFinite(localHour) ? localHour : null,
     isWeekend: weekday === 0 || weekday === 6,
+    isLateNight: localHour >= 22 || localHour < 5,
     remainingKcal: targets ? balance.remaining.calories : null,
     remainingProtein: targets ? balance.remaining.protein_g : null,
     targetProtein: targets?.protein_g ?? null,
@@ -110,6 +117,7 @@ async function gatherSignals(userId: string, tz: string): Promise<Signals> {
     workoutsThisWeek: workouts?.this_week ?? 0,
     trainingDays: fitness?.training_days ?? 3,
     lastWorkoutDaysAgo: workouts?.days_since ?? null,
+    sleepInsight,
   };
 }
 
@@ -196,14 +204,17 @@ function generateCandidates(s: Signals): CandidateAction[] {
   }
 
   // ── sleep ───────────────────────────────────────────────────────────────
-  const regularity = s.state.sleepRegularity;
-  if (regularity.regularityScore != null && regularity.regularityScore < 60
-      && regularity.nightsObserved >= 7) {
+  // From the sleep engine, which reasons about timing and regularity rather
+  // than duration alone — and never about stages.
+  if (s.sleepInsight?.action) {
     add({
-      domain: "sleep", impact: 85, confidence: 0.8,
-      action: "Aim to be in bed within the same half-hour tonight",
-      reason: `Your bedtime has been swinging by about ${regularity.bedtimeVarianceMin} minutes. Consistency tends to matter more than total hours.`,
-      triggeredBy: ["irregular_bedtime"],
+      domain: "sleep",
+      impact: s.sleepInsight.weight,
+      confidence: s.sleepInsight.confidence === "high" ? 0.9
+                : s.sleepInsight.confidence === "medium" ? 0.7 : 0.5,
+      action: s.sleepInsight.action,
+      reason: s.sleepInsight.finding,
+      triggeredBy: ["sleep", s.sleepInsight.kind],
     });
   }
 
@@ -229,7 +240,11 @@ function generateCandidates(s: Signals): CandidateAction[] {
       triggeredBy: ["recovery_mode", ...s.state.modeRationale],
     });
   } else if (s.workoutsThisWeek < s.trainingDays
-             && (s.lastWorkoutDaysAgo == null || s.lastWorkoutDaysAgo >= 2)) {
+             && (s.lastWorkoutDaysAgo == null || s.lastWorkoutDaysAgo >= 2)
+             // Not at midnight. Suggesting a session someone cannot sensibly
+             // do tonight is noise, and it makes the coach look like it isn't
+             // paying attention.
+             && !s.isLateNight) {
     add({
       domain: "fitness", impact: mode === "growth" ? 80 : 65,
       confidence: 0.8,
@@ -244,7 +259,7 @@ function generateCandidates(s: Signals): CandidateAction[] {
   // ── activity ────────────────────────────────────────────────────────────
   const steps = s.state.steps;
   if (steps.confidence !== "none" && steps.baseline != null && s.steps > 0) {
-    if (s.steps < steps.baseline * 0.5) {
+    if (s.steps < steps.baseline * 0.5 && !s.isLateNight) {
       add({
         domain: "activity", impact: 55, confidence: 0.75,
         action: "Add a short walk this evening",
@@ -309,12 +324,27 @@ function generateCandidates(s: Signals): CandidateAction[] {
   }
 
   // ── hydration ───────────────────────────────────────────────────────────
-  if (s.waterTargetMl && s.waterMl < s.waterTargetMl * 0.4 && s.mealsLogged >= 2) {
+  if (s.waterTargetMl && s.waterMl < s.waterTargetMl * 0.4
+      && s.mealsLogged >= 2 && !s.isLateNight) {
     add({
       domain: "hydration", impact: 35, confidence: 0.7,
       action: "Have a glass of water",
       reason: `${(s.waterMl / 1000).toFixed(1)}L logged against a ${(s.waterTargetMl / 1000).toFixed(1)}L target.`,
       triggeredBy: ["low_hydration"],
+    });
+  }
+
+  // Late at night the only genuinely useful thing is going to bed. Everything
+  // above is about today, which is effectively over.
+  if (s.isLateNight) {
+    add({
+      domain: "sleep", impact: 95, confidence: 0.9,
+      action: "Wrap up and get to bed",
+      reason: s.state.sleepRegularity.regularityScore != null
+              && s.state.sleepRegularity.regularityScore < 60
+        ? "Your bedtime moves around a lot, and that's the thing most worth steadying."
+        : "It's late — today's already done, and sleep is what tomorrow runs on.",
+      triggeredBy: ["late_night"],
     });
   }
 
@@ -412,7 +442,12 @@ export async function dailyBriefing(
     };
   }
 
-  const chosen = rank(generateCandidates(signals), signals.state.mode);
+  const candidates = generateCandidates(signals);
+  // One thing at midnight. A list of priorities for a day that is over reads
+  // as an app that has not noticed the time.
+  const chosen = signals.isLateNight
+    ? rank(candidates, signals.state.mode).slice(0, 1)
+    : rank(candidates, signals.state.mode);
 
   // Persist so the outcome can be measured later. A recommendation nobody
   // recorded is a recommendation nobody can learn from.
