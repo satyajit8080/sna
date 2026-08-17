@@ -62,6 +62,8 @@ final class SubscriptionManager {
 
     @discardableResult
     func purchase(_ product: Product) async -> Bool {
+        // Cleared up front: a cancellation must not surface last attempt's error.
+        purchaseError = nil
         isPurchasing = true
         defer { isPurchasing = false }
 
@@ -117,6 +119,15 @@ final class SubscriptionManager {
         guard let sub = product.subscription else { return product.displayPrice }
         let unit = sub.subscriptionPeriod.unit == .year ? "year" : "month"
         return "\(product.displayPrice) / \(unit)"
+    }
+
+    /// Yearly price expressed per month, in the store's own currency and
+    /// formatting. Built from `priceFormatStyle` so it is correct in every
+    /// locale — dividing and prepending "$" is wrong nearly everywhere.
+    func monthlyEquivalent(for product: Product) -> String? {
+        guard product.id == SnapCalProduct.yearly.rawValue else { return nil }
+        let perMonth = product.price / Decimal(12)
+        return perMonth.formatted(product.priceFormatStyle)
     }
 
     /// "Save 52%" badge, computed from live App Store prices rather than hardcoded.

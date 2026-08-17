@@ -85,8 +85,17 @@ export function assertProviderConfigured() {
     throw new Error("AI_PROVIDER=mock is not allowed in production: it returns fabricated foods");
   }
 
+  // DEV_UNLOCK_PREMIUM in production is a misconfiguration, not a reason to
+  // refuse to start. Throwing here took the whole service down over an
+  // optional testing flag — the flag is already inert in production (see
+  // `premiumUnlocked`), so the correct response is to say so loudly and
+  // carry on serving.
   if (cfg.DEV_UNLOCK_PREMIUM && cfg.NODE_ENV === "production") {
-    throw new Error("DEV_UNLOCK_PREMIUM cannot be enabled in production");
+    console.error(
+      "[config] DEV_UNLOCK_PREMIUM is set but NODE_ENV=production — the flag is " +
+      "IGNORED and every user is on their real plan. Remove the variable, or set " +
+      "NODE_ENV=development if this is a test environment."
+    );
   }
 
   if (cfg.AI_PROVIDER === "openai" && !cfg.OPENAI_API_KEY) {

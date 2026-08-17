@@ -4,6 +4,7 @@ import { q, one, tx } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { localDate, daysAgo, nextLocalMidnight } from "../util/dates.js";
 import { activityFor } from "../services/activity.js";
+import { dailyBalance } from "../services/budget.js";
 
 const Item = z.object({
   food_id: z.string().uuid().nullable().optional(),
@@ -159,13 +160,9 @@ export default async function routes(app: FastifyInstance) {
       activityFor(req.userId, req.tz, day),
     ]);
 
-    const consumed = totals ?? { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
-    const t: any = targets ?? { calories: 2000, protein_g: 120, carbs_g: 220, fat_g: 60, water_ml: 2500 };
-
-    // Movement raises the day's allowance. `credited_kcal` is already
-    // discounted by the user's activity_credit setting, so adding it here
-    // cannot double-count what the target assumed.
-    const budget = t.calories + activity.credited_kcal;
+    // Single source of truth — see services/budget.ts. The coach and planner
+    // call the same function, so the numbers can never disagree.
+    const balance = dailyBalance(targets, totals, activity);
 
     return {
       date: day,
@@ -173,20 +170,11 @@ export default async function routes(app: FastifyInstance) {
       // When this day rolls over, so the client can schedule its own refresh
       // instead of polling.
       resets_at: nextLocalMidnight(req.tz),
-      targets: t,
-      consumed,
+      targets: balance.targets,
+      consumed: balance.consumed,
       activity,
-      budget: {
-        base_calories: t.calories,
-        activity_bonus: activity.credited_kcal,
-        total_calories: budget,
-      },
-      remaining: {
-        calories: budget - (consumed.calories ?? 0),
-        protein_g: t.protein_g - (consumed.protein_g ?? 0),
-        carbs_g: t.carbs_g - (consumed.carbs_g ?? 0),
-        fat_g: t.fat_g - (consumed.fat_g ?? 0),
-      },
+      budget: balance.budget,
+      remaining: balance.remaining,
       water_ml: water?.ml ?? 0,
       current_weight_kg: weight?.weight_kg ?? null,
       streak_days: streak?.n ?? 0,
@@ -223,7 +211,20 @@ export default async function routes(app: FastifyInstance) {
   app.post("/water", { preHandler: requireAuth }, async (req) => {
     const b = z.object({ ml: z.number().int().min(-2000).max(2000) }).parse(req.body);
     const day = localDate(req.tz);
-    await q(`INSERT INTO water_logs (user_id, logged_on, ml) VALUES ($1,$2,$3)`, [req.userId, day, b.ml]);
+
+    // Clamp the delta so the running total can never go below zero. Undoing a
+    // glass is a normal action, but "minus 1000 from 250" is a client bug or a
+    // double tap — clip it rather than storing a negative day.
+    const current = await one<{ ml: number }>(
+      `SELECT COALESCE(SUM(ml),0)::int AS ml FROM water_logs
+        WHERE user_id = $1 AND logged_on = $2`, [req.userId, day]);
+
+    const delta = Math.max(b.ml, -(current?.ml ?? 0));
+    if (delta !== 0) {
+      await q(`INSERT INTO water_logs (user_id, logged_on, ml) VALUES ($1,$2,$3)`,
+        [req.userId, day, delta]);
+    }
+
     return one(`SELECT COALESCE(SUM(ml),0)::int AS ml FROM water_logs WHERE user_id = $1 AND logged_on = $2`,
       [req.userId, day]);
   });

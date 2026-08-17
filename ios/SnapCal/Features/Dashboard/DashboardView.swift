@@ -19,6 +19,8 @@ struct DashboardView: View {
     @State private var showDiary = false
     @State private var showProgress = false
     @State private var showSettings = false
+    @State private var briefing: DailyBriefing = .empty
+    @State private var briefingLoaded = false
 
     private var dash: Dashboard { app.dashboard }
 
@@ -28,6 +30,8 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.l) {
                         greeting
                         if dash.streakDays > 0 { streakCard }
+                        prioritySection
+
                         sectionHeader("Today Overview", action: nil)
                         overviewCard
                         metricGrid
@@ -67,7 +71,11 @@ struct DashboardView: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, Theme.Space.s)
             }
-            .refreshable { await app.refresh() }
+            .refreshable {
+                await app.refresh()
+                await loadBriefing()
+            }
+            .task { await loadBriefing() }
             .background(Theme.bg)
             .navigationBarHidden(true)
             .fullScreenCover(item: $route) { LogFlowView(route: $0) }
@@ -163,6 +171,57 @@ struct DashboardView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
                 .stroke(Theme.streak.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    /// Today's 1–3 priorities. The hero of this screen.
+    @ViewBuilder private var prioritySection: some View {
+        if !briefing.headline.isEmpty || !briefing.actions.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                if !briefing.headline.isEmpty {
+                    Text(briefing.headline)
+                        .font(.jakarta(14, .medium))
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ForEach(briefing.actions) { action in
+                    PriorityCard(action: action) {
+                        // A completed action changes the picture, so re-ask
+                        // rather than leaving a stale list on screen.
+                        Task { await loadBriefing() }
+                    }
+                }
+
+                // Health data missing entirely — offer to connect rather than
+                // silently coaching on half the picture.
+                if briefing.missing.count >= 3, health.needsPermission {
+                    Button {
+                        Haptics.tap()
+                        connectHealth()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "heart.text.square")
+                            Text("Connect Apple Health for sleep and activity coaching")
+                                .font(.jakarta(12, .semibold))
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(Theme.accent)
+                        .padding(12)
+                        .card(radius: Theme.Radius.row, padding: 0)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func loadBriefing() async {
+        guard !app.isGuest else { return }
+        if let fresh = try? await APIClient.shared.briefing() {
+            withAnimation(Theme.snap) { briefing = fresh }
+        }
+        briefingLoaded = true
     }
 
     private func sectionHeader(_ title: String,

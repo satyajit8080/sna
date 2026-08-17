@@ -152,15 +152,6 @@ struct EntitlementTests {
         #expect(PremiumRequired(feature: "something_new", reason: "limit_reached", usage: nil).context == .foodScan)
     }
 
-    @Test("every paywall context has copy and benefits")
-    func paywallCopy() {
-        for context in [PaywallContext.foodScan, .coach, .mealPlan, .report, .general] {
-            #expect(!context.headline.isEmpty)
-            #expect(!context.subhead.isEmpty)
-            #expect(context.benefits.count >= 4)
-        }
-    }
-
     @Test("entitlements decode the backend payload")
     func decodeEntitlements() throws {
         let json = """
@@ -537,5 +528,386 @@ struct UnitNormalisationTests {
         var i = item(unit: "slice", quantity: 2, grams: 60)
         i.setQuantity(3)
         #expect(i.grams == 90, "3 slices at 30g each")
+    }
+}
+
+/// Briefing and Brain decoding. These shapes come straight from the backend,
+/// and a mismatch shows up as an empty screen rather than an error.
+struct BriefingTests {
+
+    @Test("briefing decodes with actions and missing metrics")
+    func decodeBriefing() throws {
+        let json = """
+        {"date":"2026-08-16","mode":"recovery",
+         "headline":"Lighter day. Your body's asking for a bit of slack.",
+         "actions":[{"id":"a1","domain":"recovery",
+           "action":"Take today easy","reason":"You slept 24% below your usual.",
+           "confidence":0.85,"triggeredBy":["recovery_mode"],"score":76}],
+         "missing":["hrv","weight"],"generated":true}
+        """.data(using: .utf8)!
+
+        let b = try JSONDecoder().decode(DailyBriefing.self, from: json)
+        #expect(b.mode == "recovery")
+        #expect(b.actions.count == 1)
+        #expect(b.missing == ["hrv", "weight"])
+
+        // Every action must arrive with its reason — a card without one is an
+        // app telling someone what to do with no justification.
+        #expect(!b.actions[0].reason.isEmpty)
+        #expect(b.actions[0].icon == "heart.text.square")
+    }
+
+    @Test("an empty briefing is valid, not an error")
+    func emptyBriefing() throws {
+        let json = """
+        {"date":"2026-08-16","mode":"maintenance","headline":"Fresh start.",
+         "actions":[],"missing":[],"generated":true}
+        """.data(using: .utf8)!
+        let b = try JSONDecoder().decode(DailyBriefing.self, from: json)
+        #expect(b.actions.isEmpty)
+    }
+
+    @Test("every domain maps to an icon and a colour")
+    func domainMapping() {
+        for domain in ["nutrition", "fitness", "sleep", "recovery",
+                       "hydration", "activity", "habit", "something_new"] {
+            let a = PriorityAction(id: "x", domain: domain, action: "a",
+                                   reason: "r", confidence: 1)
+            // An unknown domain must still render rather than crash — the
+            // backend can add one without an app update.
+            #expect(!a.icon.isEmpty)
+        }
+    }
+}
+
+struct BrainMemoryTests {
+
+    @Test("memories group by layer with human-readable labels")
+    func decodeMemories() throws {
+        let json = """
+        {"layers":{
+          "routine":[{"id":"m1","content":"usually eats breakfast around 7am",
+                      "confidence":0.9,"evidence_count":6,"user_edited":false}],
+          "procedural":[{"id":"m2","content":"sleep changes measurably help",
+                         "confidence":0.8,"evidence_count":4,"user_edited":false}]},
+         "labels":{"routine":"Your usual patterns","procedural":"What works for you"},
+         "total":2}
+        """.data(using: .utf8)!
+
+        let m = try JSONDecoder().decode(BrainMemories.self, from: json)
+        #expect(m.total == 2)
+
+        let ordered = m.orderedLayers
+        // Routines first: they're the most recognisable, which is what makes
+        // the screen feel accurate rather than unsettling.
+        #expect(ordered.first?.label == "Your usual patterns")
+        // Never show raw layer names to a user.
+        #expect(!ordered.contains { $0.label == "routine" })
+    }
+
+    @Test("an empty brain has nothing to show, and that is fine")
+    func emptyBrain() throws {
+        let json = """
+        {"layers":{},"labels":{"routine":"Your usual patterns"},"total":0}
+        """.data(using: .utf8)!
+        let m = try JSONDecoder().decode(BrainMemories.self, from: json)
+        #expect(m.total == 0)
+        #expect(m.orderedLayers.isEmpty)
+    }
+
+    @Test("a user-corrected memory is marked as theirs")
+    func userEdited() throws {
+        let json = """
+        {"id":"m1","content":"hates running","confidence":1.0,
+         "evidence_count":1,"user_edited":true}
+        """.data(using: .utf8)!
+        let m = try JSONDecoder().decode(BrainMemory.self, from: json)
+        #expect(m.userEdited)
+        #expect(m.confidence == 1.0)
+    }
+}
+
+/// Structured workouts. The plan is data the user works through, so decoding
+/// has to survive the fields the backend legitimately leaves null.
+struct WorkoutPlanTests {
+
+    private let json = """
+    {"id":"p1","workout_title":"Lower Body Strength","goal":"lose","focus":"lower",
+     "duration_minutes":45,"warmup":["5 min easy cardio"],
+     "exercises":[
+       {"exercise_name":"Leg Press","sets":3,"reps":"8-12","rest_seconds":90,
+        "suggested_weight_kg":42.5,
+        "progression_note":"Up from 40kg — you hit the top of the range twice.",
+        "instructions":"Drive through mid-foot.","targets":"quads, glutes"},
+       {"exercise_name":"Plank","sets":3,"reps":"30-45 sec","rest_seconds":45,
+        "suggested_weight_kg":null,
+        "progression_note":"No history for this one — start light.",
+        "instructions":"Ribs down.","targets":"core"}],
+     "optional_cardio":"15 min walking","cooldown":["Hamstring stretch"],
+     "coach_note":"Straightforward session."}
+    """.data(using: .utf8)!
+
+    @Test("a plan decodes with weights, ranges and rest")
+    func decodePlan() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        #expect(plan.exercises.count == 2)
+        #expect(plan.durationMinutes == 45)
+        #expect(plan.exercises[0].suggestedWeightKg == 42.5)
+        #expect(plan.exercises[0].restSeconds == 90)
+    }
+
+    @Test("a missing weight is null, never zero, and is explained")
+    func absentWeight() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        let plank = plan.exercises[1]
+
+        // Zero kilos and "we don't know yet" are different things, and showing
+        // 0 would look like an instruction to lift nothing.
+        #expect(plank.suggestedWeightKg == nil)
+        #expect(plank.progressionNote?.isEmpty == false)
+    }
+
+    @Test("reps stay a range rather than a false single number")
+    func repRanges() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        #expect(plan.exercises[0].reps == "8-12")
+        #expect(plan.exercises[1].reps == "30-45 sec")
+    }
+
+    @Test("a recovery session is recognisable as one")
+    func recoveryDetection() throws {
+        let plan = try JSONDecoder().decode(WorkoutPlan.self, from: json)
+        #expect(!plan.isRecovery)
+
+        let recovery = """
+        {"id":null,"workout_title":"Recovery","goal":"lose","focus":"mobility",
+         "duration_minutes":20,"warmup":[],"exercises":[],
+         "optional_cardio":null,"cooldown":[],"coach_note":"Take it easy."}
+        """.data(using: .utf8)!
+        #expect(try JSONDecoder().decode(WorkoutPlan.self, from: recovery).isRecovery)
+    }
+}
+
+struct FitnessOnboardingTests {
+
+    @Test("a question decodes with its options and progress")
+    func decodeQuestion() throws {
+        let json = """
+        {"completed":false,"answered":2,"total":8,
+         "welcome":"Good to meet you, Satya.",
+         "next":{"field":"training_location","question":"Where will you train?",
+                 "options":[{"value":"gym","label":"Gym"},
+                            {"value":"home","label":"Home"}],
+                 "multiSelect":false,"step":3,"total":8,"skippable":false}}
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(OnboardingState.self, from: json)
+        #expect(state.completed == false)
+        #expect(state.next?.options.count == 2)
+        #expect(state.next?.step == 3)
+        #expect(state.next?.multiSelect == false)
+    }
+
+    @Test("a completed state has no question and no welcome")
+    func decodeCompleted() throws {
+        let json = """
+        {"completed":true,"answered":8,"total":8,"next":null,"welcome":null}
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(OnboardingState.self, from: json)
+        #expect(state.completed)
+        #expect(state.next == nil)
+        // A returning user must not be greeted as though it were their first day.
+        #expect(state.welcome == nil)
+    }
+
+    @Test("a multi-select question is flagged as one")
+    func multiSelect() throws {
+        let json = """
+        {"completed":false,"answered":3,"total":8,"welcome":null,
+         "next":{"field":"equipment_list","question":"What do you have access to?",
+                 "options":[{"value":"dumbbells","label":"Dumbbells"}],
+                 "multiSelect":true,"step":4,"total":8,"skippable":false}}
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(OnboardingState.self, from: json)
+        #expect(state.next?.multiSelect == true)
+    }
+}
+
+/// Paywall content. Every context needs copy that speaks to what the person
+/// just tried to do — a generic pitch after a specific action reads as a toll
+/// booth rather than an offer.
+struct PaywallContentTests {
+
+    @Test("every context has a headline, subhead and benefits")
+    func allContextsPopulated() {
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            #expect(!context.headline.isEmpty)
+            #expect(!context.subhead.isEmpty)
+            #expect(!context.benefits.isEmpty, "\(context.rawValue) has no benefits")
+        }
+    }
+
+    @Test("benefits stay at three or fewer")
+    func benefitsAreShort() {
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            // A long tick list gets skimmed; three specific claims get read.
+            #expect(context.benefits.count <= 3,
+                    "\(context.rawValue) lists \(context.benefits.count) benefits")
+        }
+    }
+
+    @Test("every benefit carries a detail, not just a title")
+    func benefitsAreSpecific() {
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            for benefit in context.benefits {
+                #expect(!benefit.icon.isEmpty)
+                // The detail is what makes a claim credible.
+                #expect(benefit.detail.count > 20,
+                        "\(benefit.title) has no substantive detail")
+            }
+        }
+    }
+
+    @Test("copy makes no promise the product cannot keep")
+    func noOverclaiming() {
+        let banned = ["guarantee", "guaranteed", "cure", "medical advice",
+                      "diagnos", "lose weight fast", "instantly", "100%"]
+
+        for context in [PaywallContext.foodScan, .coach, .mealPlan,
+                        .workout, .brain, .report, .general] {
+            let text = ([context.headline, context.subhead]
+                        + context.benefits.flatMap { [$0.title, $0.detail] })
+                .joined(separator: " ")
+                .lowercased()
+
+            for phrase in banned {
+                #expect(!text.contains(phrase),
+                        "\(context.rawValue) promises '\(phrase)'")
+            }
+        }
+    }
+
+    @Test("context-specific copy differs from the generic pitch")
+    func contextsAreDistinct() {
+        let general = PaywallContext.general.headline
+        for context in [PaywallContext.foodScan, .coach, .mealPlan, .workout] {
+            #expect(context.headline != general,
+                    "\(context.rawValue) reuses the generic headline")
+        }
+    }
+}
+
+/// Onboarding progress. The counter must always come from the API.
+struct HealthOnboardingTests {
+
+    private func plan(_ screens: Int, total: Int) -> HealthOnboardingPlan {
+        let json = """
+        {"screens": [\(
+            (0..<screens).map { i in
+                """
+                {"id":"s\(i)","title":"Screen \(i)","subtitle":null,"skippable":true,
+                 "fields":[{"key":"f\(i)","label":"L","type":"chips","options":null,
+                            "placeholder":null,"optional":false,"hint":null,
+                            "min":null,"max":null,"unit":null}]}
+                """
+            }.joined(separator: ",")
+        )],
+         "currentIndex":0,"totalScreens":\(total),"completed":false}
+        """.data(using: .utf8)!
+        return try! JSONDecoder().decode(HealthOnboardingPlan.self, from: json)
+    }
+
+    @Test("the screen count comes from the API, never a constant")
+    func totalFromAPI() {
+        // Someone who has connected Health sees fewer screens; a bar that says
+        // "of 8" and ends at 5 looks broken.
+        #expect(plan(5, total: 5).totalScreens == 5)
+        #expect(plan(8, total: 8).totalScreens == 8)
+        #expect(plan(3, total: 3).totalScreens == 3)
+    }
+
+    @Test("progress never exceeds the total")
+    func progressStaysInRange() {
+        for total in [3, 5, 8] {
+            let p = plan(total, total: total)
+            for index in 0..<p.screens.count {
+                // "6 of 5" is the bug this exists to prevent.
+                #expect(index + 1 <= p.totalScreens,
+                        "screen \(index + 1) of \(p.totalScreens) is out of range")
+            }
+        }
+    }
+
+    @Test("an empty plan means there is nothing left to ask")
+    func emptyPlan() throws {
+        let json = """
+        {"screens":[],"currentIndex":0,"totalScreens":0,"completed":true}
+        """.data(using: .utf8)!
+        let p = try JSONDecoder().decode(HealthOnboardingPlan.self, from: json)
+
+        // A returning user must land on Home, not an empty questionnaire.
+        #expect(p.completed)
+        #expect(p.screens.isEmpty)
+    }
+
+    @Test("optional fields never block, required ones do")
+    func fieldRequirements() throws {
+        let json = """
+        {"key":"start_weight_kg","label":"Current weight","type":"number",
+         "options":null,"placeholder":"Add your weight","optional":true,
+         "hint":"Optional","min":30,"max":300,"unit":"kg"}
+        """.data(using: .utf8)!
+        let weight = try JSONDecoder().decode(OnboardingField.self, from: json)
+
+        // Weight is the field most likely to lose someone mid-onboarding.
+        #expect(weight.isOptional)
+        #expect(weight.placeholder == "Add your weight")
+
+        let required = """
+        {"key":"name","label":"Name","type":"text","options":null,
+         "placeholder":null,"optional":null,"hint":null,
+         "min":null,"max":null,"unit":null}
+        """.data(using: .utf8)!
+        #expect(!(try JSONDecoder().decode(OnboardingField.self, from: required).isOptional))
+    }
+}
+
+struct CoachWelcomeTests {
+
+    @Test("the greeting quotes what onboarding already captured")
+    func decodeWelcome() throws {
+        let json = """
+        {"greeting":"Hi Olivia 👋\\n\\nI've picked up a few things already.",
+         "knows":["you're usually asleep around 11pm and up by 6:30am"],
+         "topics":[{"id":"sleep","label":"My sleep 😴",
+                    "opener":"I know you're usually down around 11pm. Do you wake rested?"}],
+         "seen":false}
+        """.data(using: .utf8)!
+
+        let welcome = try JSONDecoder().decode(CoachWelcome.self, from: json)
+        #expect(welcome.seen == false)
+        #expect(welcome.greeting != nil)
+
+        // The opener must build on what is known rather than ask it again.
+        #expect(welcome.topics[0].opener.contains("11pm"))
+        #expect(!welcome.topics[0].opener.hasPrefix("What time"))
+    }
+
+    @Test("a returning user gets no greeting")
+    func alreadyMet() throws {
+        let json = """
+        {"greeting":null,"knows":[],"topics":[],"seen":true}
+        """.data(using: .utf8)!
+        let welcome = try JSONDecoder().decode(CoachWelcome.self, from: json)
+
+        // Replaying an introduction to someone who has already talked to the
+        // coach undoes the personalization it just demonstrated.
+        #expect(welcome.seen)
+        #expect(welcome.greeting == nil)
     }
 }

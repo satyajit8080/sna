@@ -9,6 +9,14 @@ struct CoachView: View {
     @State private var draft = ""
     @State private var thinking = false
     @State private var suggestion: MealSuggestion?
+    /// Intent of the most recent reply — decides which card, if any, follows.
+    @State private var lastIntent: String?
+    @State private var workoutPlan: WorkoutPlan?
+    @State private var generatingWorkout = false
+    @State private var showFitnessOnboarding = false
+    @State private var needsFitnessProfile = false
+    @State private var welcome: CoachWelcome?
+    @State private var welcomeTopic: String?
     @State private var error: String?
     @FocusState private var focused: Bool
 
@@ -36,10 +44,31 @@ struct CoachView: View {
                     }
                 }
             }
+            .sheet(item: $workoutPlan) { plan in
+                WorkoutSessionView(plan: plan)
+            }
+            .sheet(isPresented: $showFitnessOnboarding) {
+                FitnessOnboardingView {
+                    needsFitnessProfile = false
+                }
+            }
             .task {
                 Analytics.track(.coachOpened)
                 guard !app.isGuest else { return }
                 messages = (try? await APIClient.shared.coachHistory()) ?? []
+
+                // The first conversation is different: it opens from what
+                // onboarding already captured rather than a blank prompt.
+                if messages.isEmpty {
+                    welcome = try? await APIClient.shared.coachWelcome()
+                }
+
+                // Training advice without knowing their equipment or experience
+                // is guesswork, so offer to fix that once rather than caveating
+                // every answer.
+                if let onboarding = try? await APIClient.shared.onboardingState() {
+                    needsFitnessProfile = !onboarding.completed
+                }
                 suggestions = (try? await APIClient.shared.coachSuggestions()) ?? []
             }
             .alert("Coach unavailable", isPresented: .constant(error != nil)) {
@@ -119,6 +148,140 @@ struct CoachView: View {
                     // Only ever set from a reply that actually recommended
                     // something — never fetched on open, never on a general
                     // question.
+                    // The chat reply answers the question; the card is the
+                    // thing you can actually work through and log.
+                    // Shown once. The greeting is nil for anyone who has
+                    // already talked to the coach.
+                    if let welcome, let greeting = welcome.greeting, messages.isEmpty {
+                        VStack(alignment: .leading, spacing: Theme.Space.m) {
+                            Text(greeting)
+                                .font(.body_)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(15)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .card(radius: Theme.Radius.card, padding: 0)
+
+                            FlowChips(topics: welcome.topics) { topic in
+                                Haptics.tap()
+                                welcomeTopic = topic.id
+                                // The opener is the coach's, so it appears as
+                                // its message rather than as the user's.
+                                withAnimation(Theme.snap) {
+                                    messages.append(CoachMessage(role: "assistant",
+                                                                 content: topic.opener))
+                                    self.welcome = nil
+                                }
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+
+                    if needsFitnessProfile {
+                        Button {
+                            Haptics.tap()
+                            showFitnessOnboarding = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "figure.run.circle")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Tell me about your training")
+                                        .font(.jakarta(14, .semibold))
+                                    Text("A few quick questions and I can plan properly")
+                                        .font(.jakarta(11, .medium))
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if lastIntent == "workout_request" {
+                        Button {
+                            Haptics.tap()
+                            Task { await generateWorkout() }
+                        } label: {
+                            HStack(spacing: 10) {
+                                if generatingWorkout {
+                                    ProgressView().tint(Theme.accent)
+                                } else {
+                                    Image(systemName: "figure.strengthtraining.traditional")
+                                }
+                                Text(generatingWorkout ? "Building your session…"
+                                                       : "Open this as a session")
+                                    .font(.jakarta(14, .semibold))
+                                Spacer(minLength: 0)
+                                if !generatingWorkout {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(generatingWorkout)
+                        .transition(.opacity)
+                    }
+
+                    // The reply answers the question; this card is the thing
+                    // you can actually work through and log.
+                    // Shown once. The greeting is nil for anyone who has
+                    // already talked to the coach.
+                    if let welcome, let greeting = welcome.greeting, messages.isEmpty {
+                        VStack(alignment: .leading, spacing: Theme.Space.m) {
+                            Text(greeting)
+                                .font(.body_)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(15)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .card(radius: Theme.Radius.card, padding: 0)
+
+                            FlowChips(topics: welcome.topics) { topic in
+                                Haptics.tap()
+                                welcomeTopic = topic.id
+                                // The opener is the coach's, so it appears as
+                                // its message rather than as the user's.
+                                withAnimation(Theme.snap) {
+                                    messages.append(CoachMessage(role: "assistant",
+                                                                 content: topic.opener))
+                                    self.welcome = nil
+                                }
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+
+                    if needsFitnessProfile {
+                        Button {
+                            Haptics.tap()
+                            showFitnessOnboarding = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "figure.run.circle")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Tell me about your training")
+                                        .font(.jakarta(14, .semibold))
+                                    Text("A few quick questions and I can plan properly")
+                                        .font(.jakarta(11, .medium))
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(14)
+                            .card(radius: Theme.Radius.row, padding: 0)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     if let suggestion {
                         SuggestionCard(suggestion: suggestion) {
                             withAnimation(Theme.snap) { self.suggestion = nil }
@@ -189,6 +352,22 @@ struct CoachView: View {
         .background(Theme.card)
     }
 
+    /// Builds a structured session from the same context the reply used.
+    private func generateWorkout() async {
+        guard app.requireAccount(for: "generate workouts") else { return }
+        generatingWorkout = true
+        defer { generatingWorkout = false }
+
+        do {
+            workoutPlan = try await APIClient.shared.generateWorkout()
+        } catch {
+            messages.append(CoachMessage(
+                role: "assistant",
+                content: (error as? APIError)?.errorDescription
+                    ?? "Couldn't build a session just now — try again in a moment."))
+        }
+    }
+
     private func send(_ text: String) {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard question.count >= 2, !thinking else { return }
@@ -206,7 +385,15 @@ struct CoachView: View {
             defer { thinking = false }
             do {
                 let result = try await APIClient.shared.askCoach(question)
+                // Their answer to the opener is worth keeping in their own
+                // words — paraphrasing it would lose what makes it useful.
+                if let topic = welcomeTopic {
+                    try? await APIClient.shared.recordWelcomeReply(topic: topic, reply: text)
+                    welcomeTopic = nil
+                }
+
                 withAnimation(Theme.snap) {
+                    lastIntent = result.intent
                     messages.append(CoachMessage(role: "assistant", content: result.answer))
                     // The server sends a card only when the answer made a
                     // recommendation, so a nil here clears any previous card

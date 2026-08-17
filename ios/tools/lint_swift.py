@@ -240,6 +240,118 @@ def check_no_duplicate_declarations(path: Path, src: str) -> None:
                 methods[signature] = line_no
 
 
+# SwiftUI types that need `import SwiftUI`. UIKit's UIImage and UIColor are
+# deliberately absent — they resolve under `import UIKit`.
+SWIFTUI_ONLY = [
+    "Color", "Font", "Angle", "Alignment", "Edge", "AnyView",
+    "EnvironmentObject", "ObservedObject", "StateObject", "ViewBuilder",
+]
+
+
+def check_swiftui_types_have_import(path: Path, src: str) -> None:
+    """
+    A SwiftUI type used in a file that only imports Foundation.
+
+    Xcode reports this as "cannot find type 'Color' in scope", which is only
+    visible on a macOS runner. It usually means presentation has leaked into a
+    layer that should not depend on SwiftUI at all.
+    """
+    imports = set(re.findall(r"^import (\w+)", src, re.M))
+    if "SwiftUI" in imports:
+        return
+
+    body = re.sub(r"//[^\n]*", "", src)          # ignore comments
+    body = re.sub(r'"[^"]*"', '""', body)         # and string literals
+
+    for name in SWIFTUI_ONLY:
+        for m in re.finditer(rf"(?<![.\w]){name}\b", body):
+            line_no = body[:m.start()].count("\n") + 1
+            fail(f"{path.name}:{line_no}: uses SwiftUI type '{name}' "
+                 f"but the file imports only {', '.join(sorted(imports)) or 'nothing'}")
+            break
+
+
+def check_symbols_defined(path: Path, src: str) -> None:
+    """
+    A property or method referenced in a file that never declares it.
+
+    Brace-balance checks pass happily on this, and Xcode only reports it as
+    "cannot find X in scope" on a macOS runner — a full build away.
+
+    Deliberately narrow: it only considers `@State` properties and functions,
+    and only flags a reference when nothing in the file declares that name at
+    all. Cross-file symbols are out of scope, since checking those properly
+    means compiling.
+    """
+    # Every form of declaration, not just `private` ones — an internal method
+    # is just as valid a definition.
+    declared = set()
+    declared |= set(re.findall(r"\bfunc\s+(\w+)", src))
+    declared |= set(re.findall(r"\b(?:var|let)\s+(\w+)", src))
+    declared |= set(re.findall(r"\bcase\s+(\w+)", src))
+
+    # Function parameters, including the `_ label: Type` form where the name
+    # that matters is the second word, and closure captures.
+    for params in re.findall(r"func\s+\w+\s*\(([^)]*)\)", src, re.S):
+        for part in params.split(","):
+            tokens = re.findall(r"\w+", part)
+            if tokens:
+                declared.add(tokens[-2] if len(tokens) > 2 else tokens[0])
+                declared.update(tokens[:2])
+    declared |= set(re.findall(r"\{\s*\[?([\w,\s]+?)\]?\s*in\b", src))
+    declared |= set(re.findall(r"(?:if|guard)\s+let\s+(\w+)", src))
+
+    referenced = set()
+    for m in re.finditer(r"await\s+(\w+)\s*\(", src):
+        referenced.add(m.group(1))
+    for m in re.finditer(r"(?<![.\w])(\w+)\s*==\s*\"", src):
+        referenced.add(m.group(1))
+
+    missing = sorted(n for n in referenced - declared
+                     if n[0].islower() and len(n) > 3)
+
+    for name in missing:
+        line_no = next((i for i, line in enumerate(src.split("\n"), 1)
+                        if re.search(rf"(?<![.\w]){name}\b", line)), 0)
+        fail(f"{path.name}:{line_no}: '{name}' is used but never declared in this file")
+
+
+def check_no_contradicting_expectations() -> None:
+    """
+    Two tests asserting opposite bounds on the same property.
+
+    A stale assertion left behind after a redesign (`benefits.count >= 4`)
+    survived alongside its replacement (`<= 3`), so the suite could never pass
+    — and it only showed up on a macOS runner, several minutes into a build.
+    """
+    tests = ROOT / "SnapCalTests"
+    if not tests.exists():
+        return
+
+    # property -> {"lower": [(bound, line)], "upper": [(bound, line)]}
+    bounds: dict[str, dict[str, list]] = {}
+
+    for path in sorted(tests.glob("*.swift")):
+        for line_no, line in enumerate(path.read_text().split("\n"), 1):
+            m = re.search(r"#expect\(\s*([\w.]+(?:\.count)?)\s*(>=|<=|>|<)\s*(\d+)", line)
+            if not m:
+                continue
+            prop, op, value = m.group(1), m.group(2), int(m.group(3))
+            # Strip the receiver so `context.benefits.count` and
+            # `ctx.benefits.count` compare as the same property.
+            key = ".".join(prop.split(".")[-2:])
+            entry = bounds.setdefault(key, {"lower": [], "upper": []})
+            entry["lower" if op in (">=", ">") else "upper"].append((value, line_no, path.name))
+
+    for prop, entry in bounds.items():
+        for low, low_line, low_file in entry["lower"]:
+            for high, high_line, high_file in entry["upper"]:
+                if low > high:
+                    fail(f"{low_file}:{low_line}: '{prop} >= {low}' contradicts "
+                         f"'{prop} <= {high}' at {high_file}:{high_line} — "
+                         f"one is a leftover from a redesign")
+
+
 def check_guest_is_empty() -> None:
     models = (ROOT / "SnapCal/Net/Models.swift").read_text()
     start = models.find("static let guest =")
@@ -259,6 +371,8 @@ for path in APP:
     check_swiftui_import(path, src)
     check_import_placement(path, src)
     check_no_duplicate_declarations(path, src)
+    check_swiftui_types_have_import(path, src)
+    check_symbols_defined(path, src)
     check_no_fabricated_food(path, src)
 
 # Test fixtures may name any food — they are never rendered to a user.
@@ -270,6 +384,7 @@ for path in TESTS:
 check_guest_is_empty()
 check_input_method_contract()
 check_exhaustive_switches()
+check_no_contradicting_expectations()
 
 for message in failures:
     print(f"FAIL  {message}")

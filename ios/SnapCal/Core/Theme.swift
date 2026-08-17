@@ -8,10 +8,16 @@ enum Theme {
     // revision stays a one-file edit.
     static let accent      = Color(hex: 0x15B87B)
     static let accentSoft  = Color(hex: 0x15B87B).opacity(0.10)
+
+    /// Reserved for the few things that should pull the eye: the primary CTA,
+    /// a selected chip, progress, an active tab. Used on more than that it
+    /// stops meaning anything and the whole screen reads as neon.
+    static let accentBright = Color(hex: 0xA8F02F)
+    static let accentDeep   = Color(hex: 0x243D1E)
     static let protein     = Color(hex: 0x15B87B)
     static let carbs       = Color(hex: 0x60A5FA)
     static let fat         = Color(hex: 0xFB923C)
-    static let danger      = Color(hex: 0xEF4444)
+    static let danger      = Color(hex: 0xFF6B6B)
 
     /// Metric tile accents.
     static let steps       = Color(hex: 0x15B87B)
@@ -23,9 +29,23 @@ enum Theme {
     /// Secondary label used throughout the design.
     static let secondary   = Color(hex: 0x7C7D89)
 
-    static let bg          = Color("Background")   // asset: #F1F1F1 / #0B0B0C
-    static let card        = Color("Card")         // asset: #FFFFFF / #161618
+    static let bg          = Color("Background")   // asset: #F1F1F1 / #07100B
+    static let card        = Color("Card")         // asset: #FFFFFF / #0D1811
+
+    /// A card sitting on a card — a grouped field inside a section, a chip row
+    /// inside a panel. Flat #0D1811 on #0D1811 has no edge in dark mode.
+    static let surfaceRaised = Color("SurfaceRaised")   // #FFFFFF / #132219
+    static let surfaceSunken = Color("SurfaceSunken")   // #F7F7F8 / #18291D
+
+    static let border      = Color("Border")            // #E8E8EB / #26372B
     static let hairline    = Color.primary.opacity(0.07)
+
+    /// Three levels of text, because two is not enough once a screen has a
+    /// title, a value and a hint under it.
+    static let textMuted   = Color("TextMuted")         // #9A9AA5 / #68756B
+
+    static let success     = Color(hex: 0x72D572)
+    static let warning     = Color(hex: 0xF4B544)
 
     enum Space {
         static let xs: CGFloat = 4, s: CGFloat = 8, m: CGFloat = 16

@@ -80,7 +80,10 @@ export async function detectPatterns(userId: string, days = 14): Promise<Pattern
   }
 
   // ── protein ───────────────────────────────────────────────────────────────
-  if (targets?.protein_g) {
+  // `nutrition` only has rows for days with meal *items*. A day logged with no
+  // items produced an empty set, an average of NaN, and a finding that read
+  // "averaged NaNg against 148g — short on 0 of 0 days".
+  if (targets?.protein_g && nutrition.length >= MIN_DAYS) {
     const missed = nutrition.filter((d: any) => Number(d.protein) < targets.protein_g * 0.85).length;
     if (missed >= Math.ceil(nutrition.length * 0.6)) {
       const avg = Math.round(

@@ -383,6 +383,300 @@ Free, no AI call. Use to fill the empty state.
 
 ---
 
+## Notifications
+
+The server decides **what** and **when**; the client schedules locally. There
+is no APNs — and the split has a real advantage anyway: judgement stays in one
+testable place, and delivery survives a server outage.
+
+### `GET /notifications/plan`
+```json
+{
+  "notifications": [{
+    "id": "uuid", "category": "recovery", "priority": "high",
+    "title": "Take it easier today",
+    "body": "You slept 34% below usual — a walk or some mobility will do more.",
+    "deeplink": "snapcal://coach",
+    "deliver_at": "2026-08-17T10:00:00Z"
+  }],
+  "suppressed": [{ "category": "hydration", "reason": "daily limit reached" }]
+}
+```
+
+Call once a day on foreground, then schedule each item as a local
+notification. **An empty list is normal and common** — the default answer is
+not to interrupt.
+
+Priorities: `critical` (bypasses the daily cap) · `high` · `medium` · `low`.
+
+Everything is filtered before it reaches you: quiet hours, the daily limit,
+muted categories, per-day deduplication, and categories this person has
+repeatedly ignored. `suppressed` shows what was dropped and why, so the
+decisions can be inspected rather than guessed at.
+
+### `POST /notifications/{id}/event` → `{ "event": "opened" }`
+`sent` · `opened` · `dismissed` · `acted`.
+
+**Send these.** Without them the engine cannot learn which notifications this
+person wants, keeps sending ones they never open, and eventually they turn
+notifications off entirely — after which there is no channel at all. Open
+rates also shift *when* a category is delivered.
+
+### `GET /notifications/engagement`
+Open rate per category. `enough_data: false` under 3 sends.
+
+### `PUT /notifications/prefs` — new fields
+```json
+{ "quiet_start": "22:00", "quiet_end": "07:00", "daily_limit": 3,
+  "muted_categories": ["hydration"],
+  "target_bedtime": "23:00", "target_wake_time": "07:00" }
+```
+`daily_limit` defaults to 3. `target_bedtime` drives the wind-down reminder and
+is distinct from quiet hours: quiet hours are when we stay silent, bedtime is
+what we coach toward.
+
+## Daily briefing
+
+### `GET /coach/briefing?regenerate=false`
+```json
+{
+  "date": "2026-08-16",
+  "mode": "recovery",
+  "headline": "Lighter day. Your body's asking for a bit of slack...",
+  "actions": [{
+    "id": "uuid",
+    "domain": "recovery",
+    "action": "Take today easy — a walk or some mobility rather than a session",
+    "reason": "Your slept 24% below their usual, so recovery will do more than training today.",
+    "confidence": 0.85,
+    "triggeredBy": ["recovery_mode", "slept 24% below their usual"]
+  }],
+  "missing": ["hrv", "weight"],
+  "generated": true
+}
+```
+
+At most **3 actions** (2 in recovery mode), **one per domain**, each with a
+reason citing real data. Idempotent per day — `generated: false` means today's
+set already existed.
+
+Actions are produced by rules over stored observations, not by asking a model
+what to do. Nothing fires without the data it needs, so a new user never sees
+"below your usual". `missing` lists metrics with no data — show a connect
+prompt rather than a zero.
+
+Each action is persisted as a recommendation with its `id`, so responses and
+outcomes can be recorded against it.
+
+### `POST /coach/learn-cycle`
+```json
+{ "outcomesMeasured": 4, "memoriesAdded": 1,
+  "memoriesUpdated": 0, "memoriesReinforced": 3 }
+```
+Measures what last week's advice did, then updates the brain. Call once a day —
+lazily, on app open. Free, no AI call.
+
+## Voice
+
+Replies use emoji naturally — one to three, chosen for meaning. Two rules are
+enforced in code rather than left to the model:
+
+**Stacked emoji are collapsed.** `🔥🔥🔥` becomes `🔥`, and more than three in a
+reply, or one per sentence, counts as spam.
+
+**Safety replies are stripped entirely.** Anything categorised `urgent`,
+`self_harm`, `medical`, `diagnosis_request` or `exercise_risk` returns plain
+words. An emoji beside "please contact emergency services" undermines the one
+message that has to land — this is not a style preference.
+
+The intended shape is three short beats: a line showing the coach registered
+where they are, what the data actually says, then one thing to do. Beats are
+skipped when unnecessary — a factual question gets a factual answer.
+
+## Emotional handling
+
+`POST /coach/ask` reads emotional weight before the task intent and returns
+`emotional_tone`: `exhausted`, `overwhelmed`, `frustrated`, `discouraged`,
+`anxious`, `low`, `positive`, or `null`.
+
+When it is set, the reply is shorter, no meal card is attached for the
+negative states, and the coach acknowledges before advising. **Soften the
+presentation to match** — no cards, no celebration animation, no streak
+badge on those replies.
+
+`null` is the common case. Reading distress into an ordinary question is its
+own failure, so detection is deliberately conservative: "I'm shattered, what
+should I eat?" is treated as a question with a preamble, not a moment
+requiring care.
+
+Two output checks run deterministically and trigger one retry:
+shaming language (`why didn't you`, `you should have`, `bad food choice`) and
+stacked questions — including the single-question-mark kind like
+*"How was your sleep, stress, nutrition and mood?"*, which reliably gets none
+of them answered.
+
+## Sleep coaching
+
+Built on **timing, not stages**. A phone can tell when someone fell asleep and
+woke up; it cannot reliably tell REM from deep — consumer devices score barely
+better than chance on staging. Reporting "47 minutes of deep sleep" as fact is
+the pseudoscience this deliberately avoids.
+
+Regularity is both measurable and actionable, so it is the headline.
+
+### `GET /sleep/summary`
+```json
+{
+  "nights": 18,
+  "avg_bedtime": "23:40", "avg_wake": "07:00", "avg_duration_hours": 7.3,
+  "bedtimeVarianceMin": 61, "wakeVarianceMin": 34,
+  "regularityScore": 26,
+  "weekendShiftMin": 132,
+  "sleepDebtMin": 96,
+  "insights": [{
+    "kind": "irregular_bedtime",
+    "finding": "Your bedtime swings by about 61 minutes night to night.",
+    "action": "Aim for the same half-hour window — around 23:40 …",
+    "weight": 90, "confidence": "high"
+  }]
+}
+```
+
+`regularityScore` 0–100 from timing variance: **≥80 steady, <60 irregular**.
+Calibrated so ~45 minutes of scatter reads as irregular, because that means
+bedtime moves by over an hour across a normal week.
+
+`weekendShiftMin` is social jetlag — positive means later at weekends. Handles
+the midnight wrap, so 22:30 → 00:30 is +120, not −1320.
+
+`insights` are ordered by weight and deliberately sparse — three observations
+about sleep is a report, one is coaching. `action` is null when a finding is
+just context. Under 5 nights it returns a single `insufficient_data` insight
+rather than inventing a pattern.
+
+The top actionable insight also flows into `GET /coach/briefing` as a `sleep`
+action, and into the bedtime notification.
+
+**Requires** `sleep_start_min` / `sleep_end_min` observations (minutes past
+midnight) from HealthKit — `HealthService` sends these automatically.
+
+## Health state
+
+### `POST /observations`
+```json
+{ "observations": [
+  { "metric": "hrv", "value": 42, "observed_on": "2026-08-16",
+    "source": "healthkit", "confidence": 1.0 }
+] }
+```
+Any metric, any source, with a confidence. Upserts per (metric, day, source).
+
+Send: `steps`, `resting_hr`, `hrv`, `sleep_minutes`, `sleep_start_min`,
+`sleep_end_min`, `weight_kg`, `active_kcal`, `exercise_min`.
+
+`sleep_start_min` / `sleep_end_min` are minutes past midnight — they power
+sleep-regularity coaching, which is measurable, unlike sleep stages.
+
+### `GET /health/state` · `GET /health/metric/{metric}`
+```json
+{ "metric": "hrv", "today": 38, "avg7": 40, "avg30": 50,
+  "baseline": 52, "trend": "falling", "deviationPct": -27,
+  "confidence": "high", "daysObserved": 21 }
+```
+`null` means no data — never zero. `confidence`: none / low (<5 days) /
+medium (5–20) / high (21+).
+
+`GET /health/state` adds `mode` (recovery / maintenance / growth) and
+`modeRationale`. **The mode is an internal coaching decision, not a score —
+don't render it as a number.**
+
+## Personal Health Brain
+
+### `GET /brain/memories`
+```json
+{ "layers": {
+    "routine": [{ "id": "uuid", "content": "usually eats breakfast around 7am",
+                  "confidence": 0.9, "evidence_count": 6, "user_edited": false }]
+  },
+  "labels": { "routine": "Your usual patterns" },
+  "total": 3 }
+```
+Use `labels` for headings — never show "semantic" to a user.
+
+### `PATCH /brain/memories/{id}` · `DELETE /brain/memories/{id}`
+Editing marks a memory authoritative: extraction will never overwrite it.
+Deletion is permanent, not a soft delete.
+
+### `POST /brain/learn`
+Extracts routines and outcome patterns from logged behaviour. Idempotent —
+repeat observations reinforce rather than duplicate.
+
+## Recommendations
+
+### `GET /recommendations?status=pending`
+### `POST /recommendations/{id}/respond` → `{ "status": "completed", "feedback": "..." }`
+### `GET /recommendations/effectiveness`
+
+`enough_data: false` until a domain has 4+ recommendations. Completion and
+improvement rates feed procedural memory, which then reranks future actions —
+a domain the user ignores drops down.
+
+## Health onboarding
+
+Screen-based and adaptive. Up to eight screens, each finishable in well under
+a minute — but most users see fewer, because anything already known is
+dropped and a screen whose fields are all known disappears entirely.
+
+### `GET /onboarding/plan?answers={...}`
+```json
+{
+  "screens": [{
+    "id": "your_day", "title": "Your day",
+    "subtitle": "So advice fits your actual routine, not a generic one.",
+    "skippable": true,
+    "fields": [{ "key": "typical_bedtime", "label": "Usual bedtime", "type": "time" }]
+  }],
+  "totalScreens": 6, "currentIndex": 0, "completed": false
+}
+```
+
+Pass answers collected so far as a JSON query param — the plan recomputes.
+Saying you don't exercise removes the training questions; answering "no" to
+medication removes the medication list.
+
+Field types: `text` `number` `time` `chips` `chips_multi` `toggle` `slider`
+`list`. Render `hint` under the field — several explain *why* we're asking,
+which is what makes the sensitive screens acceptable.
+
+### `POST /onboarding/screen`
+```json
+{ "screen": "your_day", "answers": { "typical_bedtime": "23:00" } }
+{ "screen": "health", "answers": {}, "skipped": true }
+```
+Returns the recomputed plan. A skipped screen is never re-asked.
+
+### `POST /onboarding/finish` · `GET /health/profile`
+### `DELETE /health/conditions/{id}` · `DELETE /medications/{id}`
+
+## How health context is used
+
+**Conditions and medications constrain advice; they never enable it.** A
+declared condition makes the coach more conservative and more likely to point
+at a clinician. It never lets it diagnose, dose, or manage treatment — the
+safety engine still blocks all of that.
+
+Concretely: someone who has told us they're diabetic gets extra caution around
+fasting, large deficits and sudden training jumps, plus an explicit "your
+doctor should sign this off". Allergies become a hard constraint on every food
+suggestion. Medication presence is acknowledged but never commented on.
+
+`prefer_not_to_say` is a first-class answer everywhere, and every sensitive
+screen is skippable. A user who feels interrogated gives worse answers than
+one who can decline.
+
+**Storing this changes your App Store privacy labels.** Health conditions and
+medications are sensitive categories requiring disclosure.
+
 ## Coach onboarding
 
 First run only. The server decides the next question, so it can skip anything

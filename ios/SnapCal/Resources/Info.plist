@@ -55,7 +55,7 @@
 	<string>Turns what you say into a food entry. Transcription runs on your device wherever iOS supports it.</string>
 
 	<key>NSHealthShareUsageDescription</key>
-	<string>SnapCal reads your steps, active calories and exercise minutes so your coach can factor in how much you've moved. It never writes to Health.</string>
+	<string>SnapCal reads your steps, active calories, exercise minutes, sleep, resting heart rate and heart rate variability so your coach can factor in how much you've moved and how well you've recovered. It never writes to Health.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>SnapCal does not write to Health. This is requested only so iOS can show the Health permission screen.</string>
 

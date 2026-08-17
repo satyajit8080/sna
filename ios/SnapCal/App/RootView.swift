@@ -16,6 +16,9 @@ struct RootView: View {
             case .onboarding:
                 OnboardingFlow()
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            case .healthOnboarding:
+                HealthOnboardingView { app.completeHealthOnboarding() }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             case .ready:
                 MainTabs().transition(.opacity)
             }

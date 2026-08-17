@@ -58,9 +58,32 @@ export async function migrate(): Promise<void> {
         );
         await client.query("COMMIT");
         ran++;
-      } catch (e) {
+      } catch (e: any) {
         await client.query("ROLLBACK");
-        throw e;
+
+        /**
+         * Rethrowing the raw pg error gave a stack trace inside node_modules
+         * and nothing else — which, on a Railway deploy, means an unbootable
+         * container and no way to tell which migration or which statement
+         * failed. Everything Postgres already knows is put in the message.
+         */
+        const where = e?.position
+          ? nearbyStatement(sql, Number(e.position))
+          : null;
+
+        const detail = [
+          `Migration ${name} failed.`,
+          e?.message ? `  ${e.message}` : null,
+          e?.detail ? `  detail: ${e.detail}` : null,
+          e?.hint ? `  hint: ${e.hint}` : null,
+          e?.code ? `  sqlstate: ${e.code}` : null,
+          e?.table ? `  table: ${e.table}` : null,
+          e?.constraint ? `  constraint: ${e.constraint}` : null,
+          where ? `  near: ${where}` : null,
+        ].filter(Boolean).join("\n");
+
+        process.stderr.write(`\n${detail}\n\n`);
+        throw new Error(detail);
       }
     }
 
@@ -69,6 +92,16 @@ export async function migrate(): Promise<void> {
     await client.query("SELECT pg_advisory_unlock(hashtext('snapcal_migrations'))").catch(() => {});
     client.release();
   }
+}
+
+/**
+ * A readable slice of SQL around the character offset Postgres reports.
+ * Far more useful in a deploy log than the whole file or nothing at all.
+ */
+function nearbyStatement(sql: string, position: number): string {
+  const start = Math.max(0, position - 120);
+  const end = Math.min(sql.length, position + 120);
+  return sql.slice(start, end).replace(/\s+/g, " ").trim();
 }
 
 /** Fails loudly if the schema is not what the running code expects. */

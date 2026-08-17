@@ -14,6 +14,7 @@ import foodRoutes from "./routes/food.js";
 import logRoutes from "./routes/log.js";
 import subRoutes from "./routes/subscription.js";
 import premiumRoutes from "./routes/premium.js";
+import brainRoutes from "./routes/brain.js";
 
 const app = Fastify({
   logger: {
@@ -113,6 +114,7 @@ await app.register(async (scope) => {
     keyGenerator: rateKey as any,
   });
   await scope.register(premiumRoutes);
+  await scope.register(brainRoutes);
 }, { prefix: "/api/v1" });
 
 // ── boot ─────────────────────────────────────────────────────────────────────

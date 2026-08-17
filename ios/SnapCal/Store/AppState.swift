@@ -4,7 +4,11 @@ import Observation
 @Observable
 @MainActor
 final class AppState {
-    enum Phase { case launching, welcome, onboarding, ready }
+    /// `onboarding` is the nutrition profile (targets); `healthOnboarding` is
+    /// the health baseline that follows it. Separate because a user can need
+    /// one without the other — someone who signed up before health onboarding
+    /// existed has targets but no baseline.
+    enum Phase { case launching, welcome, onboarding, healthOnboarding, ready }
 
     var phase: Phase = .launching
 
@@ -20,6 +24,13 @@ final class AppState {
     /// Namespaces the on-device cache so two accounts on one device stay
     /// separate.
     private var cacheKey = "anonymous"
+
+    /// Last date the learning cycle ran, so it happens once a day rather than
+    /// on every foreground.
+    private var lastLearnCycle: String {
+        get { UserDefaults.standard.string(forKey: "brain.lastCycle") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "brain.lastCycle") }
+    }
 
     /// Set when a guest taps something that needs an account; drives the sheet.
     var guestPromptFeature: String?
@@ -133,7 +144,10 @@ final class AppState {
             quota = try? await APIClient.shared.usage()
             await loadProfileBits()
             coachInsight = try? await APIClient.shared.coachInsight()
-            phase = .ready
+
+            // Straight to Home unless there is health onboarding left. Asking a
+            // returning user to do it again is the failure this guards against.
+            phase = await needsHealthOnboarding() ? .healthOnboarding : .ready
         } catch APIError.unauthorized {
             // Only a genuine auth failure clears state.
             await APIClient.shared.setToken(nil)
@@ -148,11 +162,51 @@ final class AppState {
         }
     }
 
+    /// Whether the health baseline is still outstanding.
+    ///
+    /// The server decides — it knows what it already holds and returns an
+    /// empty plan when there is nothing left to ask. A local flag would drift
+    /// from that the moment the screen list changed.
+    private func needsHealthOnboarding() async -> Bool {
+        guard let plan = try? await APIClient.shared.onboardingPlan() else { return false }
+        return !plan.completed && !plan.screens.isEmpty
+    }
+
+    /// Where to go once the nutrition profile is done.
+    ///
+    /// Both the signup sheet and the profile flow call this rather than
+    /// setting `.ready` directly — otherwise a new user skips the health
+    /// baseline entirely, which is exactly what happened before.
+    func advanceAfterProfile() async {
+        phase = await needsHealthOnboarding() ? .healthOnboarding : .ready
+    }
+
+    /// Called when the health onboarding finishes or is fully skipped.
+    func completeHealthOnboarding() {
+        withAnimation(Theme.snap) { phase = .ready }
+        Task { await refresh() }
+    }
+
     /// Name and start weight for the header. Cheap and rarely changes.
     private func loadProfileBits() async {
         guard let profile = try? await APIClient.shared.profile() else { return }
         profileFirstName = profile.name.split(separator: " ").first.map(String.init) ?? ""
         startWeightKg = profile.startWeightKg
+    }
+
+    /// Measures what recent advice did, then updates the brain.
+    ///
+    /// Once a day, in the background, failures ignored. Without this call the
+    /// memory layer never learns anything — it was built to be driven from the
+    /// client precisely so a dormant account costs nothing.
+    func runLearningCycleIfDue() async {
+        guard !isGuest, phase == .ready else { return }
+
+        let today = DashboardCache.localToday
+        guard lastLearnCycle != today else { return }
+        lastLearnCycle = today
+
+        _ = try? await APIClient.shared.runLearnCycle()
     }
 
     func refresh() async {

@@ -81,3 +81,39 @@ struct SuggestionCard: View {
         }
     }
 }
+
+/// Topic chips for the first coach conversation.
+///
+/// Each carries an opener built from what onboarding already captured, so
+/// choosing one goes deeper rather than starting the questionnaire again.
+struct FlowChips: View {
+    let topics: [WelcomeTopic]
+    var onSelect: (WelcomeTopic) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            ForEach(topics) { topic in
+                Button {
+                    onSelect(topic)
+                } label: {
+                    HStack {
+                        Text(topic.label)
+                            .font(.jakarta(15, .semibold))
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 16)
+                    .frame(height: 48)
+                    .frame(maxWidth: .infinity)
+                    .background(Theme.surfaceRaised,
+                                in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(Theme.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}

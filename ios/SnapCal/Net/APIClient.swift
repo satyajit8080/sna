@@ -353,6 +353,134 @@ actor APIClient {
     }
 
     /// Free, no AI, no quota — safe to call on every dashboard refresh.
+    // MARK: - Briefing and the Brain
+
+    /// Today's priorities. Free, no AI call, idempotent per day.
+    func briefing() async throws -> DailyBriefing {
+        try await get("coach/briefing", as: DailyBriefing.self)
+    }
+
+    /// Records whether an action was done or dismissed. This is what lets the
+    /// coach learn which suggestions actually land for this person.
+    func respondToAction(id: String, status: String) async throws {
+        struct Body: Encodable { let status: String }
+        _ = try await send(request("recommendations/\(id)/respond", method: "POST",
+                                   body: try encoder.encode(Body(status: status))),
+                           as: Empty.self)
+    }
+
+    /// Structured workout. Costs one AI request against the coach allowance.
+    func generateWorkout(minutes: Int? = nil, focus: String? = nil) async throws -> WorkoutPlan {
+        struct Body: Encodable { let minutes: Int?; let focus: String? }
+        return try await post("coach/workout", Body(minutes: minutes, focus: focus),
+                              as: WorkoutPlan.self)
+    }
+
+    /// Logs a finished session. `planId` closes the loop back to the plan it
+    /// came from, so the next recommendation knows it was actually done.
+    func logWorkout(focus: String, minutes: Int, effort: Int?,
+                    planId: String?, exercises: [[String: Any]]) async throws {
+        var payload: [String: Any] = [
+            "focus": focus, "minutes": minutes, "exercises": exercises,
+        ]
+        if let effort { payload["perceived_effort"] = effort }
+        if let planId { payload["plan_id"] = planId }
+
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        _ = try await send(request("workouts", method: "POST", body: body), as: Empty.self)
+    }
+
+    // MARK: - Health onboarding
+
+    /// The screens this user should see. Pass answers collected so far — the
+    /// plan recomputes, and an answer can remove a later screen entirely.
+    func onboardingPlan(answers: [String: Any] = [:]) async throws -> HealthOnboardingPlan {
+        var path = "onboarding/plan"
+        if !answers.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: answers),
+           let json = String(data: data, encoding: .utf8),
+           let escaped = json.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            path += "?answers=\(escaped)"
+        }
+        return try await get(path, as: HealthOnboardingPlan.self)
+    }
+
+    @discardableResult
+    func saveOnboardingScreen(
+        _ screen: String, answers: [String: Any], skipped: Bool = false
+    ) async throws -> HealthOnboardingPlan {
+        let payload: [String: Any] = [
+            "screen": screen, "answers": answers, "skipped": skipped,
+        ]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await send(request("onboarding/screen", method: "POST", body: body),
+                              as: HealthOnboardingPlan.self)
+    }
+
+    func finishOnboarding() async throws {
+        _ = try await send(request("onboarding/finish", method: "POST",
+                                   body: try encoder.encode(Empty())), as: Empty.self)
+    }
+
+    // MARK: - First coach conversation
+
+    func coachWelcome() async throws -> CoachWelcome {
+        try await get("coach/welcome", as: CoachWelcome.self)
+    }
+
+    func recordWelcomeReply(topic: String, reply: String) async throws {
+        struct Body: Encodable { let topic: String; let reply: String }
+        _ = try await send(request("coach/welcome/reply", method: "POST",
+                                   body: try encoder.encode(Body(topic: topic, reply: reply))),
+                           as: Empty.self)
+    }
+
+    // MARK: - Fitness onboarding
+
+    func onboardingState() async throws -> OnboardingState {
+        try await get("coach/onboarding", as: OnboardingState.self)
+    }
+
+    func answerOnboarding(field: String, value: String? = nil,
+                          values: [String]? = nil, skip: Bool = false) async throws -> OnboardingState {
+        var payload: [String: Any] = ["field": field, "skip": skip]
+        if let value { payload["value"] = value }
+        if let values { payload["values"] = values }
+
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await send(request("coach/onboarding", method: "POST", body: body),
+                              as: OnboardingState.self)
+    }
+
+    func brainMemories() async throws -> BrainMemories {
+        try await get("brain/memories", as: BrainMemories.self)
+    }
+
+    func editMemory(id: String, content: String) async throws {
+        struct Body: Encodable { let content: String }
+        _ = try await send(request("brain/memories/\(id)", method: "PATCH",
+                                   body: try encoder.encode(Body(content: content))),
+                           as: Empty.self)
+    }
+
+    func forgetMemory(id: String) async throws {
+        _ = try await send(request("brain/memories/\(id)", method: "DELETE"), as: Empty.self)
+    }
+
+    /// Measures what last week's advice did, then updates the brain.
+    /// Called once a day on foreground — without it the brain never learns.
+    @discardableResult
+    func runLearnCycle() async throws -> LearnCycleResult {
+        try await post("coach/learn-cycle", Empty(), as: LearnCycleResult.self)
+    }
+
+    /// Pushes normalized metrics. Separate from syncHealth because this accepts
+    /// any metric with a confidence, which is what the state engine needs.
+    func sendObservations(_ observations: [[String: Any]]) async throws {
+        let payload = try JSONSerialization.data(withJSONObject: ["observations": observations])
+        _ = try await send(request("observations", method: "POST", body: payload), as: Empty.self)
+    }
+
     /// Free, no AI, no quota — powers the Home insight card.
     func coachInsight() async throws -> String {
         struct Wrapper: Decodable { let insight: String }

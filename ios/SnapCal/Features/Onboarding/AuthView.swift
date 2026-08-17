@@ -192,7 +192,12 @@ struct SignInPromptView: View {
         .background(Theme.bg)
         .sheet(isPresented: $showAuth) {
             AuthView(startingMode: .signUp) { onboarded in
-                app.phase = onboarded ? .ready : .onboarding
+                if onboarded {
+                    // Has targets already; may still owe the health baseline.
+                    Task { await app.advanceAfterProfile() }
+                } else {
+                    app.phase = .onboarding
+                }
                 dismiss()
             }
         }

@@ -39,7 +39,11 @@ struct OnboardingFlow: View {
             case .firstScan:
                 FirstScanPromptView {
                     Analytics.track(.onboardingCompleted)
-                    Task { await app.refresh(); app.phase = .ready }
+                    Task {
+                        await app.refresh()
+                        // Into the health baseline, not straight to Home.
+                        await app.advanceAfterProfile()
+                    }
                 }
             }
         }
