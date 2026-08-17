@@ -201,7 +201,8 @@ struct LogFlowView: View {
                         assumptions: res.assumptions,
                         confidence: res.confidence,
                         method: route.mode.inputMethod,
-                        disclaimer: res.disclaimer
+                        disclaimer: res.disclaimer,
+                        verdict: res.verdict
                     ))
                 }
                 await app.refresh()
@@ -228,6 +229,9 @@ struct AnalysisPayload: Equatable {
     var confidence: Double?
     var method: String
     var disclaimer: String
+    /// Present for a scan, absent for manual entry — there is nothing to
+    /// assess when the user typed the food themselves.
+    var verdict: ScanVerdict?
 }
 
 // MARK: - Analyzing state
