@@ -12,9 +12,20 @@ import {
   reserve, settle, release, entitlementsFor,
   type Reservation,
 } from "../services/entitlements.js";
+import { assessScan } from "../services/scanVerdict.js";
 
-/** Every response carries `is_estimate` — never a medical-grade claim. */
-function envelope(items: ResolvedItem[], assumptions: string[], confidence: number) {
+/**
+ * Every response carries `is_estimate` — never a medical-grade claim — and a
+ * verdict.
+ *
+ * Async and centralised on purpose: there are five scan paths (photo, text,
+ * voice, barcode, search) and attaching the verdict at each one meant the
+ * first attempt wired it to a single path and silently missed four.
+ */
+async function envelope(
+  userId: string, tz: string,
+  items: ResolvedItem[], assumptions: string[], confidence: number
+) {
   const sum = (f: (i: ResolvedItem) => number) => items.reduce((a, i) => a + f(i), 0);
 
   return {
@@ -35,6 +46,12 @@ function envelope(items: ResolvedItem[], assumptions: string[], confidence: numb
     assumptions,
     is_estimate: true,
     disclaimer: "AI estimate. Not a medical or clinical measurement.",
+    verdict: await assessScan(userId, tz, items.map((i) => ({
+      name: i.name, grams: i.grams,
+      kcal_100g: i.kcal_100g, protein_100g: i.protein_100g,
+      carbs_100g: i.carbs_100g, fat_100g: i.fat_100g,
+      fiber_100g: (i as any).fiber_100g ?? null,
+    }))),
   };
 }
 
@@ -98,7 +115,8 @@ export default async function routes(app: FastifyInstance) {
       }
 
       const items = await resolveFoods(result.foods);
-      const payload = envelope(items, result.assumptions, result.confidence);
+      const payload = await envelope(req.userId, req.tz, items,
+                                     result.assumptions, result.confidence);
 
       await q(
         `INSERT INTO analysis_cache (phash, result) VALUES ($1,$2) ON CONFLICT (phash) DO NOTHING`,
@@ -117,7 +135,7 @@ export default async function routes(app: FastifyInstance) {
     return withReservation(req, "text", async () => {
       const { result, usages } = await ai.withFailover((p) => p.analyzeText(text));
       const items = await resolveFoods(result.foods);
-      return { value: envelope(items, result.assumptions, result.confidence), usages };
+      return { value: await envelope(req.userId, req.tz, items, result.assumptions, result.confidence), usages };
     });
   });
 
@@ -129,7 +147,7 @@ export default async function routes(app: FastifyInstance) {
     return withReservation(req, "voice", async () => {
       const { result, usages } = await ai.withFailover((p) => p.analyzeText(transcript));
       const items = await resolveFoods(result.foods);
-      return { value: envelope(items, result.assumptions, result.confidence), usages };
+      return { value: await envelope(req.userId, req.tz, items, result.assumptions, result.confidence), usages };
     });
   });
 
@@ -161,7 +179,7 @@ export default async function routes(app: FastifyInstance) {
       }
 
       const g = grams ?? (Number(row.default_grams) || 100);
-      const value = envelope([{
+      const value = await envelope(req.userId, req.tz, [{
         food_id: row.id,
         name: row.brand ? `${row.brand} ${row.name}` : row.name,
         grams: g, quantity: 1, unit: row.default_unit ?? "serving",
