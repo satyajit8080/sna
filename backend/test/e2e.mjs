@@ -3491,3 +3491,326 @@ test("the emotional steer tells the model what not to do", async () => {
 
   assert.equal(emotionalSteer(readEmotion("what should I eat")), "");
 });
+
+// ─── voice: warmth where it helps, plain words where it matters ───────────
+
+test("emoji spam is detected and ordinary warmth is not", async () => {
+  const { countEmoji, hasEmojiSpam } = await import("../dist/services/emotion.js");
+
+  // One or two carrying meaning is the intent.
+  assert.equal(countEmoji("That's a solid win today 💚 Keep it going."), 1);
+  assert.ok(!hasEmojiSpam("You're run-down 😴 — a walk would do more than a session 🌿."));
+
+  // Stacked glyphs read as noise and undercut whatever else the reply says.
+  assert.ok(hasEmojiSpam("Great job!!! 🔥🔥🔥💪💪💪"));
+  // One per sentence is the other failure mode.
+  assert.ok(hasEmojiSpam("Run-down 😴. Sleep short 🌙. Try a walk 🌿. Rest well ✨."));
+
+  assert.ok(!hasEmojiSpam("You have 900 calories left."));
+});
+
+test("safety replies are stripped of emoji entirely", async () => {
+  const { mustBePlain, stripEmoji } = await import("../dist/services/emotion.js");
+
+  // An emoji next to "contact emergency services" undermines the one message
+  // that has to land. Not a style preference.
+  for (const category of ["urgent", "self_harm", "medical", "diagnosis_request",
+                          "exercise_risk"]) {
+    assert.ok(mustBePlain(category), `${category} should be plain`);
+  }
+  assert.ok(!mustBePlain("brand"));
+  assert.ok(!mustBePlain(null));
+
+  const stripped = stripEmoji("That sounds serious ⚠️ — please see a doctor 🫶.");
+  assert.ok(!/\p{Extended_Pictographic}/u.test(stripped));
+  // And the punctuation survives the removal cleanly.
+  assert.match(stripped, /doctor\.$/);
+  assert.ok(!stripped.includes("  "));
+});
+
+test("a crisis reply carries no emoji", async () => {
+  const u = await proUser("voice-crisis");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Voice", ...BASE_PROFILE } });
+
+    for (const message of ["I want to kill myself",
+                           "I have chest pain and can't breathe",
+                           "what medication should I take for this"]) {
+      const { json } = await api("/coach/ask", { method: "POST", body: { question: message } });
+      assert.ok(!/\p{Extended_Pictographic}/u.test(json.answer),
+        `emoji appeared in a safety reply to: "${message}"`);
+    }
+  } finally { token = saved; }
+});
+
+test("an ordinary reply is allowed to be warm", async () => {
+  const { hasEmojiSpam, mustBePlain } = await import("../dist/services/emotion.js");
+
+  // Nothing in the pipeline should strip warmth from a normal exchange —
+  // over-correcting produces the clinical tone this is meant to avoid.
+  assert.ok(!mustBePlain(null));
+  assert.ok(!hasEmojiSpam("Nice work getting that walk in 💚"));
+});
+
+// ─── onboarding: ask once, adapt, never ask twice ─────────────────────────
+
+test("onboarding never asks what the profile already holds", async () => {
+  const u = await proUser("onb-known");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Known", ...BASE_PROFILE } });
+
+    const { status, json } = await api("/onboarding/plan");
+    assert.equal(status, 200);
+
+    const aboutYou = json.screens.find((s) => s.id === "about_you");
+    const fields = aboutYou ? aboutYou.fields.map((f) => f.key) : [];
+
+    // Asking again tells the user the app is not paying attention.
+    for (const known of ["name", "birth_year", "sex", "height_cm", "start_weight_kg"]) {
+      assert.ok(!fields.includes(known), `re-asked for ${known}`);
+    }
+  } finally { token = saved; }
+});
+
+test("saying you don't exercise removes the training questions", async () => {
+  const u = await proUser("onb-noex");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "NoEx", ...BASE_PROFILE } });
+
+    const withExercise = await api("/onboarding/plan?answers=" +
+      encodeURIComponent(JSON.stringify({ exercises: true })));
+    const movementWith = withExercise.json.screens.find((s) => s.id === "movement");
+    assert.ok(movementWith.fields.some((f) => f.key === "training_days"));
+
+    const without = await api("/onboarding/plan?answers=" +
+      encodeURIComponent(JSON.stringify({ exercises: false })));
+    const movementWithout = without.json.screens.find((s) => s.id === "movement");
+
+    // Scrolling past four training questions to confirm you don't train is
+    // exactly the friction this is meant to remove.
+    for (const key of ["training_days", "experience", "activities"]) {
+      assert.ok(!movementWithout.fields.some((f) => f.key === key),
+        `${key} still shown to a non-exerciser`);
+    }
+  } finally { token = saved; }
+});
+
+test("medication detail only appears after a yes", async () => {
+  const u = await proUser("onb-meds");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Meds", ...BASE_PROFILE } });
+
+    const no = await api("/onboarding/plan?answers=" +
+      encodeURIComponent(JSON.stringify({ takes_medication: "no" })));
+    const screenNo = no.json.screens.find((s) => s.id === "medications");
+    assert.ok(!screenNo.fields.some((f) => f.key === "medications"));
+
+    const yes = await api("/onboarding/plan?answers=" +
+      encodeURIComponent(JSON.stringify({ takes_medication: "yes" })));
+    const screenYes = yes.json.screens.find((s) => s.id === "medications");
+    assert.ok(screenYes.fields.some((f) => f.key === "medications"));
+  } finally { token = saved; }
+});
+
+test("a completed screen never comes back", async () => {
+  const u = await proUser("onb-progress");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Prog", ...BASE_PROFILE } });
+
+    const before = await api("/onboarding/plan");
+    assert.ok(before.json.screens.some((s) => s.id === "mind"));
+
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "mind",
+      answers: { stress_level: "high", usual_mood: "up_and_down", coping: ["walking"] } } });
+
+    const after = await api("/onboarding/plan");
+    assert.ok(!after.json.screens.some((s) => s.id === "mind"));
+    assert.ok(after.json.totalScreens < before.json.totalScreens);
+  } finally { token = saved; }
+});
+
+test("a skipped sensitive screen is not re-asked either", async () => {
+  const u = await proUser("onb-skip");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Skip", ...BASE_PROFILE } });
+
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "health", answers: {}, skipped: true } });
+
+    const plan = await api("/onboarding/plan");
+    // Someone who declined once should not be asked again next launch.
+    assert.ok(!plan.json.screens.some((s) => s.id === "health"));
+  } finally { token = saved; }
+});
+
+test("onboarding answers land in the tables the coach reads", async () => {
+  const u = await proUser("onb-save");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Save", ...BASE_PROFILE } });
+
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "your_day",
+      answers: { typical_bedtime: "23:00", typical_wake_time: "07:00",
+                 sleep_quality: "mixed", activity_level: "sedentary" } } });
+
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "nutrition",
+      answers: { diet: "vegetarian", allergies: ["peanuts"], meals_per_day: 3 } } });
+
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "goals",
+      answers: { primary_goal: "improve_sleep",
+                 success_looks_like: "waking up without hitting snooze" } } });
+
+    const profile = await api("/health/profile");
+    assert.equal(profile.json.schedule.sleep_quality, "mixed");
+    assert.equal(profile.json.goals.primary_goal, "improve_sleep");
+    assert.match(profile.json.goals.success_looks_like, /snooze/);
+
+    // The bedtime reminder should follow their real bedtime, not a default.
+    const prefs = await db.query(
+      `SELECT target_bedtime FROM notification_prefs WHERE user_id = $1`, [u.uid]);
+    assert.equal(String(prefs.rows[0].target_bedtime).slice(0, 5), "23:00");
+
+    // Allergies are stored where the safety engine reads them, not only as a
+    // food preference.
+    const allergy = await db.query(
+      `SELECT allergen FROM user_allergies WHERE user_id = $1`, [u.uid]);
+    assert.equal(allergy.rows[0].allergen, "peanuts");
+  } finally { token = saved; }
+});
+
+test("a declared condition makes the coach more careful, never more clinical", async () => {
+  const { personalSteer, needsExtraCaution, loadPersonalSafety } =
+    await import("../dist/services/safety.js");
+  const u = await proUser("onb-condition");
+  const saved = token; token = u.token;
+
+  try {
+    await api("/profile", { method: "POST", body: { name: "Cond", ...BASE_PROFILE } });
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "health",
+      answers: { conditions: ["type 2 diabetes"],
+                 restriction: "no high-impact running" } } });
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "nutrition", answers: { allergies: ["shellfish"] } } });
+
+    const personal = await loadPersonalSafety(u.uid);
+    assert.deepEqual(personal.conditions, ["type 2 diabetes"]);
+    assert.deepEqual(personal.allergies, ["shellfish"]);
+
+    const steer = personalSteer(personal);
+    // The direction matters: constrain advice, never offer to manage the
+    // condition.
+    assert.match(steer, /conservative/i);
+    assert.match(steer, /doctor|dietitian/i);
+    assert.match(steer, /do not offer to manage/i);
+    assert.match(steer, /shellfish/i);
+    assert.match(steer, /high-impact running/i);
+
+    // Fasting is ordinary advice for most people and a bigger deal here.
+    assert.ok(needsExtraCaution("should I try fasting?", personal));
+    assert.ok(!needsExtraCaution("what should I eat for dinner?", personal));
+  } finally { token = saved; }
+});
+
+test("sensitive health data can be deleted", async () => {
+  const u = await proUser("onb-delete");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Del", ...BASE_PROFILE } });
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "health", answers: { conditions: ["asthma"] } } });
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "medications", answers: { medications: ["inhaler"] } } });
+
+    const before = await api("/health/profile");
+    assert.equal(before.json.conditions.length, 1);
+    assert.equal(before.json.medications.length, 1);
+
+    // This is the most sensitive data in the product; removing it must work.
+    await api(`/health/conditions/${before.json.conditions[0].id}`, { method: "DELETE" });
+    await api(`/medications/${before.json.medications[0].id}`, { method: "DELETE" });
+
+    const after = await api("/health/profile");
+    assert.equal(after.json.conditions.length, 0);
+    assert.equal(after.json.medications.length, 0);
+  } finally { token = saved; }
+});
+
+test("health data is scoped to its owner", async () => {
+  const a = await proUser("onb-a");
+  const b = await proUser("onb-b");
+  const saved = token;
+
+  try {
+    token = a.token;
+    await api("/profile", { method: "POST", body: { name: "A", ...BASE_PROFILE } });
+    await api("/onboarding/screen", { method: "POST", body: {
+      screen: "health", answers: { conditions: ["a private condition"] } } });
+
+    token = b.token;
+    await api("/profile", { method: "POST", body: { name: "B", ...BASE_PROFILE } });
+    const theirs = await api("/health/profile");
+    assert.equal(theirs.json.conditions.length, 0,
+      "user B can see user A's health conditions");
+  } finally { token = saved; }
+});
+
+test("every onboarding screen fits in a short sitting", async () => {
+  const u = await proUser("onb-length");
+  const saved = token; token = u.token;
+  try {
+    await api("/profile", { method: "POST", body: { name: "Len", ...BASE_PROFILE } });
+    const { json } = await api("/onboarding/plan");
+
+    assert.ok(json.totalScreens <= 8, `${json.totalScreens} screens is too many`);
+
+    for (const screen of json.screens) {
+      // A screen should be completable in well under a minute; six fields is
+      // already pushing it.
+      assert.ok(screen.fields.length <= 6,
+        `${screen.id} has ${screen.fields.length} fields`);
+      assert.ok(screen.title);
+    }
+
+    // Everything sensitive must be declinable.
+    for (const id of ["health", "medications", "mind"]) {
+      const screen = json.screens.find((s) => s.id === id);
+      if (screen) assert.ok(screen.skippable, `${id} must be skippable`);
+    }
+  } finally { token = saved; }
+});
+
+test("a screen left holding one optional question disappears", async () => {
+  const u = await proUser("onb-thin");
+  const saved = token; token = u.token;
+  try {
+    // With a full nutrition profile, "About you" retains only the optional
+    // work-type question — a page to dismiss for no benefit.
+    await api("/profile", { method: "POST", body: { name: "Thin", ...BASE_PROFILE } });
+
+    const { json } = await api("/onboarding/plan");
+    const aboutYou = json.screens.find((s) => s.id === "about_you");
+
+    if (aboutYou) {
+      assert.ok(aboutYou.fields.length > 1 || !aboutYou.fields[0].optional,
+        "a lone optional field should not justify a screen");
+    }
+
+    // The screens that remain all carry something worth asking.
+    for (const screen of json.screens) {
+      const required = screen.fields.filter((f) => !f.optional);
+      assert.ok(screen.fields.length >= 2 || required.length >= 1,
+        `${screen.id} is too thin to show`);
+    }
+  } finally { token = saved; }
+});
