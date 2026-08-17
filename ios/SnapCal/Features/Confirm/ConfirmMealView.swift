@@ -27,6 +27,8 @@ struct ConfirmMealView: View {
             ScrollView {
                 VStack(spacing: Theme.Space.m) {
                     totalCard
+                    verdictCard
+
                     slotPicker
 
                     ForEach($items) { $item in
@@ -170,6 +172,90 @@ struct ConfirmMealView: View {
         .opacity(items.isEmpty ? 0.4 : 1)
         .padding(Theme.Space.m)
         .background(.bar)
+    }
+
+    /// Whether this fits the day, shown before the food list.
+    ///
+    /// Placed above the items because it is the thing the person opened the
+    /// scanner to find out — the macros are the supporting detail.
+    @ViewBuilder private var verdictCard: some View {
+        if let verdict = payload.verdict {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                HStack(spacing: 9) {
+                    Circle()
+                        .fill(verdictTint(verdict.fit))
+                        .frame(width: 9, height: 9)
+
+                    Text(verdict.headline)
+                        .font(.jakarta(16, .semibold))
+
+                    Spacer(minLength: 0)
+
+                    if !verdict.personalised {
+                        // Never imply a personalised verdict from no data.
+                        Text("General")
+                            .font(.jakarta(10, .semibold))
+                            .foregroundStyle(Theme.textMuted)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(Theme.surfaceSunken, in: Capsule())
+                    }
+                }
+
+                Text(verdict.detail)
+                    .font(.jakarta(13, .medium))
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let portion = verdict.portionHint {
+                    Label(portion, systemImage: "scalemass")
+                        .font(.jakarta(12, .semibold))
+                        .foregroundStyle(verdictTint(verdict.fit))
+                }
+
+                if let alternative = verdict.alternative {
+                    Label(alternative, systemImage: "arrow.triangle.swap")
+                        .font(.jakarta(12, .medium))
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !verdict.reasons.isEmpty {
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(verdict.reasons, id: \.self) { reason in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Circle().fill(Theme.secondary.opacity(0.4))
+                                        .frame(width: 4, height: 4).padding(.top, 6)
+                                    Text(reason)
+                                        .font(.jakarta(12, .medium))
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                            }
+                        }
+                        .padding(.top, 6)
+                    } label: {
+                        Text("Why")
+                            .font(.jakarta(12, .semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .tint(Theme.accent)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card(radius: Theme.Radius.row, padding: 0)
+        }
+    }
+
+    /// Amber and red mark fit, never disapproval — every state still lets the
+    /// person eat the food.
+    private func verdictTint(_ fit: String) -> Color {
+        switch fit {
+        case "good":     Theme.accent
+        case "moderate": Theme.warning
+        case "poor":     Theme.streak
+        default:         Theme.secondary
+        }
     }
 
     private func save() {
