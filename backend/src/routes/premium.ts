@@ -12,6 +12,7 @@ import { suggestNextMeal } from "../services/suggest.js";
 import * as safety from "../services/safety.js";
 import {
   readEmotion, emotionalSteer, suppressesCards, isShaming, asksTooMuch,
+  hasEmojiSpam, mustBePlain, stripEmoji,
 } from "../services/emotion.js";
 import { recall, memoriesForPrompt } from "../services/brain.js";
 import { buildHealthState, summariseForPrompt } from "../services/healthState.js";
@@ -93,7 +94,7 @@ export default async function routes(app: FastifyInstance) {
       const wantsDeepContext = ["daily_plan", "progress", "workout_request", "sleep"]
         .includes(intent);
 
-      const [patterns, memories, healthState, followUp] = await Promise.all([
+      const [patterns, memories, healthState, followUp, personal] = await Promise.all([
         wantsDeepContext ? topPatterns(req.userId, 3) : Promise.resolve([]),
         // Memory goes to every turn: knowing someone dislikes running matters
         // as much for a one-line answer as for a plan.
@@ -104,6 +105,8 @@ export default async function routes(app: FastifyInstance) {
         // What was advised, whether it was done, and whether it worked. This
         // is what turns a series of separate answers into a coaching loop.
         buildFollowUp(req.userId, req.tz),
+        // What they told us at onboarding, used only to make advice safer.
+        safety.loadPersonalSafety(req.userId),
       ]);
 
       // Only the last exchange is replayed. Full history would grow the bill
@@ -218,7 +221,12 @@ export default async function routes(app: FastifyInstance) {
           : "Answer briefly and practically.")
         + timeSteer
         + (emotion.state ? " " + emotionalSteer(emotion) : "")
-        + (verdict.action === "allow" ? " " + followUpSteer(followUp) : "");
+        + (verdict.action === "allow" ? " " + followUpSteer(followUp) : "")
+        // A declared condition tightens every reply, not only medical ones.
+        + (safety.personalSteer(personal) ? " " + safety.personalSteer(personal) : "")
+        + (safety.needsExtraCaution(question, personal)
+            ? " Given what they have told you about their health, do not endorse this without saying plainly that their doctor should be the one to agree it."
+            : "");
 
       const messages = [
         { role: "system" as const, content: COACH_SYSTEM },
@@ -280,6 +288,22 @@ export default async function routes(app: FastifyInstance) {
       let reply = safety.validate(cleaned, verdict)
         ?? validateResponse(cleaned, guard)
         ?? (cleaned || "Tell me a bit more and I'll help.");
+
+      /**
+       * Some replies must be plain.
+       *
+       * An emoji next to "please contact emergency services" undermines the
+       * one message that has to land, and the same is true of a medication
+       * boundary or a question about a symptom. Stripped here rather than
+       * trusted to the prompt, because getting it wrong once is enough.
+       */
+      if (mustBePlain(verdict.category) || safety.suppressesRecommendations(verdict)) {
+        reply = stripEmoji(reply);
+      } else if (hasEmojiSpam(reply)) {
+        // Stacked emoji read as noise and undercut everything else said.
+        reply = reply.replace(
+          /(\p{Extended_Pictographic}\uFE0F?)(\s*\1)+/gu, "$1");
+      }
 
       /**
        * Shame and question-stacking are both easy to produce in a coaching
