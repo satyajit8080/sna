@@ -9,12 +9,14 @@ import SwiftUI
 struct BrainView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var app
+    @Environment(EntitlementStore.self) private var entitlements
 
     @State private var memories: BrainMemories?
     @State private var loading = true
     @State private var editing: BrainMemory?
     @State private var draft = ""
     @State private var error: String?
+    @State private var showPaywall = false
 
     var body: some View {
         NavigationStack {
@@ -42,6 +44,7 @@ struct BrainView: View {
             .sheet(item: $editing) { memory in
                 editSheet(memory)
             }
+            .sheet(isPresented: $showPaywall) { PaywallView(context: .brain, source: "brain_empty") }
         }
     }
 
@@ -149,6 +152,22 @@ struct BrainView: View {
                 .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Theme.Space.l)
+
+            // Shown to free users only, and framed as what this becomes rather
+            // than a wall. Nothing here is gated yet — the memory is being
+            // built either way.
+            if !entitlements.isPro {
+                Button {
+                    Haptics.tap()
+                    showPaywall = true
+                } label: {
+                    Text("See what Premium adds")
+                        .font(.jakarta(14, .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .padding(.top, Theme.Space.s)
+            }
+
             Spacer()
         }
     }
