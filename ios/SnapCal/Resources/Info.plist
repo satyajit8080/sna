@@ -56,7 +56,8 @@
 
 	<key>NSHealthShareUsageDescription</key>
 	<string>SnapCal reads your steps, active calories, exercise minutes, sleep, resting heart rate and heart rate variability so your coach can factor in how much you've moved and how well you've recovered. It never writes to Health.</string>
-
+    <key>NSHealthUpdateUsageDescription</key>
+	<string>SnapCal does not write data to Health. This is required by Apple because the app uses HealthKit.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CFBundleURLTypes</key>
