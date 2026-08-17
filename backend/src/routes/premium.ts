@@ -17,6 +17,7 @@ import {
 import { recall, memoriesForPrompt } from "../services/brain.js";
 import { buildHealthState, summariseForPrompt } from "../services/healthState.js";
 import { buildFollowUp, followUpForPrompt, followUpSteer } from "../services/followUp.js";
+import { detectChains, reconcile, detectFeeling } from "../services/chains.js";
 import { onboardingState, welcomeLine } from "../services/coachOnboarding.js";
 import { topPatterns } from "../services/patterns.js";
 import { generateWorkout, savePlan } from "../services/workoutPlanner.js";
@@ -94,7 +95,12 @@ export default async function routes(app: FastifyInstance) {
       const wantsDeepContext = ["daily_plan", "progress", "workout_request", "sleep"]
         .includes(intent);
 
-      const [patterns, memories, healthState, followUp, personal] = await Promise.all([
+      // What they said they feel, checked against what was measured. The
+      // person wins that comparison — always.
+      const feeling = detectFeeling(question);
+
+      const [patterns, memories, healthState, followUp, personal, chains, felt] =
+        await Promise.all([
         wantsDeepContext ? topPatterns(req.userId, 3) : Promise.resolve([]),
         // Memory goes to every turn: knowing someone dislikes running matters
         // as much for a one-line answer as for a plan.
@@ -107,6 +113,9 @@ export default async function routes(app: FastifyInstance) {
         buildFollowUp(req.userId, req.tz),
         // What they told us at onboarding, used only to make advice safer.
         safety.loadPersonalSafety(req.userId),
+        // Cross-domain chains — only worth the query for coaching intents.
+        wantsDeepContext ? detectChains(req.userId, req.tz) : Promise.resolve([]),
+        reconcile(req.userId, req.tz, feeling),
       ]);
 
       // Only the last exchange is replayed. Full history would grow the bill
@@ -168,6 +177,15 @@ export default async function routes(app: FastifyInstance) {
         // half past midnight.
         local_time: localClock(req.tz),
         previous_advice: followUpForPrompt(followUp),
+        // The sequence, not just the symptoms. Telling someone eating badly to
+        // eat better misses that the sleep moved first.
+        connected_pattern: chains[0]
+          ? {
+              summary: chains[0].summary,
+              intervene_at: chains[0].interveneAt,
+              suggested: chains[0].intervention,
+            }
+          : null,
         // Trends and baselines, not raw numbers — "HRV 42" means nothing
         // without knowing this person's normal.
         health_state: healthState ? summariseForPrompt(healthState) : null,
@@ -224,6 +242,7 @@ export default async function routes(app: FastifyInstance) {
         + (verdict.action === "allow" ? " " + followUpSteer(followUp) : "")
         // A declared condition tightens every reply, not only medical ones.
         + (safety.personalSteer(personal) ? " " + safety.personalSteer(personal) : "")
+        + (felt.conflict ? " " + felt.guidance : "")
         + (safety.needsExtraCaution(question, personal)
             ? " Given what they have told you about their health, do not endorse this without saying plainly that their doctor should be the one to agree it."
             : "");
