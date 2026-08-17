@@ -237,10 +237,10 @@ export async function assessReadiness(
   if (sleep.today != null && sleep.baseline != null) {
     if (sleep.deviationPct != null && sleep.deviationPct <= -15) {
       recoveryPoints += 2;
-      rationale.push(`slept ${Math.abs(sleep.deviationPct)}% below their usual`);
+      rationale.push(`slept ${Math.abs(sleep.deviationPct)}% below usual`);
     } else if (sleep.deviationPct != null && sleep.deviationPct >= 5) {
       growthPoints += 1;
-      rationale.push("slept well relative to their normal");
+      rationale.push("slept well relative to normal");
     }
   }
 
