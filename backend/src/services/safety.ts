@@ -160,6 +160,90 @@ const RULES: Rule[] = [
   },
 ];
 
+/**
+ * Personal context that makes the coach *more* careful.
+ *
+ * A declared condition never enables medical advice — it constrains what can
+ * be said. Someone who has told us they are diabetic should get more caution
+ * around fasting and carbohydrate talk, not a management plan. The direction
+ * is the whole point.
+ */
+export type PersonalSafety = {
+  conditions: string[];
+  restrictions: string[];
+  allergies: string[];
+  takesMedication: boolean;
+};
+
+/** Conditions where ordinary advice needs a wider margin. */
+const SENSITIVE = [
+  "diabet", "hypertens", "blood pressure", "heart", "cardiac", "kidney",
+  "renal", "liver", "thyroid", "epilep", "pregnan", "eating disorder",
+  "anorexia", "bulimia", "coeliac", "celiac", "crohn", "colitis",
+];
+
+/**
+ * Extra instruction derived from what the user told us.
+ *
+ * Appended to whatever the turn's steer already says, so a declared condition
+ * tightens every reply rather than only medical ones.
+ */
+export function personalSteer(personal: PersonalSafety): string {
+  const parts: string[] = [];
+
+  const sensitive = personal.conditions.filter(
+    (c) => SENSITIVE.some((s) => c.toLowerCase().includes(s)));
+
+  if (sensitive.length) {
+    parts.push(
+      `They have told you they live with: ${sensitive.join(", ")}. ` +
+      `Keep advice conservative and general, avoid anything that could interact ` +
+      `with how that is managed — fasting, large deficits, sudden training jumps — ` +
+      `and where it is relevant say that their doctor or dietitian should be the ` +
+      `one to sign off a change. Do not offer to manage the condition itself.`
+    );
+  }
+
+  if (personal.restrictions.length) {
+    parts.push(
+      `A clinician has told them to avoid: ${personal.restrictions.join("; ")}. ` +
+      `Never suggest any of it.`
+    );
+  }
+
+  if (personal.allergies.length) {
+    parts.push(
+      `Allergies: ${personal.allergies.join(", ")}. Never recommend a food ` +
+      `containing these, and do not suggest they test their tolerance.`
+    );
+  }
+
+  if (personal.takesMedication) {
+    parts.push(
+      `They take medication. You may acknowledge that it exists, but never ` +
+      `comment on timing, dose, interactions, or whether to continue it.`
+    );
+  }
+
+  return parts.join(" ");
+}
+
+/**
+ * Whether a declared condition makes an otherwise ordinary request risky.
+ *
+ * Extreme-restriction language is already blocked for everyone; for someone
+ * with a metabolic or cardiac condition the threshold drops further, because
+ * the same advice carries more consequence.
+ */
+export function needsExtraCaution(question: string, personal: PersonalSafety): boolean {
+  if (!personal.conditions.some((c) => SENSITIVE.some((s) => c.toLowerCase().includes(s)))) {
+    return false;
+  }
+
+  return /\b(fast|fasting|skip (a )?meal|cut carbs|keto|very low calorie|detox|cleanse)\b/i
+    .test(question);
+}
+
 export function assess(question: string): SafetyVerdict {
   for (const rule of RULES) {
     if (rule.patterns.some((p) => p.test(question))) {
@@ -266,4 +350,26 @@ export function suppressesRecommendations(verdict: SafetyVerdict): boolean {
     || verdict.category === "disordered_eating"
     || verdict.category === "extreme_restriction"
     || verdict.category === "exercise_risk";
+}
+
+/** Reads the personal safety context. Cheap enough to run on every turn. */
+export async function loadPersonalSafety(userId: string): Promise<PersonalSafety> {
+  const { q, one } = await import("../db.js");
+
+  const [conditions, allergies, medication] = await Promise.all([
+    q<{ condition: string; restriction: string | null }>(
+      `SELECT condition, restriction FROM health_conditions WHERE user_id = $1`, [userId]),
+    q<{ allergen: string }>(
+      `SELECT allergen FROM user_allergies WHERE user_id = $1`, [userId]),
+    one<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM medications
+        WHERE user_id = $1 AND kind = 'medication' AND active`, [userId]),
+  ]);
+
+  return {
+    conditions: conditions.map((c) => c.condition).filter((c) => c !== "unspecified"),
+    restrictions: conditions.map((c) => c.restriction).filter((r): r is string => !!r),
+    allergies: allergies.map((a) => a.allergen),
+    takesMedication: Number(medication?.n ?? 0) > 0,
+  };
 }
