@@ -6,6 +6,7 @@ import { dailyBalance } from "./budget.js";
 import { activityFor } from "./activity.js";
 import * as safety from "./safety.js";
 import { topSleepInsight } from "./sleep.js";
+import { detectChains } from "./chains.js";
 
 /**
  * The coach orchestrator.
@@ -57,6 +58,8 @@ type Signals = {
   workoutsThisWeek: number;
   trainingDays: number;
   lastWorkoutDaysAgo: number | null;
+  /** The strongest cross-domain chain, if one is running. */
+  chain: Awaited<ReturnType<typeof detectChains>>[number] | null;
   /** The single sleep finding worth acting on, if there is one. */
   sleepInsight: Awaited<ReturnType<typeof topSleepInsight>>;
   /** Local hour, so a routine deviation can be judged against the clock. */
@@ -70,7 +73,7 @@ async function gatherSignals(userId: string, tz: string): Promise<Signals> {
   const today = localDate(tz);
 
   const [state, memories, targets, consumed, water, activity, workouts, fitness,
-         sleepInsight] = await Promise.all([
+         sleepInsight, chains] = await Promise.all([
       buildHealthState(userId, today),
       recall(userId, { limit: 12 }),
       one<any>(`SELECT calories, protein_g, water_ml FROM nutrition_targets WHERE user_id = $1`,
@@ -91,6 +94,7 @@ async function gatherSignals(userId: string, tz: string): Promise<Signals> {
           WHERE user_id = $1 AND performed_on > CURRENT_DATE - 7`, [userId]),
       one<any>(`SELECT training_days FROM fitness_profile WHERE user_id = $1`, [userId]),
       topSleepInsight(userId, tz),
+      detectChains(userId, tz),
     ]) as any;
 
   const balance = dailyBalance(targets, consumed, activity);
@@ -118,6 +122,7 @@ async function gatherSignals(userId: string, tz: string): Promise<Signals> {
     trainingDays: fitness?.training_days ?? 3,
     lastWorkoutDaysAgo: workouts?.days_since ?? null,
     sleepInsight,
+    chain: chains[0] ?? null,
   };
 }
 
@@ -267,6 +272,23 @@ function generateCandidates(s: Signals): CandidateAction[] {
         triggeredBy: ["low_activity"],
       });
     }
+  }
+
+  // ── the chain ───────────────────────────────────────────────────────────
+  // Highest impact available: acting at the start of a sequence beats treating
+  // the symptom at the end of it.
+  if (s.chain) {
+    add({
+      domain: s.chain.interveneAt === "sleep" ? "sleep"
+            : s.chain.interveneAt === "recovery" ? "recovery"
+            : s.chain.interveneAt === "nutrition" ? "nutrition"
+            : "habit",
+      impact: 95,
+      confidence: s.chain.confidence === "high" ? 0.85 : 0.65,
+      action: s.chain.intervention.split(".")[0] + ".",
+      reason: s.chain.summary,
+      triggeredBy: ["chain", s.chain.id],
+    });
   }
 
   // ── memory-driven ───────────────────────────────────────────────────────
