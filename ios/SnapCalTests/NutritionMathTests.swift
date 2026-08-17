@@ -911,3 +911,75 @@ struct CoachWelcomeTests {
         #expect(welcome.greeting == nil)
     }
 }
+
+/// Scan verdicts. The rule that matters most: no food is ever called bad.
+struct ScanVerdictTests {
+
+    private func decode(_ json: String) throws -> ScanVerdict {
+        try JSONDecoder().decode(ScanVerdict.self, from: json.data(using: .utf8)!)
+    }
+
+    @Test("a verdict decodes with its reasons and portion advice")
+    func decodeVerdict() throws {
+        let verdict = try decode("""
+        {"fit":"moderate","headline":"Fine — keep an eye on the portion",
+         "detail":"You can have this. It's calorie-dense.",
+         "reasons":["Calorie-dense at 406 kcal per 100g","Light on protein (6g)"],
+         "alternative":null,"portionHint":"Around 280g would fit better",
+         "personalised":true}
+        """)
+
+        #expect(verdict.fit == "moderate")
+        #expect(verdict.reasons.count == 2)
+        #expect(verdict.portionHint != nil)
+        #expect(verdict.personalised)
+    }
+
+    @Test("a general verdict is marked as such")
+    func generalVerdict() throws {
+        let verdict = try decode("""
+        {"fit":"good","headline":"Solid choice","detail":"Log a few more meals.",
+         "reasons":["297 kcal"],"alternative":null,"portionHint":null,
+         "personalised":false}
+        """)
+
+        // The UI shows a "General" badge for this — implying a personalised
+        // verdict from no data would be a small dishonesty that costs trust in
+        // everything else.
+        #expect(!verdict.personalised)
+    }
+
+    @Test("a scan response without a verdict still decodes")
+    func backwardsCompatible() throws {
+        let json = """
+        {"foods":[],"total":{"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0},
+         "confidence":0.8,"assumptions":[],"is_estimate":true,
+         "disclaimer":"AI estimate."}
+        """.data(using: .utf8)!
+
+        // An older server must not break the scan flow.
+        let response = try JSONDecoder().decode(AnalysisResponse.self, from: json)
+        #expect(response.verdict == nil)
+    }
+
+    @Test("a poor fit still offers a way to eat the food")
+    func poorFitIsNotARefusal() throws {
+        let verdict = try decode("""
+        {"fit":"poor","headline":"A lot for what's left today",
+         "detail":"This is 1120 kcal against about 407 left. Roughly 145g would fit.",
+         "reasons":["1120 kcal against 407 left today"],
+         "alternative":"Eggs on toast would hit similar calories with more protein",
+         "portionHint":"About 145g ≈ 407 kcal","personalised":true}
+        """)
+
+        // Red marks fit, never disapproval — there is always a route to
+        // eating it.
+        #expect(verdict.portionHint != nil || verdict.alternative != nil)
+
+        let text = "\(verdict.headline) \(verdict.detail)"
+        for banned in ["bad", "unhealthy", "cheat", "avoid", "forbidden", "failed"] {
+            #expect(!text.lowercased().contains(banned),
+                    "moralising language in a verdict: \(text)")
+        }
+    }
+}
