@@ -10,6 +10,9 @@ import {
 import { dailyBriefing, runLearningCycle } from "../services/orchestrator.js";
 import { planNotifications, recordEngagement } from "../services/notifications.js";
 import { sleepSummary, clockLabel } from "../services/sleep.js";
+import {
+  onboardingPlan, saveScreen, skipScreen, finishOnboarding,
+} from "../services/onboarding.js";
 
 /**
  * Personal Health Brain endpoints.
@@ -91,6 +94,75 @@ export default async function routes(app: FastifyInstance) {
    */
   app.post("/coach/learn-cycle", { preHandler: requireAuth }, async (req) =>
     runLearningCycle(req.userId, req.tz));
+
+  // ── onboarding ────────────────────────────────────────────────────────────
+  /**
+   * The screens this user should see.
+   *
+   * Adaptive: anything already known is dropped, and a screen whose fields are
+   * all known disappears entirely. Someone who has connected Health and filled
+   * a profile may see three screens rather than eight.
+   */
+  app.get("/onboarding/plan", { preHandler: requireAuth }, async (req) => {
+    const { answers } = z.object({
+      answers: z.string().optional(),
+    }).parse(req.query);
+
+    const parsed = answers ? JSON.parse(answers) : {};
+    return onboardingPlan(req.userId, parsed);
+  });
+
+  app.post("/onboarding/screen", { preHandler: requireAuth }, async (req) => {
+    const { screen, answers, skipped } = z.object({
+      screen: z.string().max(40),
+      answers: z.record(z.any()).default({}),
+      skipped: z.boolean().default(false),
+    }).parse(req.body);
+
+    if (skipped) await skipScreen(req.userId, screen);
+    else await saveScreen(req.userId, screen, answers);
+
+    // Recomputed rather than assumed: an answer can remove a later screen.
+    return onboardingPlan(req.userId, answers);
+  });
+
+  app.post("/onboarding/finish", { preHandler: requireAuth }, async (req) => {
+    await finishOnboarding(req.userId);
+    return { completed: true };
+  });
+
+  /** The health profile, for the "what SnapCal knows" screen and for editing. */
+  app.get("/health/profile", { preHandler: requireAuth }, async (req) => {
+    const [schedule, conditions, allergies, meds, mind, profile] = await Promise.all([
+      one(`SELECT * FROM daily_schedule WHERE user_id = $1`, [req.userId]),
+      q(`SELECT id, condition, restriction FROM health_conditions WHERE user_id = $1`, [req.userId]),
+      q(`SELECT id, allergen, kind, severity FROM user_allergies WHERE user_id = $1`, [req.userId]),
+      q(`SELECT id, name, dose, frequency, times, purpose, kind, reminders
+           FROM medications WHERE user_id = $1 AND active ORDER BY kind, name`, [req.userId]),
+      one(`SELECT * FROM mind_profile WHERE user_id = $1`, [req.userId]),
+      one(`SELECT primary_goal, secondary_goals, success_looks_like, work_type
+             FROM profiles WHERE user_id = $1`, [req.userId]),
+    ]);
+
+    return { schedule, conditions, allergies, medications: meds, mind, goals: profile };
+  });
+
+  /** Anything here must be removable — it is the most sensitive data we hold. */
+  app.delete("/health/conditions/:id", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.coerce.number() }).parse(req.params);
+    const gone = await one(
+      `DELETE FROM health_conditions WHERE id = $2 AND user_id = $1 RETURNING id`,
+      [req.userId, id]);
+    return gone ? { deleted: true } : reply.code(404).send({ error: "not_found" });
+  });
+
+  app.delete("/medications/:id", { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const gone = await one(
+      `DELETE FROM medications WHERE id = $2 AND user_id = $1 RETURNING id`,
+      [req.userId, id]);
+    return gone ? { deleted: true } : reply.code(404).send({ error: "not_found" });
+  });
 
   // ── sleep ─────────────────────────────────────────────────────────────────
   /**
