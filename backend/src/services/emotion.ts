@@ -229,3 +229,57 @@ export function asksTooMuch(answer: string): boolean {
   const topics = TOPICS.filter((t) => new RegExp(`\\b${t}`, "i").test(question));
   return topics.length >= 3;
 }
+
+
+// MARK: - Voice
+
+/**
+ * Emoji handling.
+ *
+ * Warmth is a product decision and emoji carry it well in ordinary
+ * conversation. But they are wrong in two places, and the model cannot be
+ * relied on to know the difference every time: anything safety-related, and
+ * anything stacked for emphasis.
+ */
+
+/** Matches a single emoji, including the multi-codepoint kind. */
+const EMOJI = /\p{Extended_Pictographic}(\uFE0F|\u200D\p{Extended_Pictographic})*/gu;
+
+export function countEmoji(text: string): number {
+  return (text.match(EMOJI) ?? []).length;
+}
+
+/**
+ * More than three, or the same one repeated, reads as noise rather than
+ * warmth — and undercuts everything else the reply says.
+ */
+export function hasEmojiSpam(text: string): boolean {
+  const found = text.match(EMOJI) ?? [];
+  if (found.length > 3) return true;
+
+  // Three fires in a row is emphasis, not meaning.
+  return /(\p{Extended_Pictographic}\uFE0F?)\1{1,}/u.test(text);
+}
+
+/**
+ * Contexts where a cheerful glyph is actively wrong.
+ *
+ * A reply about chest pain, a medication boundary, or someone in crisis must
+ * be plain. This is not a style preference — an emoji next to "please contact
+ * emergency services" undermines the one message that has to land.
+ */
+export function mustBePlain(category: string | null | undefined): boolean {
+  return ["urgent", "self_harm", "emergency", "medical",
+          "diagnosis_request", "exercise_risk"].includes(category ?? "");
+}
+
+/** Removes every emoji, for replies that must be plain. */
+export function stripEmoji(text: string): string {
+  return text
+    .replace(EMOJI, "")
+    // Removing a glyph leaves the space that preceded it stranded before the
+    // punctuation: "a doctor now ." rather than "a doctor now."
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
