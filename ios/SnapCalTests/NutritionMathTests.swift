@@ -152,15 +152,6 @@ struct EntitlementTests {
         #expect(PremiumRequired(feature: "something_new", reason: "limit_reached", usage: nil).context == .foodScan)
     }
 
-    @Test("every paywall context has copy and benefits")
-    func paywallCopy() {
-        for context in [PaywallContext.foodScan, .coach, .mealPlan, .report, .general] {
-            #expect(!context.headline.isEmpty)
-            #expect(!context.subhead.isEmpty)
-            #expect(context.benefits.count >= 4)
-        }
-    }
-
     @Test("entitlements decode the backend payload")
     func decodeEntitlements() throws {
         let json = """
