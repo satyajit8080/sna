@@ -30,6 +30,7 @@ struct HomeView: View {
                         latestCard(latest)
                         trendCard
                         averagesCard
+                        insightCard
                         medicationCard
                         sodiumCard
                         activityCard
@@ -62,6 +63,55 @@ struct HomeView: View {
     /// normal practice, and it should be obvious whether one was taken.
     private var todayCount: Int {
         readings.filter { Calendar.current.isDateInToday($0.recordedAt) }.count
+    }
+
+    /// Deterministic insight. Present whether or not the coach is configured.
+    private var insightCard: some View {
+        let doses = allDoses.filter { $0.profileID == app.activeProfile.id }
+        let sodium = allLifestyle
+            .filter {
+                $0.profileID == app.activeProfile.id && $0.kind == .sodium
+                    && Calendar.current.isDateInToday($0.recordedAt)
+            }
+            .reduce(0) { $0 + $1.value }
+
+        let insight = DailyInsight.forToday(
+            readings: readings,
+            doses: doses,
+            sodiumToday: sodium,
+            sodiumTarget: SodiumSettings.dailyTarget,
+            guideline: guidelines.active
+        )
+
+        return Group {
+            if let insight {
+                CardView {
+                    HStack(alignment: .top, spacing: Theme.Spacing.md) {
+                        Image(systemName: insight.symbol)
+                            .font(.title3)
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(insight.headline).font(.subheadline.weight(.semibold))
+                            Text(insight.body)
+                                .font(.footnote)
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The next dose still awaiting an answer.
+    private var nextDoseText: String? {
+        let doses = allDoses.filter { $0.profileID == app.activeProfile.id }
+        guard let next = MedicationEngine.nextDue(from: doses) else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return "Next dose \(formatter.localizedString(for: next.scheduledFor, relativeTo: .now))"
     }
 
     private var appointmentCard: some View {
@@ -238,6 +288,12 @@ struct HomeView: View {
                                 Text("No doses recorded yet.")
                                     .font(.subheadline)
                                     .foregroundStyle(Theme.textSecondary)
+                            }
+
+                            if let nextDoseText {
+                                Label(nextDoseText, systemImage: "clock")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.accent)
                             }
                         }
                     }

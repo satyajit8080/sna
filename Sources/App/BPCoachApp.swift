@@ -22,6 +22,7 @@ struct BPCoachApp: App {
                 .environment(appModel.guidelines)
                 .environment(appModel.health)
                 .tint(Theme.accent)
+                .preferredColorScheme(appModel.settings.appearance.colorScheme)
                 .overlay(alignment: .top) {
                     if stack.isEphemeral { StorageWarningBanner() }
                 }

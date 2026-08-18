@@ -51,7 +51,7 @@ struct MoreView: View {
                 link("Help & Support", "questionmark.circle.fill") { SupportView() }
                 link("About", "info.circle.fill") { AboutView() }
                 link("Terms of Use", "doc.plaintext.fill") { TermsView() }
-                link("App Settings", "gearshape.fill") { SettingsView() }
+                link("App Settings", "gearshape.fill") { AppSettingsView() }
             }
         }
         .navigationTitle("More")

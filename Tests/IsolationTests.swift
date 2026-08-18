@@ -431,3 +431,168 @@ struct HealthKitTypeTests {
         #expect(source.contains("bloodPressureDiastolic"))
     }
 }
+
+/// Daily insight rules.
+///
+/// The insight is deterministic on purpose: it appears whether or not the AI
+/// coach is configured, and it must say the same thing every time it is
+/// computed from the same data.
+@Suite("Daily insight")
+struct DailyInsightTests {
+
+    private let guideline = ACCAHA2017Guideline()
+
+    private func reading(_ systolic: Int, _ diastolic: Int, hoursAgo: Double) -> BPReading {
+        BPReading(
+            profileID: UUID(), systolic: systolic, diastolic: diastolic,
+            recordedAt: Date.now.addingTimeInterval(-hoursAgo * 3_600)
+        )
+    }
+
+    @Test("No data produces no insight rather than a filler message")
+    func emptyProducesNothing() {
+        #expect(DailyInsight.forToday(
+            readings: [], doses: [], sodiumToday: 0, sodiumTarget: 1500, guideline: guideline
+        ) == nil)
+    }
+
+    @Test("Missed doses surface once there is enough history to be fair")
+    func adherenceInsight() {
+        var doses: [MedicationDose] = []
+        for index in 0..<10 {
+            let dose = MedicationDose(
+                profileID: UUID(), medicationID: UUID(),
+                scheduledFor: Date.now.addingTimeInterval(-Double(index) * 86_400)
+            )
+            dose.status = index < 5 ? .taken : .missed
+            doses.append(dose)
+        }
+
+        let insight = DailyInsight.forToday(
+            readings: [reading(120, 80, hoursAgo: 2)],
+            doses: doses, sodiumToday: 0, sodiumTarget: 1500, guideline: guideline
+        )
+        #expect(insight?.headline.contains("%") == true)
+        #expect(insight?.action == .medication)
+    }
+
+    /// Fewer than seven resolved doses is not enough to draw a conclusion from.
+    @Test("Thin dose history does not trigger an adherence insight")
+    func adherenceNeedsHistory() {
+        var doses: [MedicationDose] = []
+        for _ in 0..<3 {
+            let dose = MedicationDose(profileID: UUID(), medicationID: UUID(), scheduledFor: .now)
+            dose.status = .missed
+            doses.append(dose)
+        }
+        let insight = DailyInsight.forToday(
+            readings: [reading(120, 80, hoursAgo: 2)],
+            doses: doses, sodiumToday: 0, sodiumTarget: 1500, guideline: guideline
+        )
+        #expect(insight?.action != .medication)
+    }
+
+    @Test("High sodium is reported against the target")
+    func sodiumInsight() {
+        let insight = DailyInsight.forToday(
+            readings: [reading(120, 80, hoursAgo: 2)],
+            doses: [], sodiumToday: 3000, sodiumTarget: 1500, guideline: guideline
+        )
+        #expect(insight?.action == .sodium)
+        #expect(insight?.body.contains("3000") == true)
+    }
+
+    @Test("The same input always yields the same insight")
+    func deterministic() {
+        let readings = (0..<10).map { reading(120, 80, hoursAgo: Double($0) * 3) }
+        let first = DailyInsight.forToday(
+            readings: readings, doses: [], sodiumToday: 0,
+            sodiumTarget: 1500, guideline: guideline
+        )
+        for _ in 0..<20 {
+            let repeated = DailyInsight.forToday(
+                readings: readings, doses: [], sodiumToday: 0,
+                sodiumTarget: 1500, guideline: guideline
+            )
+            #expect(repeated == first)
+        }
+    }
+}
+
+@Suite("Quiet hours")
+struct QuietHoursTests {
+
+    private func hours(_ start: Int, _ end: Int) -> NotificationEngine.QuietHours {
+        NotificationEngine.QuietHours(isEnabled: true, startHour: start, endHour: end)
+    }
+
+    /// The normal case: a window that crosses midnight.
+    @Test("An overnight window covers both sides of midnight")
+    func overnightWindow() {
+        let quiet = hours(22, 7)
+        #expect(quiet.contains(hour: 23))
+        #expect(quiet.contains(hour: 2))
+        #expect(quiet.contains(hour: 6))
+        #expect(!quiet.contains(hour: 7))
+        #expect(!quiet.contains(hour: 12))
+    }
+
+    @Test("A same-day window behaves normally")
+    func sameDayWindow() {
+        let quiet = hours(13, 15)
+        #expect(quiet.contains(hour: 14))
+        #expect(!quiet.contains(hour: 16))
+        #expect(!quiet.contains(hour: 2))
+    }
+
+    @Test("Disabled quiet hours never suppress anything")
+    func disabled() {
+        let quiet = NotificationEngine.QuietHours(isEnabled: false, startHour: 22, endHour: 7)
+        for hour in 0..<24 { #expect(!quiet.contains(hour: hour)) }
+    }
+
+    /// A suppressed reminder moves rather than disappearing.
+    @Test("Reminders resume at the end of the window")
+    func resumesAtEnd() {
+        #expect(hours(22, 7).resumeHour == 7)
+    }
+}
+
+@Suite("App settings")
+@MainActor
+struct AppSettingsTests {
+
+    private func settings() -> AppSettings {
+        AppSettings(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+    }
+
+    @Test("Appearance maps to a colour scheme, with system meaning nil")
+    func appearanceMapping() {
+        #expect(AppSettings.Appearance.system.colorScheme == nil)
+        #expect(AppSettings.Appearance.light.colorScheme == .light)
+        #expect(AppSettings.Appearance.dark.colorScheme == .dark)
+    }
+
+    /// Weight is stored in kilograms whatever the display unit, so switching
+    /// units must never change a stored value.
+    @Test("Pounds is a display conversion, not a stored unit")
+    func weightConversion() {
+        let store = settings()
+        store.weightUnit = .kilograms
+        #expect(store.displayWeight(70).contains("70.0 kg"))
+        store.weightUnit = .pounds
+        #expect(store.displayWeight(70).contains("154"))
+    }
+
+    @Test("Preferences survive a new instance")
+    func persistence() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let first = AppSettings(defaults: defaults)
+        first.appearance = .dark
+        first.weightUnit = .pounds
+
+        let second = AppSettings(defaults: defaults)
+        #expect(second.appearance == .dark)
+        #expect(second.weightUnit == .pounds)
+    }
+}

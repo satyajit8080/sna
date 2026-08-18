@@ -155,6 +155,10 @@ struct CoachView: View {
                 }
             }
 
+            CoachQuickActions(isConfigured: app.coach.isConfigured) { request in
+                send(request: request)
+            }
+
             CardView {
                 VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                     SectionHeader(
@@ -358,6 +362,21 @@ struct CoachView: View {
         attachments = []
         draft = ""
         error = nil
+    }
+
+    /// Sends a structured request rather than free text, so the backend prompt
+    /// can treat these consistently.
+    private func send(request: CoachRequest) {
+        let label: String
+        switch request {
+        case .whatMovedMyBP: label = "What moved my blood pressure recently?"
+        case .weeklyReview: label = "Give me a short review of my week."
+        case .questionsForDoctor: label = "What should I ask my doctor at my next appointment?"
+        case .explainReading: label = "Explain my latest reading."
+        case .freeform(let text): label = text
+        }
+        draft = label
+        send()
     }
 
     private func send() {

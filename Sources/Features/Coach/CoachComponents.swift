@@ -59,6 +59,42 @@ struct MessageBubble: View {
     }
 }
 
+/// Quick actions that map to the structured `CoachRequest` cases, so those are
+/// reachable rather than existing only in the enum.
+struct CoachQuickActions: View {
+    let isConfigured: Bool
+    let onSelect: (CoachRequest) -> Void
+
+    private let actions: [(String, String, CoachRequest)] = [
+        ("What moved my BP?", "arrow.up.arrow.down", .whatMovedMyBP),
+        ("Weekly review", "calendar.badge.clock", .weeklyReview),
+        ("Questions for my doctor", "questionmark.bubble", .questionsForDoctor),
+    ]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Spacing.sm) {
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                    Button {
+                        onSelect(action.2)
+                    } label: {
+                        Label(action.0, systemImage: action.1)
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Theme.accentSoft)
+                            .foregroundStyle(Theme.accent)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!isConfigured)
+                    .opacity(isConfigured ? 1 : 0.5)
+                }
+            }
+        }
+    }
+}
+
 /// A prompt the user can tap instead of typing.
 ///
 /// Suggestions adapt to what the person actually has: offering "explain my

@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(GuidelineEngine.self) private var guidelines
@@ -106,15 +107,26 @@ struct GuidelineSettingsView: View {
 }
 
 struct NotificationSettingsView: View {
+    @Environment(\.openURL) private var openURL
     @State private var authorizationDenied = false
+    @State private var quiet = NotificationEngine.QuietHours.current()
+    @State private var pendingCount = 0
 
     var body: some View {
         List {
             if authorizationDenied {
                 Section {
-                    ErrorBanner(error: .notificationsDenied)
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        ErrorBanner(error: .notificationsDenied)
+                        Button("Open iOS Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                openURL(url)
+                            }
+                        }
+                        .font(.subheadline)
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                    .listRowBackground(Color.clear)
                 }
             }
 
@@ -122,14 +134,58 @@ struct NotificationSettingsView: View {
                 ForEach(NotificationEngine.Category.allCases, id: \.self) { category in
                     NotificationToggle(category: category)
                 }
+            } header: {
+                Text("Categories")
             } footer: {
-                Text("Each category is scheduled locally on this device. BP Coach sends no push notifications.")
+                Text("Everything is scheduled on this device. BP Coach sends no push notifications.")
+            }
+
+            Section {
+                Toggle("Quiet hours", isOn: $quiet.isEnabled)
+                if quiet.isEnabled {
+                    Picker("From", selection: $quiet.startHour) {
+                        ForEach(0..<24, id: \.self) { Text(hourLabel($0)).tag($0) }
+                    }
+                    Picker("Until", selection: $quiet.endHour) {
+                        ForEach(0..<24, id: \.self) { Text(hourLabel($0)).tag($0) }
+                    }
+                }
+            } header: {
+                Text("Quiet hours")
+            } footer: {
+                Text("""
+                Reminders due during quiet hours move to \(hourLabel(quiet.endHour)) rather \
+                than being dropped — a medication reminder that never arrives is worse than \
+                a late one.
+                """)
+            }
+
+            Section {
+                LabeledContent("Scheduled reminders", value: "\(pendingCount)")
+                Button("Open iOS notification settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(url)
+                    }
+                }
+            } footer: {
+                Text("Sounds, banners and the lock screen are controlled by iOS.")
             }
         }
         .navigationTitle("Notifications")
+        .onChange(of: quiet.isEnabled) { _, _ in quiet.save() }
+        .onChange(of: quiet.startHour) { _, _ in quiet.save() }
+        .onChange(of: quiet.endHour) { _, _ in quiet.save() }
         .task {
             authorizationDenied = await !NotificationEngine.shared.isAuthorized()
+            pendingCount = await NotificationEngine.shared.pendingCount()
         }
+    }
+
+    private func hourLabel(_ hour: Int) -> String {
+        var components = DateComponents()
+        components.hour = hour
+        let date = Calendar.current.date(from: components) ?? .now
+        return date.formatted(date: .omitted, time: .shortened)
     }
 }
 

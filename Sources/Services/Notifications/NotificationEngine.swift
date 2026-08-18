@@ -40,6 +40,55 @@ final class NotificationEngine {
 
     private init() {}
 
+    // MARK: - Quiet hours
+
+    /// Reminders are suppressed between these hours.
+    ///
+    /// Implemented by shifting a reminder to the end of the quiet window rather
+    /// than dropping it — a medication reminder that silently never fires is
+    /// worse than one that arrives a little later.
+    struct QuietHours {
+        var isEnabled: Bool
+        var startHour: Int
+        var endHour: Int
+
+        static func current(defaults: UserDefaults = .standard) -> QuietHours {
+            QuietHours(
+                isEnabled: defaults.bool(forKey: "quiet.enabled"),
+                startHour: defaults.object(forKey: "quiet.start") as? Int ?? 22,
+                endHour: defaults.object(forKey: "quiet.end") as? Int ?? 7
+            )
+        }
+
+        func save(to defaults: UserDefaults = .standard) {
+            defaults.set(isEnabled, forKey: "quiet.enabled")
+            defaults.set(startHour, forKey: "quiet.start")
+            defaults.set(endHour, forKey: "quiet.end")
+        }
+
+        /// Quiet windows normally cross midnight, so the comparison differs
+        /// depending on whether start is before or after end.
+        func contains(hour: Int) -> Bool {
+            guard isEnabled else { return false }
+            return startHour <= endHour
+                ? (hour >= startHour && hour < endHour)
+                : (hour >= startHour || hour < endHour)
+        }
+
+        /// The hour a suppressed reminder should move to.
+        var resumeHour: Int { endHour }
+    }
+
+    /// Shifts a time out of the quiet window if it falls inside one.
+    func adjustedForQuietHours(_ components: DateComponents) -> DateComponents {
+        let quiet = QuietHours.current()
+        guard let hour = components.hour, quiet.contains(hour: hour) else { return components }
+        var shifted = components
+        shifted.hour = quiet.resumeHour
+        shifted.minute = components.minute
+        return shifted
+    }
+
     func isEnabled(_ category: Category, defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: "notify.\(category.rawValue)") as? Bool ?? true
     }
@@ -71,7 +120,9 @@ final class NotificationEngine {
         content.sound = .default
         content.userInfo = ["deepLink": Category.measurement.deepLink?.absoluteString ?? ""]
 
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let components = adjustedForQuietHours(
+            Calendar.current.dateComponents([.hour, .minute], from: date)
+        )
         let request = UNNotificationRequest(
             identifier: "measurement.daily",
             content: content,
@@ -131,10 +182,11 @@ final class NotificationEngine {
         content.userInfo = ["deepLink": Category.medication.deepLink?.absoluteString ?? "",
                             "medicationID": medicationID.uuidString]
 
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let raw = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let components = adjustedForQuietHours(raw)
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
         let request = UNNotificationRequest(
-            identifier: "medication.\(medicationID.uuidString).\(components.hour ?? 0).\(components.minute ?? 0)",
+            identifier: "medication.\(medicationID.uuidString).\(raw.hour ?? 0).\(raw.minute ?? 0)",
             content: content,
             trigger: trigger
         )
