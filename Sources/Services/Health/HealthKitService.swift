@@ -19,14 +19,34 @@ final class HealthKitService {
     enum HealthKitError: LocalizedError {
         case unavailable
         case notOwnerProfile
+        case missingUsageDescription(String)
 
         var errorDescription: String? {
             switch self {
-            case .unavailable: "Health data is not available on this device."
+            case .unavailable:
+                "Health data is not available on this device."
             case .notOwnerProfile:
                 "Apple Health is only connected to the device owner's profile. Other profiles use readings you enter yourself."
+            case .missingUsageDescription(let key):
+                "This build cannot connect to Apple Health: \(key) is missing from its configuration."
             }
         }
+    }
+
+    /// iOS terminates the process outright — no catchable error — if HealthKit
+    /// authorization is requested while the required purpose strings are absent
+    /// from Info.plist. Checking first turns a hard crash into a message.
+    ///
+    /// `NSHealthShareUsageDescription` covers reading, `NSHealthUpdateUsageDescription`
+    /// covers writing. Requesting both without both strings is fatal.
+    static func missingUsageDescriptionKey(bundle: Bundle = .main) -> String? {
+        for key in ["NSHealthShareUsageDescription", "NSHealthUpdateUsageDescription"] {
+            let value = bundle.object(forInfoDictionaryKey: key) as? String
+            if value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+                return key
+            }
+        }
+        return nil
     }
 
     struct ActivitySnapshot: Equatable, Sendable {
@@ -102,9 +122,22 @@ final class HealthKitService {
         guard isAvailable else { throw HealthKitError.unavailable }
         guard profile.kind.canUseHealthKit else { throw HealthKitError.notOwnerProfile }
 
+        // Must come before the request. Afterwards is too late — the process is
+        // already gone.
+        if let missing = Self.missingUsageDescriptionKey() {
+            lastError = "Missing \(missing)"
+            throw HealthKitError.missingUsageDescription(missing)
+        }
+
         hasRequestedAuthorization = true
-        try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
-        return true
+        do {
+            try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            throw error
+        }
     }
 
     // MARK: - Reading blood pressure
