@@ -44,7 +44,7 @@ struct HealthDataView: View {
                 Section {
                     Button("Connect Apple Health") {
                         Task {
-                            do { try await app.health.requestAuthorization(for: app.activeProfile) }
+                            do { try await app.health.requestReadAuthorization(for: app.activeProfile) }
                             catch { self.error = .healthKitDenied }
                         }
                     }
