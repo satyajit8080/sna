@@ -45,6 +45,9 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: BP Coach
+        # Declares the standard export-compliance exemption: HTTPS only, no
+        # custom cryptography. Without it, every TestFlight upload stops and
+        # asks the question manually.
         ITSAppUsesNonExemptEncryption: false
         # Required by App Store validation for any app built against the iOS 11
         # SDK or later. Xcode only synthesises this when it generates the
