@@ -211,7 +211,8 @@ workflows:
             echo "=================== COMPILER ERRORS ==================="
             # The useful lines are buried in a very verbose transcript, so pull
             # them out explicitly rather than tailing the end of the log.
-            grep -E "error:|warning: will never be executed" /tmp/build.log \
+            grep -E "error:" /tmp/build.log \
+              | grep -vE "CoreData: error:|Mount (on|from) name|i-nodes|data blocks|File system" \
               | sed 's|/Users/builder/clone/||' | sort -u | head -80
             echo "======================================================="
             echo ""
@@ -232,8 +233,15 @@ workflows:
 
           if ! grep -qE "TEST SUCCEEDED|TEST EXECUTE SUCCEEDED" /tmp/test.log; then
             echo "=================== TEST FAILURES ==================="
-            grep -E "error:|failed|XCTAssert|Expectation failed" /tmp/test.log \
+            # CoreData emits hundreds of "error:" lines describing filesystem
+            # state whenever a store fails to open. Those drown out the actual
+            # failure, so they are filtered rather than tailed.
+            grep -E "error:|failed|XCTAssert|Expectation failed|Test Case.*failed" /tmp/test.log \
+              | grep -vE "CoreData: (error|annotation):|Mount (on|from) name|i-nodes|data blocks|File system|Filesystem|Device ID|File (Size|inode|user ID|group ID|Permissions)|Owner UID|Sandbox access|Executing as effective user|^-+$" \
               | sed 's|/Users/builder/clone/||' | sort -u | head -60
+            echo ""
+            echo "--- first store-open failure, if any ---"
+            grep -m3 -E "Failed to (stat|statfs)|NSPersistentStoreCoordinator|Could not create|SwiftData" /tmp/test.log | head -5
             echo "===================================================="
             exit 1
           fi
