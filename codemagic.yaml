@@ -470,6 +470,22 @@ workflows:
           # Apple issues the certificate; the private key is yours and Apple
           # never sees it. The CLI cannot save a certificate without one, so
           # there is no useful fallback — fail early and say why.
+          # Preferred: a base64 blob. It is a single line with no whitespace,
+          # so nothing can be lost or mangled by an editor or a paste field —
+          # which is exactly how multi-line PEM values keep arriving truncated.
+          if [ -n "${CERTIFICATE_PRIVATE_KEY_B64:-}" ]; then
+            echo "Decoding CERTIFICATE_PRIVATE_KEY_B64."
+            printf '%s' "$CERTIFICATE_PRIVATE_KEY_B64" \
+              | tr -d '[:space:]' \
+              | base64 --decode > /tmp/cert_key.pem 2>/dev/null || {
+                  echo "BLOCKED: the value is not valid base64."
+                  echo "Regenerate it with:"
+                  echo '  [Convert]::ToBase64String([IO.File]::ReadAllBytes("bpcoach_cert.key")) | Set-Clipboard'
+                  exit 1
+                }
+            export CERTIFICATE_PRIVATE_KEY="$(cat /tmp/cert_key.pem)"
+          fi
+
           if [ -z "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
             echo "=============================================="
             echo "BLOCKED: CERTIFICATE_PRIVATE_KEY is not set."
@@ -488,7 +504,9 @@ workflows:
           # Normalise before use. A key pasted from a Windows editor carries
           # CRLF line endings, and PEM parsing rejects the stray carriage
           # returns with an unhelpful "Not a valid certificate private key".
-          printf '%s' "$CERTIFICATE_PRIVATE_KEY" | tr -d '\r' > /tmp/cert_key.pem
+          if [ ! -s /tmp/cert_key.pem ]; then
+            printf '%s' "$CERTIFICATE_PRIVATE_KEY" | tr -d '\r' > /tmp/cert_key.pem
+          fi
 
           # A trailing newline is required; some editors drop the last one.
           [ -n "$(tail -c 1 /tmp/cert_key.pem)" ] && echo "" >> /tmp/cert_key.pem
