@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct DataManagementView: View {
     @Environment(AppModel.self) private var app

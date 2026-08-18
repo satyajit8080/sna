@@ -94,6 +94,7 @@ Sever-at-copy edits are mandatory: see `DELETION_CANDIDATES.md` §2.
 | File | Purpose |
 |---|---|
 | `docs/DEPLOYMENT.md` | Deploying: architecture, stage-by-stage runbook, env vars, troubleshooting |
+| `docs/TESTFLIGHT.md` | Signing, App Store Connect, and distributing builds |
 | `docs/DEVELOPMENT.md` | Day-to-day: local setup, conventions, testing, debugging |
 | `docs/IMPLEMENTATION_LOG.md` | What shipped per phase, what was deferred |
 | `docs/SNAPCAL_AUDIT.md` | Reuse audit against commit db7c6281 |

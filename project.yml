@@ -64,6 +64,14 @@ targets:
         NSHealthShareUsageDescription: >-
           BP Coach reads blood pressure, heart rate, HRV, sleep, steps and weight from
           Health to show your trends. This data stays on your device.
+        # Each capability needs its own purpose string. A missing one is not a
+        # warning — iOS terminates the app the moment the API is touched.
+        NSCameraUsageDescription: >-
+          BP Coach uses the camera to scan medical reports, prescriptions,
+          medicine packaging and food barcodes. Images are read on your device.
+        NSPhotoLibraryUsageDescription: >-
+          BP Coach can read a report or prescription from a photo you choose.
+          Photos are processed on your device and never uploaded.
         NSHealthUpdateUsageDescription: >-
           BP Coach saves blood pressure readings you enter into Health so other apps
           you trust can use them.

@@ -159,6 +159,65 @@ final class NotificationEngine {
         try? await center.add(request)
     }
 
+    /// Schedules every future reminder for an appointment.
+    ///
+    /// Reminders whose moment has already passed are skipped by the model —
+    /// scheduling one would make iOS fire it immediately, which reads as a bug.
+    func scheduleAppointmentReminders(
+        appointmentID: UUID,
+        doctorName: String,
+        scheduledFor: Date,
+        reminderDates: [Date]
+    ) async {
+        cancelAppointment(appointmentID)
+        guard isEnabled(.appointment) else { return }
+
+        for (index, date) in reminderDates.enumerated() {
+            let content = UNMutableNotificationContent()
+            content.title = "Appointment with \(doctorName)"
+            content.body = Self.appointmentBody(scheduledFor: scheduledFor, remindAt: date)
+            content.sound = .default
+            content.userInfo = [
+                "deepLink": Category.appointment.deepLink?.absoluteString ?? "",
+                "appointmentID": appointmentID.uuidString,
+            ]
+
+            let components = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute], from: date
+            )
+            let request = UNNotificationRequest(
+                identifier: "appointment.\(appointmentID.uuidString).\(index)",
+                content: content,
+                trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            )
+            try? await center.add(request)
+        }
+    }
+
+    private static func appointmentBody(scheduledFor: Date, remindAt: Date) -> String {
+        let days = Calendar.current.dateComponents(
+            [.day], from: Calendar.current.startOfDay(for: remindAt),
+            to: Calendar.current.startOfDay(for: scheduledFor)
+        ).day ?? 0
+
+        switch days {
+        case 0: return "Today at \(scheduledFor.formatted(date: .omitted, time: .shortened))."
+        case 1: return "Tomorrow at \(scheduledFor.formatted(date: .omitted, time: .shortened))."
+        default:
+            return "In \(days) days. A good moment to prepare your readings."
+        }
+    }
+
+    func cancelAppointment(_ appointmentID: UUID) {
+        Task { @MainActor in
+            let requests = await center.pendingNotificationRequests()
+            let ids = requests
+                .map(\.identifier)
+                .filter { $0.hasPrefix("appointment.\(appointmentID.uuidString)") }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
     func cancelAll(for category: Category) {
         // The async form keeps `center` on the main actor. The completion-handler
         // version captures it in a Sendable closure, which is a data race.

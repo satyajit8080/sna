@@ -5,11 +5,13 @@ struct MoreView: View {
     @Environment(AppModel.self) private var app
     @Query private var allReadings: [BPReading]
     @Query private var allMedications: [Medication]
+    @Query private var allDocuments: [MedicalDocument]
+    @Query private var allAppointments: [Appointment]
 
     var body: some View {
         List {
-            Section {
-                if app.isMultiProfile {
+            if app.isMultiProfile {
+                Section {
                     ProfileSwitcher()
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
@@ -17,47 +19,36 @@ struct MoreView: View {
             }
 
             Section("Health management") {
-                NavigationLink { MedicationListView() } label: {
-                    LabeledContent {
-                        Text("\(activeMedicationCount)")
-                    } label: {
-                        Label("Medications", systemImage: "pills.fill")
-                    }
+                link("Medications", "pills.fill", count: activeMedications) {
+                    MedicationListView()
                 }
-                NavigationLink { SodiumListView() } label: {
-                    Label("Lifestyle & sodium", systemImage: "leaf.fill")
+                link("Appointments", "calendar", count: upcomingAppointments) {
+                    AppointmentListView()
                 }
-                NavigationLink { HealthDataView() } label: {
-                    Label("Apple Health", systemImage: "heart.fill")
-                }
+                link("Symptoms", "list.bullet.clipboard") { SymptomHistoryView() }
+                link("Weight", "scalemass.fill") { WeightHistoryView() }
+                link("Activity", "figure.walk") { ActivityHistoryView() }
+                link("Lifestyle & sodium", "leaf.fill") { SodiumListView() }
             }
 
-            Section("Your data") {
-                NavigationLink { HistoryView() } label: {
-                    LabeledContent {
-                        Text("\(readingCount)")
-                    } label: {
-                        Label("All readings", systemImage: "list.bullet.rectangle")
-                    }
-                }
-                NavigationLink { DataManagementView() } label: {
-                    Label("Export & delete", systemImage: "square.and.arrow.up")
-                }
+            Section("Records") {
+                link("All readings", "chart.xyaxis.line", count: readingCount) { HistoryView() }
+                link("Documents", "doc.text", count: documentCount) { DocumentListView() }
+                link("Scan", "viewfinder") { ScanHubView() }
+            }
+
+            Section("Integrations") {
+                link("Apple Health", "heart.fill") { HealthDataView() }
+                link("Notifications", "bell.fill") { NotificationSettingsView() }
+                link("Subscription", "star.fill") { SubscriptionView() }
             }
 
             Section("App") {
-                NavigationLink { SettingsView() } label: {
-                    Label("Settings", systemImage: "gearshape.fill")
-                }
-                NavigationLink { PrivacyView() } label: {
-                    Label("Privacy", systemImage: "lock.fill")
-                }
-                NavigationLink { MeasurementGuideView() } label: {
-                    Label("How to measure", systemImage: "book.fill")
-                }
-                NavigationLink { AboutView() } label: {
-                    Label("About", systemImage: "info.circle.fill")
-                }
+                link("Settings", "gearshape.fill") { SettingsView() }
+                link("Privacy & data", "lock.fill") { PrivacyView() }
+                link("How to measure", "book.fill") { MeasurementGuideView() }
+                link("Help & support", "questionmark.circle.fill") { SupportView() }
+                link("About", "info.circle.fill") { AboutView() }
             }
         }
         .navigationTitle("More")
@@ -66,14 +57,40 @@ struct MoreView: View {
     private var readingCount: Int {
         allReadings.filter { $0.profileID == app.activeProfile.id }.count
     }
-
-    private var activeMedicationCount: Int {
+    private var activeMedications: Int {
         allMedications.filter { $0.profileID == app.activeProfile.id && !$0.isArchived }.count
+    }
+    private var documentCount: Int {
+        allDocuments.filter { $0.profileID == app.activeProfile.id }.count
+    }
+    private var upcomingAppointments: Int {
+        allAppointments.filter { $0.profileID == app.activeProfile.id && $0.isUpcoming }.count
+    }
+
+    private func link<Destination: View>(
+        _ title: String,
+        _ symbol: String,
+        count: Int? = nil,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            if let count, count > 0 {
+                LabeledContent {
+                    Text("\(count)")
+                } label: {
+                    Label(title, systemImage: symbol)
+                }
+            } else {
+                Label(title, systemImage: symbol)
+            }
+        }
     }
 }
 
-/// Measurement technique. Fixed editorial content following standard home-monitoring
-/// guidance — not generated, and not personalised.
+/// Measurement technique. Fixed editorial content following standard
+/// home-monitoring guidance — not generated, not personalised.
 struct MeasurementGuideView: View {
     private let steps: [(String, String, String)] = [
         ("timer", "Rest first",
@@ -83,13 +100,13 @@ struct MeasurementGuideView: View {
         ("hand.raised", "Position your arm",
          "Rest your arm on a table so the cuff sits level with your heart. An arm below heart height reads high."),
         ("bandage", "Fit the cuff",
-         "Directly on bare skin, snug enough for two fingers underneath. A cuff over clothing or one that is too small reads high."),
+         "Directly on bare skin, snug enough for two fingers underneath. A cuff over clothing, or one too small, reads high."),
         ("mouth", "Stay quiet",
          "Do not talk or check your phone while the cuff inflates."),
         ("arrow.clockwise", "Measure more than once",
          "Take two or three readings a minute apart and use the average. Single readings bounce around more than people expect."),
         ("clock", "Be consistent",
-         "Measure at the same times each day — typically morning before medication and evening. Consistency is what makes the trend meaningful."),
+         "Measure at the same times each day — typically morning before medication, and evening. Consistency is what makes the trend meaningful."),
         ("cup.and.saucer", "Avoid the obvious",
          "No caffeine, exercise or smoking in the 30 minutes beforehand. Empty your bladder first."),
     ]

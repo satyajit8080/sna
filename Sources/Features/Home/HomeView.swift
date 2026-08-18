@@ -10,6 +10,7 @@ struct HomeView: View {
     @Query private var allMedications: [Medication]
     @Query private var allDoses: [MedicationDose]
     @Query private var allLifestyle: [LifestyleEntry]
+    @Query private var allAppointments: [Appointment]
 
     @State private var isPresentingAdd = false
     @State private var editing: BPReading?
@@ -32,6 +33,7 @@ struct HomeView: View {
                         medicationCard
                         sodiumCard
                         activityCard
+                        appointmentCard
                         coachCard
                     } else {
                         firstRunCard
@@ -54,6 +56,46 @@ struct HomeView: View {
         .sheet(item: $editing) { EditBPView(reading: $0) }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
         .task { await app.health.refreshSnapshot(for: app.activeProfile) }
+    }
+
+    /// Readings taken today. Surfaced because a second reading in a sitting is
+    /// normal practice, and it should be obvious whether one was taken.
+    private var todayCount: Int {
+        readings.filter { Calendar.current.isDateInToday($0.recordedAt) }.count
+    }
+
+    private var appointmentCard: some View {
+        let next = allAppointments
+            .filter { $0.profileID == app.activeProfile.id && $0.isUpcoming }
+            .min { $0.scheduledFor < $1.scheduledFor }
+
+        return Group {
+            if let next {
+                NavigationLink { AppointmentListView() } label: {
+                    CardView {
+                        HStack(spacing: Theme.Spacing.md) {
+                            Image(systemName: "calendar")
+                                .font(.title3)
+                                .foregroundStyle(Theme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Next appointment")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                                Text(next.doctorName).font(.subheadline.weight(.medium))
+                                Text(next.scheduledFor.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var greeting: String {
@@ -99,6 +141,10 @@ struct HomeView: View {
                     Text(relativeTime(reading.recordedAt))
                     Text("·")
                     Text(reading.source.label)
+                    if todayCount > 1 {
+                        Text("·")
+                        Text("\(todayCount) today")
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(Theme.textTertiary)
@@ -251,6 +297,12 @@ struct HomeView: View {
                             }
                             if let energy = snapshot.activeEnergyKilocalories {
                                 StatTile(title: "Active", value: "\(energy) kcal")
+                            }
+                            if let weight = snapshot.weightKilograms {
+                                StatTile(
+                                    title: "Weight",
+                                    value: String(format: "%.1f kg", weight)
+                                )
                             }
                         }
                     }

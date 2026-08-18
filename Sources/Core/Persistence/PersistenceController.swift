@@ -18,6 +18,11 @@ enum PersistenceController {
         AIInsight.self,
         AIConversation.self,
         AIMessage.self,
+        Appointment.self,
+        SymptomEntry.self,
+        ActivityEntry.self,
+        MedicalDocument.self,
+        ExtractedValue.self,
     ])
 
     /// Result of building the stack, so the caller knows whether persistence is

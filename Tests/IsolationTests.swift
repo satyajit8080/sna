@@ -126,3 +126,258 @@ struct IsolationTests {
         #expect(fetched.count == 1)
     }
 }
+
+/// Persistence stack behaviour.
+///
+/// These cover the failure that first appeared in CI: the app's `init` built an
+/// on-disk store, and in a fresh simulator's test host `Application Support`
+/// did not exist.
+@Suite("Persistence stack")
+@MainActor
+struct PersistenceTests {
+
+    @Test("Tests are detected, so no test writes to the real store")
+    func detectsTestEnvironment() {
+        #expect(PersistenceController.isRunningTests)
+    }
+
+    @Test("Container requested under test is in-memory even without asking")
+    func testsAlwaysGetMemory() throws {
+        // isRunningTests forces memory, so this must not touch the filesystem.
+        let container = try PersistenceController.makeContainer()
+        let reading = BPReading(profileID: UUID(), systolic: 120, diastolic: 80)
+        container.mainContext.insert(reading)
+        try container.mainContext.save()
+        #expect(try container.mainContext.fetch(FetchDescriptor<BPReading>()).count == 1)
+    }
+
+    @Test("Building the stack never throws and never crashes")
+    func stackAlwaysBuilds() {
+        let stack = PersistenceController.makeStack()
+        #expect(stack.container.schema.entities.count >= 0)
+    }
+
+    @Test("Every model in the schema is registered")
+    func schemaIsComplete() {
+        let names = Set(PersistenceController.schema.entities.map(\.name))
+        for expected in [
+            "BPReading", "BPMeasurementSession", "UserProfile",
+            "Medication", "MedicationDose", "LifestyleEntry",
+            "AIInsight", "AIConversation", "AIMessage",
+        ] {
+            #expect(names.contains(expected), "\(expected) missing from the schema")
+        }
+    }
+
+    @Test("Separate containers do not share state")
+    func containersAreIsolated() throws {
+        let first = try PersistenceController.makeContainer(inMemory: true)
+        let second = try PersistenceController.makeContainer(inMemory: true)
+
+        first.mainContext.insert(BPReading(profileID: UUID(), systolic: 120, diastolic: 80))
+        try first.mainContext.save()
+
+        #expect(try first.mainContext.fetch(FetchDescriptor<BPReading>()).count == 1)
+        #expect(try second.mainContext.fetch(FetchDescriptor<BPReading>()).isEmpty)
+    }
+}
+
+/// HealthKit purpose strings.
+///
+/// Build 22 crashed on a real device inside
+/// `_throwIfAuthorizationDisallowedForSharing:types:` — HealthKit raises an
+/// uncatchable Objective-C exception when write access is requested without
+/// `NSHealthUpdateUsageDescription`. These pin the guards that prevent it.
+@Suite("HealthKit usage descriptions")
+@MainActor
+struct HealthKitUsageDescriptionTests {
+
+    /// A bundle that reports no Info.plist keys, standing in for a build where
+    /// the strings were lost.
+    final class EmptyBundle: Bundle, @unchecked Sendable {
+        override func object(forInfoDictionaryKey key: String) -> Any? { nil }
+    }
+
+    @Test("A bundle with no purpose strings is reported as missing")
+    func detectsMissing() {
+        #expect(HealthKitService.missingUsageDescriptionKey(bundle: EmptyBundle()) != nil)
+    }
+
+    @Test("The read key is checked first, since reading is the primary use")
+    func reportsReadKeyFirst() {
+        #expect(
+            HealthKitService.missingUsageDescriptionKey(bundle: EmptyBundle())
+                == "NSHealthShareUsageDescription"
+        )
+    }
+
+    @Test("Requesting authorization for a non-owner profile throws before touching HealthKit")
+    func nonOwnerRefusedBeforeHealthKit() async {
+        let service = HealthKitService(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        await #expect(throws: (any Error).self) {
+            try await service.requestAuthorization(for: UserProfile(name: "Parent", kind: .parent))
+        }
+    }
+
+    @Test("Every missing-description error carries a readable message")
+    func errorsAreReadable() {
+        let error = HealthKitService.HealthKitError
+            .missingUsageDescription("NSHealthUpdateUsageDescription")
+        #expect(error.errorDescription?.contains("NSHealthUpdateUsageDescription") == true)
+    }
+}
+
+/// Extraction rules.
+///
+/// These are the parsers behind every scan. They are rule-based precisely so
+/// they can be tested — an AI extractor could not be pinned like this.
+@Suite("Scan extraction")
+struct ExtractionTests {
+
+    @Test("Reads a lab value with its unit and range")
+    func readsFullLine() {
+        let candidates = ValueExtraction.extract(
+            from: ["LDL Cholesterol    118 mg/dL    (70 - 130)"],
+            ocrConfidence: 0.95
+        )
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.name == "LDL cholesterol")
+        #expect(candidates.first?.value == "118")
+        #expect(candidates.first?.unit == "mg/dl")
+        #expect(candidates.first?.isWithinRange == true)
+        #expect(candidates.first?.confidence == .high)
+    }
+
+    @Test("Flags a value outside its printed range")
+    func detectsOutOfRange() {
+        let candidates = ValueExtraction.extract(
+            from: ["Creatinine 2.4 mg/dL  (0.6 - 1.2)"],
+            ocrConfidence: 0.95
+        )
+        #expect(candidates.first?.isWithinRange == false)
+    }
+
+    /// The most important case here: no printed range means unknown, and
+    /// unknown must never be reported as normal.
+    @Test("A value with no printed range is unknown, not normal")
+    func noRangeIsUnknown() {
+        let candidates = ValueExtraction.extract(
+            from: ["Potassium 4.1 mmol/L"],
+            ocrConfidence: 0.95
+        )
+        #expect(candidates.first?.isWithinRange == nil)
+    }
+
+    @Test("Poor recognition lowers confidence rather than being trusted")
+    func lowConfidenceIsMarked() {
+        let candidates = ValueExtraction.extract(
+            from: ["HbA1c 6.2"],
+            ocrConfidence: 0.4
+        )
+        #expect(candidates.first?.confidence == .low)
+        #expect(candidates.first?.confidence.needsReview == true)
+    }
+
+    @Test("Lines with no known analyte produce nothing")
+    func ignoresUnknownLines() {
+        #expect(ValueExtraction.extract(
+            from: ["Patient name: A Smith", "Collected 12/03/2026"],
+            ocrConfidence: 0.95
+        ).isEmpty)
+    }
+
+    @Test("The same analyte is not duplicated across lines")
+    func deduplicates() {
+        let candidates = ValueExtraction.extract(
+            from: ["LDL 118 mg/dL", "LDL cholesterol 118 mg/dL"],
+            ocrConfidence: 0.9
+        )
+        #expect(candidates.filter { $0.name == "LDL cholesterol" }.count == 1)
+    }
+
+    @Test("Prescription lines yield name, dose and frequency")
+    func prescriptionSuggestion() {
+        let suggestions = PrescriptionExtraction.suggestions(
+            from: ["Amlodipine 5mg once daily"],
+            ocrConfidence: 0.9
+        )
+        #expect(suggestions.count == 1)
+        #expect(suggestions.first?.name.lowercased().contains("amlodipine") == true)
+        #expect(suggestions.first?.frequency == .onceDaily)
+    }
+
+    /// A scanned prescription is never treated as certain, however clean the
+    /// recognition was. Confirmation is the only path to saving.
+    @Test("Prescription confidence never reaches high")
+    func prescriptionIsNeverCertain() {
+        let suggestions = PrescriptionExtraction.suggestions(
+            from: ["Ramipril 10mg twice daily"],
+            ocrConfidence: 0.99
+        )
+        #expect(suggestions.first?.confidence != .high)
+        #expect(suggestions.first?.confidence.needsReview == true)
+    }
+
+    @Test("A line without a dose is not a medicine suggestion")
+    func requiresDose() {
+        #expect(PrescriptionExtraction.suggestions(
+            from: ["Dr A Smith, Cardiology"],
+            ocrConfidence: 0.9
+        ).isEmpty)
+    }
+}
+
+@Suite("New models")
+struct NewModelTests {
+
+    @Test("Appointment reminders in the past are never scheduled")
+    func skipsPastReminders() {
+        let appointment = Appointment(
+            profileID: UUID(),
+            doctorName: "Dr Verma",
+            scheduledFor: Date.now.addingTimeInterval(3 * 3_600)
+        )
+        // A week-ahead reminder for an appointment three hours away is behind us.
+        appointment.reminderOffsets = [7 * 24 * 60, 60]
+        let dates = appointment.pendingReminderDates()
+        #expect(dates.count == 1)
+        #expect(dates.allSatisfy { $0 > .now })
+    }
+
+    @Test("Disabling reminders yields none")
+    func remindersRespectToggle() {
+        let appointment = Appointment(
+            profileID: UUID(),
+            doctorName: "Dr Verma",
+            scheduledFor: Date.now.addingTimeInterval(30 * 86_400)
+        )
+        appointment.remindersEnabled = false
+        #expect(appointment.pendingReminderDates().isEmpty)
+    }
+
+    @Test("Red-flag symptoms are marked")
+    func redFlags() {
+        #expect(SymptomKind.chestDiscomfort.isRedFlag)
+        #expect(SymptomKind.breathlessness.isRedFlag)
+        #expect(!SymptomKind.fatigue.isRedFlag)
+    }
+
+    @Test("Unclear extractions are surfaced for review")
+    func reviewFlagging() {
+        let document = MedicalDocument(profileID: UUID(), kind: .bloodTest, title: "Test")
+        document.values = [
+            ExtractedValue(name: "A", value: "1", confidence: .high),
+            ExtractedValue(name: "B", value: "2", confidence: .low),
+        ]
+        #expect(document.valuesNeedingReview.count == 1)
+    }
+
+    @Test("Every new model is registered in the schema")
+    func schemaCovers() {
+        let names = Set(PersistenceController.schema.entities.map(\.name))
+        for expected in ["Appointment", "SymptomEntry", "ActivityEntry",
+                         "MedicalDocument", "ExtractedValue"] {
+            #expect(names.contains(expected), "\(expected) missing from the schema")
+        }
+    }
+}

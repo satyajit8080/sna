@@ -117,6 +117,19 @@ final class AppModel {
         deleteMatching(FetchDescriptor<LifestyleEntry>()) { $0.profileID == profileID }
         deleteMatching(FetchDescriptor<AIInsight>()) { $0.profileID == profileID }
         deleteMatching(FetchDescriptor<AIConversation>()) { $0.profileID == profileID }
+        deleteMatching(FetchDescriptor<Appointment>()) { $0.profileID == profileID }
+        deleteMatching(FetchDescriptor<SymptomEntry>()) { $0.profileID == profileID }
+        deleteMatching(FetchDescriptor<ActivityEntry>()) { $0.profileID == profileID }
+
+        // Documents own files on disk. Deleting the record alone would orphan
+        // the file, leaving health data behind after a "delete my data" request.
+        if let documents = try? context.fetch(FetchDescriptor<MedicalDocument>()) {
+            for document in documents where document.profileID == profileID {
+                if let fileName = document.fileName { DocumentStore.delete(fileName: fileName) }
+                context.delete(document)
+            }
+        }
+
         try? context.save()
     }
 

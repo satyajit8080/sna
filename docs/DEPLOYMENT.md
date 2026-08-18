@@ -223,18 +223,27 @@ curl -s -X POST $API/v1/coach \
 
 ```
 BPCOACH_API_BASE_URL = https://<your-domain>.up.railway.app
-NOTIFY_EMAIL         = you@example.com
 ```
 
 `BPCOACH_API_BASE_URL` is a public URL, not a secret — it is fine in a build
-config. No trailing slash. Leaving it unset produces a valid build where the
-coach and food search report themselves unavailable.
+config. It must be `https`. A trailing slash is stripped automatically, and
+leaving it at the default `unset` produces a valid build where the coach and
+food search report themselves unavailable.
+
+Build notifications go to the CodeMagic account owner by default. To send them
+elsewhere, uncomment the `publishing:` block in `codemagic.yaml` and use a
+literal address — a reference to an unset variable is a validation error, not a
+silent skip.
 
 4. Start a build on branch `bp-coach`
 
-The workflow runs: security sweep → environment capture → XcodeGen → build →
-test → deployment-target check → PNG bundle check → invariant sweep → backend
-tests.
+The workflow runs: security sweep → environment capture → XcodeGen → project
+generation → backend URL resolution → build → test → deployment-target check →
+PNG bundle check → URL-in-bundle check → invariant sweep → backend tests.
+
+Stage C5 reads `BPCoachAPIBaseURL` back out of the built `Info.plist` and fails
+if it does not match what you configured. A build that silently ships without
+the URL would look fine and never reach the backend.
 
 ### Expect this to fail the first time
 
@@ -261,17 +270,17 @@ The log shows `** BUILD SUCCEEDED **` and `** TEST SUCCEEDED **`.
 
 Only after stage 4 is green.
 
-**Change the bundle identifier first.** `project.yml` currently reads
-`app.bpcoach.ios`. Replace it with your own reverse-DNS prefix and push, or App
-Store Connect will reject it.
+**Bundle identifier:** BP Coach ships as an update to SnapCal under
+`app.snapcal.ios`, already set in `project.yml`. SnapCal is retired and its users
+migrate. See [`TESTFLIGHT.md`](TESTFLIGHT.md) for what that decision carries.
 
-**TestFlight** needs the Apple Developer account:
+The CI workflow builds for the **simulator, unsigned** — it produces no `.ipa`
+and uploads nothing. Distribution runs through a second workflow, `release`,
+which signs, archives and uploads to TestFlight.
 
-1. App Store Connect → **Apps** → **+** → New App, bundle ID matching
-   `project.yml`
-2. CodeMagic → **Distribution** → **iOS code signing** → connect App Store
-   Connect with an API key
-3. Add a `publishing:` block to `codemagic.yaml` for App Store Connect
+See **[`TESTFLIGHT.md`](TESTFLIGHT.md)** for the full setup: bundle identifier,
+App ID registration, App Store Connect record, API key, and the CodeMagic
+integration.
 
 **Simulator only:** CodeMagic can produce a `.app` artifact, but running it needs
 a Mac. Without one, TestFlight on your own iPhone is the shortest path to seeing
@@ -302,9 +311,8 @@ and the app degrades to manual entry.
 
 | Variable | Notes |
 |---|---|
-| `BPCOACH_API_BASE_URL` | Railway URL, no trailing slash. Public, not a secret |
-| `NOTIFY_EMAIL` | Build notifications |
-| `XCODEGEN_VERSION` | Empty until you read the real version from stage A6 |
+| `BPCOACH_API_BASE_URL` | Railway URL. Public, not a secret. Defaults to `unset` |
+| `XCODEGEN_VERSION` | `latest` until you read the real version from stage A6, then pin it |
 
 ### Endpoints
 
@@ -387,6 +395,9 @@ Redeploy.
 | Food search returns `[]` | Query under 2 characters, or no USDA result carried a sodium value |
 | CodeMagic: "No .xcodeproj found" | XcodeGen stage failed — read the stage B1 log |
 | CodeMagic: scheme not found | `project.yml` scheme renamed without updating `SCHEME_NAME` |
+| CodeMagic: "none is not an allowed value" | A `recipients` entry references an unset variable — use a literal address |
+| CodeMagic: "ensure this value has at least 1 characters" | An environment variable is set to `""`. Use a sentinel like `unset` instead |
+| Stage C5 fails | The URL did not reach the bundle — usually `BPCOACH_API_BASE_URL` passed as a shell variable rather than an xcodebuild build setting |
 | Rate limited while testing | 30 requests / 15 min per IP. Raise `RATE_LIMIT_MAX` temporarily |
 
 ---
