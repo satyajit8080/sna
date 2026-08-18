@@ -25,7 +25,7 @@ struct CoachResponse: Sendable {
     let hadInsufficientData: Bool
 }
 
-enum CoachError: LocalizedError {
+enum CoachError: LocalizedError, Equatable {
     case notConfigured
     case offline
     case refused(String)
