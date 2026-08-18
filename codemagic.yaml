@@ -177,8 +177,11 @@ workflows:
             -showdestinations 2>&1 | tee /tmp/destinations.txt
 
           # First available iOS Simulator entry, as printed by Xcode itself.
+          # TARGETED_DEVICE_FAMILY is "1" (iPhone), so an iPad destination is
+          # wrong even when it is listed as available.
           DEST_NAME=$(grep 'platform:iOS Simulator' /tmp/destinations.txt \
                       | grep -v 'placeholder' \
+                      | grep -i 'iPhone' \
                       | head -1 \
                       | sed -n 's/.*name:\([^,}]*\).*/\1/p' \
                       | sed 's/^ *//;s/ *$//')
@@ -201,8 +204,20 @@ workflows:
             -destination "platform=iOS Simulator,name=$DEST_NAME" \
             CODE_SIGNING_ALLOWED=NO \
             BPCOACH_API_BASE_URL="$API_BASE_URL" \
-            2>&1 | tee /tmp/build.log | tail -40
-          grep -q "BUILD SUCCEEDED" /tmp/build.log
+            2>&1 | tee /tmp/build.log | xcpretty --simple --color || true
+
+          if ! grep -q "BUILD SUCCEEDED" /tmp/build.log; then
+            echo ""
+            echo "=================== COMPILER ERRORS ==================="
+            # The useful lines are buried in a very verbose transcript, so pull
+            # them out explicitly rather than tailing the end of the log.
+            grep -E "error:|warning: will never be executed" /tmp/build.log \
+              | sed 's|/Users/builder/clone/||' | sort -u | head -80
+            echo "======================================================="
+            echo ""
+            grep -E "^\s+~+\^|^\s+\^" /tmp/build.log | head -20 || true
+            exit 1
+          fi
 
       - name: C2 · Test verification
         script: |
@@ -213,8 +228,15 @@ workflows:
             -destination "platform=iOS Simulator,name=$DEST_NAME" \
             CODE_SIGNING_ALLOWED=NO \
             BPCOACH_API_BASE_URL="$API_BASE_URL" \
-            2>&1 | tee /tmp/test.log | tail -60
-          grep -qE "TEST SUCCEEDED|TEST EXECUTE SUCCEEDED" /tmp/test.log
+            2>&1 | tee /tmp/test.log | xcpretty --simple --color || true
+
+          if ! grep -qE "TEST SUCCEEDED|TEST EXECUTE SUCCEEDED" /tmp/test.log; then
+            echo "=================== TEST FAILURES ==================="
+            grep -E "error:|failed|XCTAssert|Expectation failed" /tmp/test.log \
+              | sed 's|/Users/builder/clone/||' | sort -u | head -60
+            echo "===================================================="
+            exit 1
+          fi
           echo "--- confirm no skipped tests ---"
           grep -c "Test skipped" /tmp/test.log || echo "0 skipped — correct"
 
