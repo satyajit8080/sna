@@ -380,7 +380,7 @@ workflows:
     integrations:
       # Create this in CodeMagic: Teams → Integrations → Developer Portal,
       # using an App Store Connect API key with App Manager access.
-      app_store_connect: BPCoachASC
+      app_store_connect: Codemagic
 
     environment:
       xcode: latest
