@@ -384,10 +384,9 @@ workflows:
 
     environment:
       xcode: latest
-      ios_signing:
-        distribution_type: app_store
-        # SnapCal's existing App ID — HealthKit is already enabled on it.
-        bundle_identifier: app.snapcal.ios
+      # No `ios_signing:` block on purpose. It fetches profiles before any
+      # script runs and cannot create a missing one, which fails with
+      # "No matching profiles found". R4 does it explicitly with --create.
       vars:
         PROJECT_NAME: BPCoach
         SCHEME_NAME: BPCoach
@@ -445,12 +444,36 @@ workflows:
           echo "Latest on TestFlight: ${LATEST:-0} · uploading as: $NEXT"
           echo "BUILD_NUMBER=$NEXT" >> $CM_ENV
 
+      - name: R3b · Diagnose the signing account
+        script: |
+          set +e
+          echo "=== Bundle IDs visible to this API key ==="
+          app-store-connect list-bundle-ids --bundle-id-identifier "$BUNDLE_ID" 2>&1 | head -30
+          echo ""
+          echo "=== Distribution certificates on the account ==="
+          app-store-connect list-certificates --type IOS_DISTRIBUTION 2>&1 | head -30
+          echo ""
+          echo "=== Existing App Store profiles ==="
+          app-store-connect list-profiles --profile-type IOS_APP_STORE 2>&1 | head -40
+          echo ""
+          echo "If the bundle ID list is empty, the App ID is not registered on"
+          echo "this team, or the API key belongs to a different team."
+          echo "If there are no certificates, the key needs the Admin role to"
+          echo "create one — App Manager cannot create certificates."
+          set -e
+
       - name: R4 · Apply signing profiles
         script: |
           set -ex
           keychain initialize
+
+          # --create makes the profile and, if needed, the certificate. This is
+          # why the automatic ios_signing block is not used.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE --create
+            --type IOS_APP_STORE \
+            --create \
+            --platform IOS
+
           keychain add-certificates
           xcode-project use-profiles
 
