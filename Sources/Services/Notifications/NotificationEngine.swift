@@ -103,11 +103,12 @@ final class NotificationEngine {
     }
 
     func cancelMedication(_ medicationID: UUID) {
-        center.getPendingNotificationRequests { requests in
+        Task { @MainActor in
+            let requests = await center.pendingNotificationRequests()
             let ids = requests
                 .map(\.identifier)
                 .filter { $0.hasPrefix("medication.\(medicationID.uuidString)") }
-            self.center.removePendingNotificationRequests(withIdentifiers: ids)
+            center.removePendingNotificationRequests(withIdentifiers: ids)
         }
     }
 
@@ -159,11 +160,14 @@ final class NotificationEngine {
     }
 
     func cancelAll(for category: Category) {
-        center.getPendingNotificationRequests { requests in
+        // The async form keeps `center` on the main actor. The completion-handler
+        // version captures it in a Sendable closure, which is a data race.
+        Task { @MainActor in
+            let requests = await center.pendingNotificationRequests()
             let ids = requests
                 .map(\.identifier)
                 .filter { $0.hasPrefix(category.rawValue) }
-            self.center.removePendingNotificationRequests(withIdentifiers: ids)
+            center.removePendingNotificationRequests(withIdentifiers: ids)
         }
     }
 }
