@@ -45,6 +45,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: BP Coach
+        ITSAppUsesNonExemptEncryption: false
         # Required by App Store validation for any app built against the iOS 11
         # SDK or later. Xcode only synthesises this when it generates the
         # Info.plist itself; this project supplies its own, so it is set here.
