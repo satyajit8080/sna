@@ -154,9 +154,17 @@ struct HomeView: View {
                     SafetyBanner(assessment: assessment)
                 }
 
-                Button("Edit") { editing = reading }
-                    .font(.subheadline)
+                HStack(spacing: Theme.Spacing.sm) {
+                    Button("Edit") { editing = reading }
+                        .buttonStyle(.bordered)
+                    // History has no tab any more, so Home is its main entry point.
+                    NavigationLink { UnifiedHistoryView() } label: {
+                        Label("History", systemImage: "clock.arrow.circlepath")
+                    }
                     .buttonStyle(.bordered)
+                }
+                .font(.subheadline)
+                .controlSize(.small)
             }
         }
     }

@@ -381,3 +381,53 @@ struct NewModelTests {
         }
     }
 }
+
+/// HealthKit authorization request shape.
+///
+/// Build 30 crashed inside `_throwIfAuthorizationDisallowedForSharing` with the
+/// entitlement present, the purpose strings present, and an empty share set.
+/// The cause was `HKCorrelationType(.bloodPressure)` in the *read* set: a
+/// correlation type cannot be authorized, and passing one raises an
+/// Objective-C exception Swift cannot catch.
+@Suite("HealthKit authorization types")
+struct HealthKitTypeTests {
+
+    @Test("No correlation type appears in the authorization request")
+    func noCorrelationTypeRequested() throws {
+        let source = try String(
+            contentsOfFile: #filePath.replacingOccurrences(
+                of: "Tests/IsolationTests.swift",
+                with: "Sources/Services/Health/HealthKitService.swift"
+            ),
+            encoding: .utf8
+        )
+
+        // Isolate the readTypes property and assert no correlation type is in it.
+        guard let start = source.range(of: "private var readTypes"),
+              let end = source.range(of: "private var writeTypes") else {
+            Issue.record("Could not locate readTypes in HealthKitService")
+            return
+        }
+        let readTypesBody = String(source[start.lowerBound..<end.lowerBound])
+
+        #expect(
+            !readTypesBody.contains("HKCorrelationType"),
+            "A correlation type in readTypes makes HealthKit abort the process"
+        )
+    }
+
+    /// The components are what actually grant access to the correlation, so they
+    /// must both be present.
+    @Test("Both blood pressure components are requested")
+    func componentsRequested() throws {
+        let source = try String(
+            contentsOfFile: #filePath.replacingOccurrences(
+                of: "Tests/IsolationTests.swift",
+                with: "Sources/Services/Health/HealthKitService.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(source.contains("bloodPressureSystolic"))
+        #expect(source.contains("bloodPressureDiastolic"))
+    }
+}

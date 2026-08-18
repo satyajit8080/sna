@@ -18,37 +18,40 @@ struct MoreView: View {
                 }
             }
 
-            Section("Health management") {
-                link("Medications", "pills.fill", count: activeMedications) {
+            // Everyday destinations sit above the settings categories: they are
+            // what people actually open More for.
+            Section("Your health") {
+                link("Medicine Reminder", "pills.fill", count: activeMedications) {
                     MedicationListView()
                 }
-                link("Appointments", "calendar", count: upcomingAppointments) {
+                link("Doctor Appointments", "calendar", count: upcomingAppointments) {
                     AppointmentListView()
                 }
                 link("Symptoms", "list.bullet.clipboard") { SymptomHistoryView() }
                 link("Weight", "scalemass.fill") { WeightHistoryView() }
                 link("Activity", "figure.walk") { ActivityHistoryView() }
-                link("Lifestyle & sodium", "leaf.fill") { SodiumListView() }
+                link("Food & Sodium", "fork.knife") { SodiumListView() }
+                link("Medical Reports", "doc.text", count: documentCount) { DocumentListView() }
             }
 
             Section("Records") {
-                link("All readings", "chart.xyaxis.line", count: readingCount) { HistoryView() }
-                link("Documents", "doc.text", count: documentCount) { DocumentListView() }
-                link("Scan", "viewfinder") { ScanHubView() }
+                link("History", "clock.arrow.circlepath", count: readingCount) {
+                    UnifiedHistoryView()
+                }
+                link("Health Report", "square.and.arrow.up.on.square") { HealthReportView() }
             }
 
-            Section("Integrations") {
+            // The eight categories from the specification, in order.
+            Section {
                 link("Apple Health", "heart.fill") { HealthDataView() }
-                link("Notifications", "bell.fill") { NotificationSettingsView() }
+                link("Notification Management", "bell.fill") { NotificationSettingsView() }
                 link("Subscription", "star.fill") { SubscriptionView() }
-            }
-
-            Section("App") {
-                link("Settings", "gearshape.fill") { SettingsView() }
-                link("Privacy & data", "lock.fill") { PrivacyView() }
-                link("How to measure", "book.fill") { MeasurementGuideView() }
-                link("Help & support", "questionmark.circle.fill") { SupportView() }
+                link("Profile & Account", "person.crop.circle.fill") { ProfileSettingsView() }
+                link("Privacy & Data", "lock.fill") { PrivacyView() }
+                link("Help & Support", "questionmark.circle.fill") { SupportView() }
                 link("About", "info.circle.fill") { AboutView() }
+                link("Terms of Use", "doc.plaintext.fill") { TermsView() }
+                link("App Settings", "gearshape.fill") { SettingsView() }
             }
         }
         .navigationTitle("More")

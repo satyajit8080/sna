@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, history, add, coach, more
+    case home, scan, add, coach, more
 }
 
 /// Deep link destinations. Every notification resolves to one of these.
@@ -10,12 +10,15 @@ enum AppTab: Hashable {
 final class Router {
     var tab: AppTab = .home
     var isPresentingAddBP = false
+    /// History no longer has a tab, so a deep link presents it instead.
+    var isPresentingHistory = false
 
     func handle(_ url: URL) {
         switch url.host() {
         case "medication": tab = .more
         case "measurement", "bp": isPresentingAddBP = true
-        case "drift", "history": tab = .history
+        case "drift", "history": isPresentingHistory = true
+        case "scan": tab = .scan
         case "coach": tab = .coach
         default: tab = .home
         }
@@ -46,9 +49,9 @@ struct RootView: View {
                 .tabItem { Label("Home", systemImage: "house.fill") }
                 .tag(AppTab.home)
 
-            NavigationStack { HistoryView() }
-                .tabItem { Label("History", systemImage: "chart.xyaxis.line") }
-                .tag(AppTab.history)
+            NavigationStack { ScanHubView() }
+                .tabItem { Label("Scan", systemImage: "viewfinder") }
+                .tag(AppTab.scan)
 
             // The centre tab opens the Add sheet rather than owning a screen.
             Color.clear
@@ -71,6 +74,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $isPresentingAddMenu) { AddMenuView() }
         .sheet(isPresented: $router.isPresentingAddBP) { AddBPView() }
+        .sheet(isPresented: $router.isPresentingHistory) {
+            NavigationStack { UnifiedHistoryView() }
+        }
         .onOpenURL { router.handle($0) }
         .environment(router)
     }

@@ -3,9 +3,9 @@ import SwiftUI
 
 /// The Add sheet. One route per thing a user can record.
 ///
-/// History appears here and in the tab bar. Both push the same `HistoryView`
-/// over the same `@Query`, so there is one implementation and one data source —
-/// two History screens would inevitably drift apart.
+/// History is reachable from here, from Home, from More and from deep links.
+/// All four open the same `UnifiedHistoryView` over the same queries — separate
+/// History screens would inevitably drift apart.
 struct AddMenuView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var route: Route?
@@ -43,7 +43,7 @@ struct AddMenuView: View {
             case .symptoms: "How you are feeling"
             case .appointment: "With reminders and a prep report"
             case .scan: "Food, reports, prescriptions, barcodes"
-            case .history: "Every reading you have taken"
+            case .history: "Everything you have recorded"
             }
         }
 
@@ -120,8 +120,9 @@ struct AddMenuView: View {
         case .scan:
             NavigationStack { ScanHubView() }
         case .history:
-            // Same view, same query, same store as the History tab.
-            NavigationStack { HistoryView() }
+            // The same view Home, More and deep links open. One implementation,
+            // one data source.
+            NavigationStack { UnifiedHistoryView() }
         }
     }
 
