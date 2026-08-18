@@ -12,16 +12,18 @@ final class GuidelineEngine {
 
     private(set) var active: BPGuideline
 
-    private let defaultsKey = "guideline.active"
+    /// Static so it can be read during init, before all stored properties are
+    /// assigned. An instance property here is a compile error.
+    private static let defaultsKey = "guideline.active"
+
+    private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
-        let stored = defaults.string(forKey: defaultsKey)
+        let stored = defaults.string(forKey: Self.defaultsKey)
             .flatMap(BPGuidelineID.init(rawValue:)) ?? .accAha2017
         self.active = Self.guideline(for: stored)
         self.defaults = defaults
     }
-
-    private let defaults: UserDefaults
 
     static func guideline(for id: BPGuidelineID) -> BPGuideline {
         switch id {
@@ -33,7 +35,7 @@ final class GuidelineEngine {
 
     func select(_ id: BPGuidelineID) {
         active = Self.guideline(for: id)
-        defaults.set(id.rawValue, forKey: defaultsKey)
+        defaults.set(id.rawValue, forKey: Self.defaultsKey)
     }
 
     func category(for reading: BPReading) -> BPCategory {
