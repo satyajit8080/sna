@@ -23,3 +23,9 @@ build/
 # Backend
 backend/node_modules/
 backend/dist/
+
+# Signing key - never commit
+bpcoach_cert.key
+bpcoach_cert.key.pub
+*.p8
+*.p12
