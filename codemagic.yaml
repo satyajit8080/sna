@@ -508,6 +508,24 @@ workflows:
             printf '%s' "$CERTIFICATE_PRIVATE_KEY" | tr -d '\r' > /tmp/cert_key.pem
           fi
 
+          # Accept base64 in either variable. Which name the value happens to
+          # sit under does not matter — what matters is what it contains, so
+          # detect the encoding rather than trusting the naming.
+          if ! grep -q "BEGIN" /tmp/cert_key.pem; then
+            STRIPPED=$(tr -d '[:space:]' < /tmp/cert_key.pem)
+            case "$STRIPPED" in
+              *[!A-Za-z0-9+/=]*) ;;   # not base64, leave it alone
+              "") ;;
+              *)
+                echo "Value is not PEM but is valid base64 — decoding it."
+                printf '%s' "$STRIPPED" | base64 --decode > /tmp/decoded.pem 2>/dev/null \
+                  && grep -q "BEGIN" /tmp/decoded.pem \
+                  && mv /tmp/decoded.pem /tmp/cert_key.pem \
+                  && echo "Decoded to $(wc -l < /tmp/cert_key.pem | tr -d ' ') lines."
+                ;;
+            esac
+          fi
+
           # A trailing newline is required; some editors drop the last one.
           [ -n "$(tail -c 1 /tmp/cert_key.pem)" ] && echo "" >> /tmp/cert_key.pem
 
