@@ -11,8 +11,13 @@ settings:
     SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     SWIFT_STRICT_CONCURRENCY: minimal
+    # Signing is disabled here so the CI workflow can build and test against
+    # the simulator with no Apple account. The release workflow overrides this
+    # with CODE_SIGNING_ALLOWED=YES in --archive-xcargs, and `use-profiles`
+    # fills in the identity, team and profile before the archive runs.
     CODE_SIGNING_ALLOWED: NO
     CODE_SIGN_IDENTITY: ""
+    CODE_SIGN_STYLE: Manual
 
 targets:
   BPCoach:
