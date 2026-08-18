@@ -360,3 +360,146 @@ workflows:
     #     notify:
     #       success: true
     #       failure: true
+
+  # ─────────────────────────────────────────────────────────────────────
+  # RELEASE — signs, archives and uploads to TestFlight.
+  #
+  # Separate from the CI workflow on purpose. CI builds for the simulator
+  # unsigned, which is fast and needs no Apple account; this one needs a
+  # paid Developer account, an App Store Connect API key, and a registered
+  # bundle identifier. Running them together would make every commit wait
+  # on signing.
+  #
+  # Trigger manually, or on a tag, once CI is green.
+  # ─────────────────────────────────────────────────────────────────────
+  release:
+    name: BP Coach — TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+
+    integrations:
+      # Create this in CodeMagic: Teams → Integrations → Developer Portal,
+      # using an App Store Connect API key with App Manager access.
+      app_store_connect: BPCoachASC
+
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        # SnapCal's existing App ID — HealthKit is already enabled on it.
+        bundle_identifier: app.snapcal.ios
+      vars:
+        PROJECT_NAME: BPCoach
+        SCHEME_NAME: BPCoach
+        BUNDLE_ID: app.snapcal.ios
+        BPCOACH_API_BASE_URL: "unset"
+      groups:
+        - appstore   # optional: holds APP_STORE_APPLE_ID if you use it
+
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+
+    scripts:
+      - name: R0 · Security sweep (gate)
+        script: |
+          set -e
+          chmod +x scripts/security-check.sh
+          ./scripts/security-check.sh
+
+      - name: R1 · Generate the Xcode project
+        script: |
+          set -ex
+          brew install xcodegen
+          xcodegen generate --spec project.yml --project .
+          [ -d "${PROJECT_NAME}.xcodeproj" ] || { echo "BLOCKED: no project generated"; exit 1; }
+
+      - name: R2 · Resolve backend URL
+        script: |
+          set -e
+          if [ "$BPCOACH_API_BASE_URL" = "unset" ] || [ -z "$BPCOACH_API_BASE_URL" ]; then
+            echo "WARNING: shipping to TestFlight with no backend URL."
+            echo "The coach and food search will report themselves unavailable."
+            echo "API_BASE_URL=" >> $CM_ENV
+          else
+            CLEANED=$(echo "$BPCOACH_API_BASE_URL" | sed 's:/*$::')
+            case "$CLEANED" in
+              https://*) ;;
+              *) echo "BLOCKED: backend URL must use https"; exit 1 ;;
+            esac
+            echo "Backend URL: $CLEANED"
+            echo "API_BASE_URL=$CLEANED" >> $CM_ENV
+          fi
+
+      - name: R3 · Set the build number
+        script: |
+          set -e
+          # TestFlight rejects a build number it has already seen, so it is
+          # derived from the latest build already uploaded rather than from
+          # the value committed in project.yml.
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" 2>/dev/null || echo "0")
+          NEXT=$(( ${LATEST:-0} + 1 ))
+          echo "Latest on TestFlight: ${LATEST:-0} · uploading as: $NEXT"
+          echo "BUILD_NUMBER=$NEXT" >> $CM_ENV
+
+      - name: R4 · Apply signing profiles
+        script: |
+          set -ex
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+
+      - name: R5 · Build the archive and IPA
+        script: |
+          set -ex
+          xcode-project build-ipa \
+            --project "${PROJECT_NAME}.xcodeproj" \
+            --scheme "$SCHEME_NAME" \
+            -- \
+            BPCOACH_API_BASE_URL="$API_BASE_URL" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+
+      - name: R6 · Verify what is inside the IPA
+        script: |
+          set -e
+          IPA=$(find build/ios/ipa -name '*.ipa' | head -1)
+          [ -n "$IPA" ] || { echo "BLOCKED: no IPA produced"; exit 1; }
+          echo "IPA: $IPA"
+
+          rm -rf /tmp/ipa && mkdir -p /tmp/ipa && unzip -q "$IPA" -d /tmp/ipa
+          APP=$(find /tmp/ipa/Payload -maxdepth 1 -name '*.app' | head -1)
+
+          echo "--- bundle identifier ---"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist"
+
+          echo "--- backend URL baked in ---"
+          BAKED=$(/usr/libexec/PlistBuddy -c "Print :BPCoachAPIBaseURL" "$APP/Info.plist" 2>/dev/null || echo "")
+          echo "'$BAKED'"
+          if [ -n "$API_BASE_URL" ] && [ "$BAKED" != "$API_BASE_URL" ]; then
+            echo "BLOCKED: backend URL did not reach the shipped bundle"; exit 1
+          fi
+
+          echo "--- HealthKit usage strings present? ---"
+          /usr/libexec/PlistBuddy -c "Print :NSHealthShareUsageDescription" "$APP/Info.plist" \
+            || { echo "BLOCKED: missing NSHealthShareUsageDescription — App Review rejects this"; exit 1; }
+
+          echo "--- design references must not be shipped ---"
+          find "$APP" -name 'part-*.png' | grep . && { echo "BLOCKED: design PNG in the IPA"; exit 1; } || echo "OK"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # No external testers by default — internal testers get it immediately,
+        # external groups require Beta App Review.
+        # beta_groups:
+        #   - Internal Testers
