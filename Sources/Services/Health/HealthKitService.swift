@@ -1,7 +1,6 @@
 import Foundation
 import HealthKit
 import Observation
-import Security
 
 /// HealthKit bridge.
 ///
@@ -37,27 +36,29 @@ final class HealthKitService {
         }
     }
 
-    /// Whether the running binary actually carries the HealthKit entitlement.
+    /// Whether this build actually carries the HealthKit entitlement.
     ///
     /// Without it, HealthKit raises an Objective-C exception from inside
     /// `_throwIfAuthorizationDisallowedForSharing` — even when the share set is
-    /// empty — and Swift cannot catch it, so the process dies. Reading the
-    /// entitlement from the signed task turns that into a message.
+    /// empty — and Swift cannot catch it, so the process dies.
+    ///
+    /// iOS has no API to read your own entitlements (`SecTaskCreateFromSelf` is
+    /// macOS-only), so this inspects `embedded.mobileprovision`, which signed
+    /// builds carry inside the bundle. A plain substring search is enough: the
+    /// profile is a CMS-signed blob wrapping an XML plist, and parsing it
+    /// properly would add risk for no benefit.
     ///
     /// The capability is granted on the App ID in the Developer portal and
-    /// baked into the provisioning profile at signing; it cannot be fixed in
-    /// code, only detected.
+    /// baked into the profile at signing. This can only detect it, never fix it.
     static var hasHealthKitEntitlement: Bool {
-        guard let task = SecTaskCreateFromSelf(nil) else {
-            // Cannot determine. Assume present rather than blocking a working
-            // build — the simulator reports nothing useful here.
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url) else {
+            // Simulator and debug builds have no embedded profile. Assume the
+            // entitlement is present rather than blocking a working build.
             return true
         }
-        let value = SecTaskCopyValueForEntitlement(
-            task, "com.apple.developer.healthkit" as CFString, nil
-        )
-        if let boolean = value as? Bool { return boolean }
-        return value != nil
+        let text = String(decoding: data, as: UTF8.self)
+        return text.contains("com.apple.developer.healthkit")
     }
 
     /// iOS terminates the process outright — no catchable error — if HealthKit
