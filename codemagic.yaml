@@ -1,6 +1,7 @@
-# Phase 0 evidence workflow — BP Coach
+# BP Coach — build, test and verify
 #
-# Collects every Phase 0 verification gate on real macOS/Xcode.
+# Runs the security sweep, builds and tests the iOS app on real macOS/Xcode,
+# then builds and tests the backend.
 # No stage fabricates a result: each prints raw command output or exits non-zero
 # with an explicit BLOCKED marker.
 #
@@ -8,7 +9,7 @@
 # it is generated fresh on every run, so project.yml cannot drift from reality.
 
 workflows:
-  phase0-evidence:
+  bp-coach:
     name: BP Coach — Build & Test
     instance_type: mac_mini_m2
     max_build_duration: 30
@@ -19,9 +20,11 @@ workflows:
         PROJECT_NAME: BPCoach
         SCHEME_NAME: BPCoach
         EXPECTED_DEPLOYMENT_TARGET: "17.0"
-        # ⚠️ UNVERIFIED — confirm from run A6 output or the XcodeGen releases page,
-        # then pin exactly. Left loose on the first run deliberately.
-        XCODEGEN_VERSION: ""
+        # "latest" installs the current Homebrew build and prints its version.
+        # Replace with a tag from https://github.com/yonaskolb/XcodeGen/releases
+        # (e.g. "2.42.0") once you have read the real version from stage A6.
+        # CodeMagic rejects empty values, so this is a sentinel rather than "".
+        XCODEGEN_VERSION: "latest"
 
     triggering:
       events:
@@ -83,15 +86,31 @@ workflows:
 
       - name: A6 · Install XcodeGen
         script: |
-          set -ex
-          if [ -n "$XCODEGEN_VERSION" ]; then
+          set -e
+          if [ "$XCODEGEN_VERSION" = "latest" ]; then
+            echo "Installing the latest XcodeGen from Homebrew (unpinned)."
             brew install xcodegen
-            INSTALLED=$(xcodegen --version)
-            echo "Installed: $INSTALLED · Pinned expectation: $XCODEGEN_VERSION"
           else
-            brew install xcodegen
+            # Pinned: fetch the exact release artifact rather than whatever
+            # Homebrew currently ships, so builds stay reproducible.
+            echo "Installing pinned XcodeGen $XCODEGEN_VERSION"
+            URL="https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+            curl -fsSL "$URL" -o /tmp/xcodegen.zip || {
+              echo "BLOCKED: no release artifact for tag '$XCODEGEN_VERSION'."
+              echo "Check https://github.com/yonaskolb/XcodeGen/releases for valid tags."
+              exit 1
+            }
+            unzip -q -o /tmp/xcodegen.zip -d /tmp/xcodegen
+            BIN=$(find /tmp/xcodegen -type f -name xcodegen -perm +111 | head -1)
+            [ -n "$BIN" ] || { echo "BLOCKED: no xcodegen binary in the archive"; exit 1; }
+            chmod +x "$BIN"
+            mkdir -p "$HOME/.local/bin"
+            cp "$BIN" "$HOME/.local/bin/xcodegen"
+            echo "PATH=$HOME/.local/bin:$PATH" >> $CM_ENV
+            export PATH="$HOME/.local/bin:$PATH"
           fi
-          echo "--- RECORD THIS VERSION AND PIN IT ---"
+
+          echo "--- RECORD THIS VERSION AND PIN IT IN XCODEGEN_VERSION ---"
           xcodegen --version
 
       - name: B1 · Generate the Xcode project
