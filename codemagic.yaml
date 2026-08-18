@@ -25,6 +25,11 @@ workflows:
         # (e.g. "2.42.0") once you have read the real version from stage A6.
         # CodeMagic rejects empty values, so this is a sentinel rather than "".
         XCODEGEN_VERSION: "latest"
+        # Public base URL of the Railway backend — not a secret. Override in the
+        # CodeMagic UI. Left empty here on purpose: an unset value produces a
+        # valid build where the coach and food search report themselves
+        # unavailable, which is a legitimate configuration.
+        BPCOACH_API_BASE_URL: "unset"
 
     triggering:
       events:
@@ -38,6 +43,12 @@ workflows:
       # ══════════════════════════════════════════════════════════
       # STAGE A — environment evidence
       # ══════════════════════════════════════════════════════════
+
+      - name: A0 · Security sweep (gate)
+        script: |
+          set -e
+          chmod +x scripts/security-check.sh
+          ./scripts/security-check.sh
 
       - name: A1 · Xcode version
         script: |
@@ -140,7 +151,26 @@ workflows:
           grep -q "$SCHEME_NAME" /tmp/schemes.txt || {
             echo "BLOCKED: expected scheme $SCHEME_NAME not found"; exit 1; }
 
-      - name: B4 · Resolve simulator destination
+      - name: B4 · Resolve backend URL
+        script: |
+          set -e
+          if [ "$BPCOACH_API_BASE_URL" = "unset" ] || [ -z "$BPCOACH_API_BASE_URL" ]; then
+            echo "No backend URL configured."
+            echo "The app will build and run with the coach and food search"
+            echo "reporting themselves unavailable. This is a valid build."
+            echo "API_BASE_URL=" >> $CM_ENV
+          else
+            # Trailing slashes break URL(string:).appendingPathComponent joins.
+            CLEANED=$(echo "$BPCOACH_API_BASE_URL" | sed 's:/*$::')
+            echo "Backend URL: $CLEANED"
+            case "$CLEANED" in
+              https://*) ;;
+              *) echo "BLOCKED: backend URL must use https"; exit 1 ;;
+            esac
+            echo "API_BASE_URL=$CLEANED" >> $CM_ENV
+          fi
+
+      - name: B5 · Resolve simulator destination
         script: |
           set -ex
           xcodebuild -project "${PROJECT_NAME}.xcodeproj" -scheme "$SCHEME_NAME" \
@@ -163,11 +193,14 @@ workflows:
       - name: C1 · Build verification
         script: |
           set -ex
+          # The URL must be passed as a build setting. A CodeMagic environment
+          # variable is a shell variable; xcodebuild does not read it as one.
           xcodebuild build \
             -project "${PROJECT_NAME}.xcodeproj" \
             -scheme "$SCHEME_NAME" \
             -destination "platform=iOS Simulator,name=$DEST_NAME" \
             CODE_SIGNING_ALLOWED=NO \
+            BPCOACH_API_BASE_URL="$API_BASE_URL" \
             2>&1 | tee /tmp/build.log | tail -40
           grep -q "BUILD SUCCEEDED" /tmp/build.log
 
@@ -179,6 +212,7 @@ workflows:
             -scheme "$SCHEME_NAME" \
             -destination "platform=iOS Simulator,name=$DEST_NAME" \
             CODE_SIGNING_ALLOWED=NO \
+            BPCOACH_API_BASE_URL="$API_BASE_URL" \
             2>&1 | tee /tmp/test.log | tail -60
           grep -qE "TEST SUCCEEDED|TEST EXECUTE SUCCEEDED" /tmp/test.log
           echo "--- confirm no skipped tests ---"
@@ -215,11 +249,23 @@ workflows:
       # STAGE D — iOS 17.0 API availability probe
       # ══════════════════════════════════════════════════════════
 
-      - name: A0 · Security sweep
+      - name: C5 · Confirm the backend URL reached the bundle
         script: |
           set -e
-          chmod +x scripts/security-check.sh
-          ./scripts/security-check.sh
+          APP=$(find ~/Library/Developer/Xcode/DerivedData "${CM_BUILD_DIR}" \
+                 -name "${PROJECT_NAME}.app" -type d 2>/dev/null | head -1)
+          [ -n "$APP" ] || { echo "BLOCKED: no .app produced"; exit 1; }
+
+          BAKED=$(/usr/libexec/PlistBuddy -c "Print :BPCoachAPIBaseURL" \
+                  "$APP/Info.plist" 2>/dev/null || echo "")
+          echo "Info.plist BPCoachAPIBaseURL = '$BAKED'"
+
+          if [ -n "$API_BASE_URL" ] && [ "$BAKED" != "$API_BASE_URL" ]; then
+            echo "BLOCKED: the URL did not reach the bundle."
+            echo "Expected '$API_BASE_URL', found '$BAKED'."
+            exit 1
+          fi
+          echo "OK"
 
       - name: D1 · Invariant sweep
         script: |
@@ -266,10 +312,17 @@ workflows:
       - /tmp/*.log
       - /tmp/*.txt
 
-    publishing:
-      email:
-        recipients:
-          - $NOTIFY_EMAIL
-        notify:
-          success: true
-          failure: true
+    # No publishing block. CodeMagic emails build results to the account owner
+    # by default, and a `recipients` entry that resolves to an unset variable is
+    # a hard validation error rather than a silent skip.
+    #
+    # To email someone else, use a literal address below (an unset variable
+    # reference is a validation error) and uncomment:
+    #
+    # publishing:
+    #   email:
+    #     recipients:
+    #       - you@example.com
+    #     notify:
+    #       success: true
+    #       failure: true
