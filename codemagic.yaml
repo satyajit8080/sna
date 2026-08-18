@@ -465,32 +465,52 @@ workflows:
       - name: R4 · Apply signing profiles
         script: |
           set -e
-          keychain initialize
 
           # A signing certificate is a public certificate plus a private key.
-          # `--create` can ask Apple to issue the certificate, but it cannot
-          # invent the private key — that has to be supplied, and it has to be
-          # the SAME one every build. A fresh key each time would issue a new
-          # certificate each time, and Apple allows only a small number of
-          # distribution certificates per account before refusing more.
-          #
-          # CERTIFICATE_PRIVATE_KEY is a secure environment variable holding a
-          # PEM RSA private key. See docs/TESTFLIGHT.md for how to make it.
-          if [ -n "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
-            echo "Using the stored private key; creating cert/profile if absent."
-            app-store-connect fetch-signing-files "$BUNDLE_ID" \
-              --type IOS_APP_STORE \
-              --platform IOS \
-              --create \
-              --certificate-key="@env:CERTIFICATE_PRIVATE_KEY"
-          else
-            echo "No CERTIFICATE_PRIVATE_KEY set."
-            echo "Falling back to existing certificates and profiles only —"
-            echo "nothing will be created. If this fails, add the variable."
-            app-store-connect fetch-signing-files "$BUNDLE_ID" \
-              --type IOS_APP_STORE \
-              --platform IOS
+          # Apple issues the certificate; the private key is yours and Apple
+          # never sees it. The CLI cannot save a certificate without one, so
+          # there is no useful fallback here — fail early and say why.
+          if [ -z "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
+            echo "=============================================="
+            echo "BLOCKED: CERTIFICATE_PRIVATE_KEY is not set."
+            echo ""
+            echo "It must be added as an environment variable AND placed in a"
+            echo "group this workflow imports. That group is: appstore"
+            echo ""
+            echo "A variable with no group, or in a group not listed under"
+            echo "environment.groups, exists in the UI but never reaches the"
+            echo "build — which is what has happened here."
+            echo ""
+            echo "CodeMagic → app settings → Environment variables:"
+            echo "  name   : CERTIFICATE_PRIVATE_KEY"
+            echo "  value  : the whole PEM key, both BEGIN and END lines"
+            echo "  group  : appstore"
+            echo "  secure : ticked"
+            echo "=============================================="
+            echo ""
+            echo "Variables this build CAN see (names only, no values):"
+            env | cut -d= -f1 | grep -iE 'CERT|KEY|BUNDLE|BPCOACH|APP' | sort || true
+            exit 1
           fi
+
+          echo "CERTIFICATE_PRIVATE_KEY is present (${#CERTIFICATE_PRIVATE_KEY} chars)."
+          case "$CERTIFICATE_PRIVATE_KEY" in
+            *"BEGIN RSA PRIVATE KEY"*|*"BEGIN PRIVATE KEY"*) echo "Format looks right." ;;
+            *) echo "BLOCKED: the value is not a PEM private key."
+               echo "It must start with -----BEGIN RSA PRIVATE KEY----- and"
+               echo "include every line through -----END RSA PRIVATE KEY-----."
+               exit 1 ;;
+          esac
+
+          keychain initialize
+
+          # Reusing the same key each build keeps one certificate. A fresh key
+          # would issue a new one, and Apple caps distribution certificates.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --platform IOS \
+            --create \
+            --certificate-key="@env:CERTIFICATE_PRIVATE_KEY"
 
           keychain add-certificates
           xcode-project use-profiles
