@@ -43,7 +43,7 @@ struct OnboardingFlow: View {
             symbol: "heart.text.square.fill",
             title: "BP Coach",
             subtitle: "Measure. Understand. Improve.",
-            body: """
+            message: """
             Record your blood pressure, see what your numbers are actually doing over \
             time, and walk into your next appointment prepared.
 
@@ -59,7 +59,7 @@ struct OnboardingFlow: View {
             symbol: "person.crop.circle.fill",
             title: "Who is this for?",
             subtitle: "You can add family profiles later",
-            body: "This profile is the device owner, and it is the only one that can connect to Apple Health.",
+            message: "This profile is the device owner, and it is the only one that can connect to Apple Health.",
             primaryTitle: "Continue",
             primaryAction: {
                 app.renameOwner(to: name.isEmpty ? "Me" : name)
@@ -78,7 +78,7 @@ struct OnboardingFlow: View {
             symbol: "list.clipboard.fill",
             title: "Which guideline?",
             subtitle: "This decides how your readings are labelled",
-            body: "",
+            message: "",
             primaryTitle: "Continue",
             primaryAction: {
                 guidelines.select(selectedGuideline)
@@ -120,7 +120,7 @@ struct OnboardingFlow: View {
             symbol: "info.circle.fill",
             title: "Why it matters",
             subtitle: selectedGuideline.displayName,
-            body: """
+            message: """
             Guidelines disagree. A reading of 135/85 is Stage 1 under ACC/AHA and only \
             High normal under ESC/ESH — the same numbers, different labels.
 
@@ -139,7 +139,7 @@ struct OnboardingFlow: View {
             symbol: "heart.fill",
             title: "Apple Health",
             subtitle: "Optional, and it works both ways",
-            body: """
+            message: """
             BP Coach can read blood pressure, heart rate, sleep, steps and weight from \
             Health, and save readings you enter back to it.
 
@@ -162,7 +162,7 @@ struct OnboardingFlow: View {
             symbol: "bell.badge.fill",
             title: "Reminders",
             subtitle: "You control every category",
-            body: """
+            message: """
             Medication doses, measurement nudges, appointment reminders, and an alert if \
             your monthly average drifts upward.
 
@@ -186,7 +186,8 @@ struct OnboardingPage<Extra: View>: View {
     let symbol: String
     let title: String
     let subtitle: String
-    let body: String
+    /// Named `message`, not `body`: a View already has a `body`.
+    let message: String
     let primaryTitle: String
     let primaryAction: () -> Void
     var secondaryTitle: String?
@@ -197,7 +198,7 @@ struct OnboardingPage<Extra: View>: View {
         symbol: String,
         title: String,
         subtitle: String,
-        body: String,
+        message: String,
         primaryTitle: String,
         primaryAction: @escaping () -> Void,
         secondaryTitle: String? = nil,
@@ -207,7 +208,7 @@ struct OnboardingPage<Extra: View>: View {
         self.symbol = symbol
         self.title = title
         self.subtitle = subtitle
-        self.body = body
+        self.message = message
         self.primaryTitle = primaryTitle
         self.primaryAction = primaryAction
         self.secondaryTitle = secondaryTitle
@@ -232,8 +233,8 @@ struct OnboardingPage<Extra: View>: View {
                 }
                 .multilineTextAlignment(.center)
 
-                if !body.isEmpty {
-                    Text(body)
+                if !message.isEmpty {
+                    Text(message)
                         .font(.callout)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.leading)
