@@ -464,15 +464,33 @@ workflows:
 
       - name: R4 · Apply signing profiles
         script: |
-          set -ex
+          set -e
           keychain initialize
 
-          # --create makes the profile and, if needed, the certificate. This is
-          # why the automatic ios_signing block is not used.
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create \
-            --platform IOS
+          # A signing certificate is a public certificate plus a private key.
+          # `--create` can ask Apple to issue the certificate, but it cannot
+          # invent the private key — that has to be supplied, and it has to be
+          # the SAME one every build. A fresh key each time would issue a new
+          # certificate each time, and Apple allows only a small number of
+          # distribution certificates per account before refusing more.
+          #
+          # CERTIFICATE_PRIVATE_KEY is a secure environment variable holding a
+          # PEM RSA private key. See docs/TESTFLIGHT.md for how to make it.
+          if [ -n "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
+            echo "Using the stored private key; creating cert/profile if absent."
+            app-store-connect fetch-signing-files "$BUNDLE_ID" \
+              --type IOS_APP_STORE \
+              --platform IOS \
+              --create \
+              --certificate-key="@env:CERTIFICATE_PRIVATE_KEY"
+          else
+            echo "No CERTIFICATE_PRIVATE_KEY set."
+            echo "Falling back to existing certificates and profiles only —"
+            echo "nothing will be created. If this fails, add the variable."
+            app-store-connect fetch-signing-files "$BUNDLE_ID" \
+              --type IOS_APP_STORE \
+              --platform IOS
+          fi
 
           keychain add-certificates
           xcode-project use-profiles
