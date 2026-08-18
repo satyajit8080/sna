@@ -428,10 +428,18 @@ struct CoachView: View {
                 try? context.save()
                 lastFailedQuestion = nil
             } catch let coachError as CoachError {
-                self.error = coachError == .notConfigured ? .coachUnavailable
-                    : .saveFailed(coachError.errorDescription ?? "The coach could not answer.")
+                // Each failure needs its own message. Reporting a network error
+                // as "could not save" sends the user looking in the wrong place.
+                switch coachError {
+                case .notConfigured:
+                    self.error = .coachUnavailable
+                case .offline:
+                    self.error = .coachOffline
+                case .refused(let reason):
+                    self.error = .coachRefused(reason)
+                }
             } catch {
-                self.error = .coachUnavailable
+                self.error = .coachOffline
             }
         }
     }
