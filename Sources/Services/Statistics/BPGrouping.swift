@@ -23,7 +23,14 @@ enum BPGrouping {
         }
     }
 
-    struct Bucket: Identifiable, Sendable {
+    /// Not `Sendable`: it holds `BPReading`, a SwiftData `@Model` bound to the
+    /// main-actor context it was fetched on. Declaring it `Sendable` would
+    /// promise it can cross actors, which is exactly what SwiftData models must
+    /// not do — Swift 6 rejects it, and it would be a data race regardless.
+    ///
+    /// Everything that uses a bucket runs on the main actor with the views, so
+    /// nothing is lost by dropping the conformance.
+    struct Bucket: Identifiable {
         let id: Date
         let start: Date
         let readings: [BPReading]
