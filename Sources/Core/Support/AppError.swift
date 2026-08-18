@@ -10,6 +10,8 @@ enum AppError: LocalizedError, Equatable {
     case notificationsDenied
     case invalidReading(String)
     case coachUnavailable
+    case coachOffline
+    case coachRefused(String)
     case foodProviderUnavailable
     case saveFailed(String)
     case exportFailed(String)
@@ -27,7 +29,11 @@ enum AppError: LocalizedError, Equatable {
         case .invalidReading(let reason):
             reason
         case .coachUnavailable:
-            "The AI coach is not set up yet."
+            "The AI coach is not set up in this build."
+        case .coachOffline:
+            "Could not reach the coach. Check your connection and try again."
+        case .coachRefused(let reason):
+            reason
         case .foodProviderUnavailable:
             "No food database is connected, so sodium is entered by hand."
         case .saveFailed(let reason):
@@ -50,6 +56,10 @@ enum AppError: LocalizedError, Equatable {
             "Open Settings → Notifications → BP Coach to turn them on."
         case .coachUnavailable:
             "Your readings are still saved and your trends still work."
+        case .coachOffline:
+            "Everything else works offline — your readings are saved either way."
+        case .coachRefused:
+            nil
         case .foodProviderUnavailable:
             "Read sodium off the label and enter it manually."
         default:
