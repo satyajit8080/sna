@@ -23,13 +23,13 @@ final class AppModel {
 
     private let context: ModelContext
     private let defaults: UserDefaults
-    private let onboardingKey = "onboarding.complete"
+    private static let onboardingKey = "onboarding.complete"
 
     init(context: ModelContext, defaults: UserDefaults = .standard) {
         self.context = context
         self.defaults = defaults
         self.guidelines = GuidelineEngine(defaults: defaults)
-        self.hasCompletedOnboarding = defaults.bool(forKey: onboardingKey)
+        self.hasCompletedOnboarding = defaults.bool(forKey: Self.onboardingKey)
 
         if let baseURL = BackendConfig.baseURL {
             self.coach = BackendCoachService(baseURL: baseURL)
@@ -102,7 +102,7 @@ final class AppModel {
 
     func completeOnboarding() {
         hasCompletedOnboarding = true
-        defaults.set(true, forKey: onboardingKey)
+        defaults.set(true, forKey: Self.onboardingKey)
     }
 
     // MARK: - Data management
