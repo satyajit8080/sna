@@ -6,10 +6,30 @@ import Testing
 @Suite("Grouping and export")
 struct GroupingExportTests {
 
+    /// A fixed reference instant: noon on 15 June 2026, UTC.
+    ///
+    /// Bucketing tests must not use offsets from `Date.now` — an offset of 0.3
+    /// days crosses midnight when the suite runs in the morning, which silently
+    /// changes which bucket a reading lands in. This suite failed in CI at
+    /// 10:41 local for exactly that reason.
+    private static let reference: Date = {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 6
+        components.day = 15
+        components.hour = 12
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar.date(from: components)!
+    }()
+
+    /// Readings positioned relative to the reference instant.
+    /// `hoursBefore` stays within one calendar day when under 12.
     private func reading(
         _ systolic: Int,
         _ diastolic: Int,
-        daysAgo: Double = 0,
+        hoursBefore: Double = 0,
+        daysBefore: Double = 0,
         notes: String? = nil,
         profileID: UUID = UUID()
     ) -> BPReading {
@@ -17,7 +37,9 @@ struct GroupingExportTests {
             profileID: profileID,
             systolic: systolic,
             diastolic: diastolic,
-            recordedAt: Date.now.addingTimeInterval(-daysAgo * 86_400),
+            recordedAt: Self.reference
+                .addingTimeInterval(-hoursBefore * 3_600)
+                .addingTimeInterval(-daysBefore * 86_400),
             notes: notes
         )
     }
@@ -30,23 +52,39 @@ struct GroupingExportTests {
     @Test("Readings on the same day land in one bucket")
     func dailyGrouping() {
         let buckets = BPGrouping.bucket([
-            reading(120, 80, daysAgo: 0.1),
-            reading(130, 85, daysAgo: 0.2),
-            reading(140, 90, daysAgo: 5),
+            reading(120, 80, hoursBefore: 2),
+            reading(130, 85, hoursBefore: 4),
+            reading(140, 90, daysBefore: 5),
         ], by: .daily)
 
         #expect(buckets.count == 2)
         #expect(buckets.first?.average.count == 2)
     }
 
-    @Test("Buckets carry their own highest and lowest")
-    func bucketExtremes() {
+    /// The behaviour the original flaky test was accidentally exercising: a
+    /// reading on the other side of midnight belongs to the other day.
+    @Test("A reading across midnight lands in a separate bucket")
+    func midnightBoundary() {
         let buckets = BPGrouping.bucket([
-            reading(120, 80, daysAgo: 0.1),
-            reading(160, 95, daysAgo: 0.2),
-            reading(110, 70, daysAgo: 0.3),
+            reading(120, 80, hoursBefore: 2),    // same day, 10:00
+            reading(110, 70, hoursBefore: 14),   // previous day, 22:00
         ], by: .daily)
 
+        #expect(buckets.count == 2)
+        #expect(buckets.first?.average.count == 1)
+        #expect(buckets.first?.lowest.systolic == 120)
+    }
+
+    @Test("Buckets carry their own highest and lowest")
+    func bucketExtremes() {
+        // All three within the same calendar day, regardless of when this runs.
+        let buckets = BPGrouping.bucket([
+            reading(120, 80, hoursBefore: 1),
+            reading(160, 95, hoursBefore: 2),
+            reading(110, 70, hoursBefore: 3),
+        ], by: .daily)
+
+        #expect(buckets.count == 1)
         #expect(buckets.first?.highest.systolic == 160)
         #expect(buckets.first?.lowest.systolic == 110)
     }
@@ -54,8 +92,8 @@ struct GroupingExportTests {
     @Test("Buckets are ordered newest first")
     func bucketOrdering() {
         let buckets = BPGrouping.bucket([
-            reading(120, 80, daysAgo: 10),
-            reading(130, 85, daysAgo: 1),
+            reading(120, 80, daysBefore: 10),
+            reading(130, 85, daysBefore: 1),
         ], by: .daily)
 
         #expect(buckets.count == 2)
@@ -74,7 +112,7 @@ struct GroupingExportTests {
     @Test("CSV export has a header and one row per reading")
     func csvShape() {
         let csv = DataExporter.readingsCSV(
-            [reading(120, 80), reading(130, 85)],
+            [reading(120, 80), reading(130, 85, hoursBefore: 1)],
             guideline: ACCAHA2017Guideline()
         )
         let lines = csv.split(separator: "\n")
