@@ -49,6 +49,17 @@ final class HealthKitService {
         return nil
     }
 
+    private func hasUsageDescription(_ key: String, bundle: Bundle = .main) -> Bool {
+        let value = bundle.object(forInfoDictionaryKey: key) as? String
+        return !(value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    /// True when the build can write readings back to Health. Surfaced in
+    /// Settings so a reduced build is visible rather than mysterious.
+    var canWriteToHealth: Bool {
+        hasUsageDescription("NSHealthUpdateUsageDescription")
+    }
+
     struct ActivitySnapshot: Equatable, Sendable {
         var steps: Int?
         var activeEnergyKilocalories: Int?
@@ -122,17 +133,30 @@ final class HealthKitService {
         guard isAvailable else { throw HealthKitError.unavailable }
         guard profile.kind.canUseHealthKit else { throw HealthKitError.notOwnerProfile }
 
-        // Must come before the request. Afterwards is too late — the process is
-        // already gone.
-        if let missing = Self.missingUsageDescriptionKey() {
-            lastError = "Missing \(missing)"
-            throw HealthKitError.missingUsageDescription(missing)
+        // Reading requires NSHealthShareUsageDescription. Without it HealthKit
+        // raises an Objective-C exception that Swift cannot catch, so the check
+        // has to happen before the call.
+        if !hasUsageDescription("NSHealthShareUsageDescription") {
+            lastError = "Missing NSHealthShareUsageDescription"
+            throw HealthKitError.missingUsageDescription("NSHealthShareUsageDescription")
+        }
+
+        // Writing requires NSHealthUpdateUsageDescription, validated separately
+        // by HealthKit in _throwIfAuthorizationDisallowedForSharing. If it is
+        // absent, request read access only: losing the ability to write back to
+        // Health is a far better outcome than terminating the app.
+        let canShare = hasUsageDescription("NSHealthUpdateUsageDescription")
+        if !canShare {
+            lastError = "Missing NSHealthUpdateUsageDescription — reading only."
         }
 
         hasRequestedAuthorization = true
         do {
-            try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
-            lastError = nil
+            try await store.requestAuthorization(
+                toShare: canShare ? writeTypes : [],
+                read: readTypes
+            )
+            if canShare { lastError = nil }
             return true
         } catch {
             lastError = error.localizedDescription
@@ -199,6 +223,9 @@ final class HealthKitService {
     func save(reading: BPReading, for profile: UserProfile) async throws {
         guard isAvailable else { throw HealthKitError.unavailable }
         guard profile.kind.canUseHealthKit else { throw HealthKitError.notOwnerProfile }
+        guard hasUsageDescription("NSHealthUpdateUsageDescription") else {
+            throw HealthKitError.missingUsageDescription("NSHealthUpdateUsageDescription")
+        }
 
         let unit = HKUnit.millimeterOfMercury()
         let systolic = HKQuantitySample(
