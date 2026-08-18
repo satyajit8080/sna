@@ -54,8 +54,15 @@ private struct CoachRequestPayload: Encodable {
         let isEstimate: Bool
     }
 
+    struct Attachment: Encodable {
+        let kind: String
+        let name: String
+        let text: String
+    }
+
     let question: String
     let guidelineName: String
+    let attachments: [Attachment]
     let readings: [Reading]
     let averages: [Average]
     let variabilitySD: Double?
@@ -95,11 +102,15 @@ struct BackendCoachService: AICoachService {
 
     var isConfigured: Bool { true }
 
-    func respond(to request: CoachRequest, context: BPContextSnapshot) async throws -> CoachResponse {
+    func respond(
+        to request: CoachRequest,
+        context: BPContextSnapshot,
+        attachments: [CoachAttachmentPayload] = []
+    ) async throws -> CoachResponse {
         // Safety never routes through here. `SafetyEngine` decides urgency
         // on-device, deterministically, and the coach is not consulted.
         let question = Self.question(for: request)
-        let payload = Self.payload(question: question, context: context)
+        let payload = Self.payload(question: question, context: context, attachments: attachments)
 
         var urlRequest = URLRequest(url: baseURL.appendingPathComponent("v1/coach"))
         urlRequest.httpMethod = "POST"
@@ -154,13 +165,18 @@ struct BackendCoachService: AICoachService {
 
     private static func payload(
         question: String,
-        context: BPContextSnapshot
+        context: BPContextSnapshot,
+        attachments: [CoachAttachmentPayload]
     ) -> CoachRequestPayload {
         let formatter = ISO8601DateFormatter()
 
         return CoachRequestPayload(
             question: question,
             guidelineName: context.guidelineName,
+            // Already reduced to text on the device — never an image.
+            attachments: attachments.map {
+                .init(kind: $0.kind, name: $0.name, text: String($0.text.prefix(6_000)))
+            },
             readings: context.recentReadings.map {
                 .init(
                     systolic: $0.systolic,

@@ -1,0 +1,281 @@
+import SwiftData
+import SwiftUI
+import UIKit
+
+/// One message, with the actions people actually want on an answer.
+struct MessageBubble: View {
+    @Environment(\.modelContext) private var context
+    let message: AIMessage
+
+    @State private var didCopy = false
+    @State private var isSharing = false
+
+    var body: some View {
+        HStack(alignment: .bottom) {
+            if message.isFromUser { Spacer(minLength: 48) }
+
+            VStack(alignment: message.isFromUser ? .trailing : .leading, spacing: 4) {
+                Text(message.text)
+                    .padding(Theme.Spacing.md)
+                    .background(message.isFromUser ? Theme.accentSoft : Theme.surface)
+                    .foregroundStyle(Theme.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .overlay {
+                        if !message.isFromUser {
+                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                                .strokeBorder(Theme.border, lineWidth: 1)
+                        }
+                    }
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !message.isFromUser {
+                    HStack(spacing: Theme.Spacing.md) {
+                        Button {
+                            UIPasteboard.general.string = message.text
+                            didCopy = true
+                            Haptics.success()
+                            Task {
+                                try? await Task.sleep(for: .seconds(2))
+                                didCopy = false
+                            }
+                        } label: {
+                            Label(didCopy ? "Copied" : "Copy",
+                                  systemImage: didCopy ? "checkmark" : "doc.on.doc")
+                        }
+
+                        ShareLink(item: message.text) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.textTertiary)
+                    .labelStyle(.titleAndIcon)
+                }
+            }
+
+            if !message.isFromUser { Spacer(minLength: 48) }
+        }
+    }
+}
+
+/// A prompt the user can tap instead of typing.
+///
+/// Suggestions adapt to what the person actually has: offering "explain my
+/// report" to someone with no documents is noise.
+struct SuggestedQuestion: Identifiable {
+    let id = UUID()
+    let text: String
+
+    static func forContext(
+        _ context: BPContextSnapshot,
+        hasDocuments: Bool
+    ) -> [SuggestedQuestion] {
+        var items: [String] = []
+
+        if context.isTooSparse {
+            items.append("How should I be taking my readings?")
+            items.append("What do the blood pressure categories mean?")
+        } else {
+            items.append("What moved my blood pressure recently?")
+            if context.morningVsEvening != nil {
+                items.append("Why are my mornings different from my evenings?")
+            }
+            if let variability = context.variabilitySD, variability > 8 {
+                items.append("My readings vary a lot — what does that mean?")
+            }
+        }
+
+        if !context.medications.isEmpty {
+            items.append("How has my medication adherence been?")
+        }
+        if hasDocuments {
+            items.append("Explain the terms in my latest report")
+        }
+        items.append("What should I ask my doctor next visit?")
+
+        return items.prefix(5).map { SuggestedQuestion(text: $0) }
+    }
+}
+
+/// Shows what was read from an attachment before it is sent.
+struct AttachmentChip: View {
+    let attachment: CoachAttachment
+    let onRemove: () -> Void
+
+    @State private var isShowingPreview = false
+
+    var body: some View {
+        Button { isShowingPreview = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: attachment.kind.symbol).font(.caption)
+                Text(attachment.name).font(.caption.weight(.medium)).lineLimit(1)
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove \(attachment.name)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Theme.accentSoft)
+            .foregroundStyle(Theme.accent)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isShowingPreview) {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text("Text read from \(attachment.name)")
+                    .font(.caption.weight(.semibold))
+                Text(attachment.preview)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Text("Only this text is sent — never the image itself.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(Theme.Spacing.lg)
+            .frame(maxWidth: 320)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+/// Recording state, with a live level so it is obvious the mic is working.
+struct RecordingBar: View {
+    let voice: VoiceTranscription
+    let onStop: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .accessibilityLabel("Cancel recording")
+
+            HStack(spacing: 2) {
+                ForEach(0..<14, id: \.self) { index in
+                    Capsule()
+                        .fill(Theme.accent)
+                        .frame(width: 3, height: barHeight(index))
+                        .animation(.easeOut(duration: 0.15), value: voice.level)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript)
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .frame(maxWidth: 120, alignment: .trailing)
+
+            Button(action: onStop) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Theme.accent)
+            }
+            .accessibilityLabel("Finish recording")
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    /// Varied by index so the bars do not move as one block.
+    private func barHeight(_ index: Int) -> CGFloat {
+        let base = CGFloat(voice.level) * 26
+        let variation = CGFloat((index * 37) % 10) / 10
+        return max(4, base * (0.5 + variation))
+    }
+}
+
+struct ConversationHistoryView: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @Query(sort: \AIConversation.startedAt, order: .reverse) private var allConversations: [AIConversation]
+
+    @Binding var selected: AIConversation?
+
+    private var mine: [AIConversation] {
+        allConversations.filter { $0.profileID == app.activeProfile.id && !$0.messages.isEmpty }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if mine.isEmpty {
+                    EmptyStateView(
+                        symbol: "bubble.left.and.bubble.right",
+                        title: "No conversations yet",
+                        message: "Chats you have with the coach are kept here, on this device."
+                    )
+                } else {
+                    List {
+                        ForEach(mine) { conversation in
+                            Button {
+                                selected = conversation
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(conversation.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
+                                    Text("\(conversation.messages.count) messages · \(conversation.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
+                            }
+                        }
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                let conversation = mine[index]
+                                if selected?.id == conversation.id { selected = nil }
+                                context.delete(conversation)
+                            }
+                            try? context.save()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Conversations")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+            }
+        }
+    }
+}
+
+struct AttachReportView: View {
+    @Environment(\.dismiss) private var dismiss
+    let documents: [MedicalDocument]
+    let onSelect: (MedicalDocument) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List(documents) { document in
+                Button {
+                    onSelect(document)
+                    dismiss()
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(document.title)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("\(document.kind.label) · \(document.values.count) values")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            }
+            .navigationTitle("Attach a report")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+        }
+    }
+}

@@ -367,3 +367,82 @@ describe("OpenRouter client", () => {
     assert.equal(called, false, "made a network call without a key");
   });
 });
+
+describe("attachments", () => {
+  const withAttachments = (attachments) => ({ ...baseBody, attachments });
+
+  test("valid attachments are accepted and normalised", () => {
+    const result = validateCoachRequest(
+      withAttachments([{ kind: "report", name: "Blood test", text: "LDL 118 mg/dL" }])
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.body.attachments.length, 1);
+    assert.equal(result.body.attachments[0].kind, "report");
+  });
+
+  test("a body with no attachments still validates", () => {
+    const result = validateCoachRequest(baseBody);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.body.attachments, []);
+  });
+
+  /** The client is trusted to send text, not trusted to be right about it. */
+  test("attachments without usable text are dropped, not forwarded", () => {
+    const result = validateCoachRequest(
+      withAttachments([
+        { kind: "photo", name: "a", text: "" },
+        { kind: "photo", name: "b", text: "   " },
+        { kind: "photo", name: "c" },
+        { kind: "photo", name: "d", text: "real content here" },
+      ])
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.body.attachments.length, 1);
+    assert.equal(result.body.attachments[0].name, "d");
+  });
+
+  test("attachment count is capped", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      kind: "photo", name: `p${i}`, text: "content",
+    }));
+    const result = validateCoachRequest(withAttachments(many));
+    assert.equal(result.body.attachments.length, LIMITS.maxAttachments);
+  });
+
+  test("attachment text is truncated to the cap", () => {
+    const result = validateCoachRequest(
+      withAttachments([{ kind: "document", name: "long", text: "x".repeat(50_000) }])
+    );
+    assert.equal(result.body.attachments[0].text.length, LIMITS.maxAttachmentChars);
+  });
+
+  test("non-string fields are replaced rather than passed through", () => {
+    const result = validateCoachRequest(
+      withAttachments([{ kind: 42, name: null, text: "content" }])
+    );
+    assert.equal(result.body.attachments[0].kind, "file");
+    assert.equal(result.body.attachments[0].name, "attachment");
+  });
+
+  test("a non-array attachments field is ignored", () => {
+    const result = validateCoachRequest({ ...baseBody, attachments: "nope" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.body.attachments, []);
+  });
+
+  /**
+   * The model must be told recognition can be wrong, or it will read an OCR
+   * artefact as a real lab value.
+   */
+  test("rendered context warns that extracted text may be misread", () => {
+    const rendered = renderContext(
+      withAttachments([{ kind: "report", name: "Labs", text: "Creatinine 2.4" }])
+    );
+    assert.match(rendered, /misread|imperfect/i);
+    assert.ok(rendered.includes("Creatinine 2.4"));
+  });
+
+  test("no attachment section appears when there are none", () => {
+    assert.ok(!renderContext(baseBody).includes("ATTACHMENTS"));
+  });
+});

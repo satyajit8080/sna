@@ -72,6 +72,12 @@ targets:
         NSPhotoLibraryUsageDescription: >-
           BP Coach can read a report or prescription from a photo you choose.
           Photos are processed on your device and never uploaded.
+        NSMicrophoneUsageDescription: >-
+          BP Coach uses the microphone so you can dictate questions to the AI
+          coach instead of typing them.
+        NSSpeechRecognitionUsageDescription: >-
+          Speech is transcribed on your device where supported, so what you say
+          becomes text without being uploaded.
         NSHealthUpdateUsageDescription: >-
           BP Coach saves blood pressure readings you enter into Health so other apps
           you trust can use them.

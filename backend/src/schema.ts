@@ -12,7 +12,10 @@ export const LIMITS = {
   maxLifestyle: 12,
   maxQuestionLength: 1_000,
   maxNotesLength: 200,
-  maxBodyBytes: 64 * 1024,
+  maxAttachments: 4,
+  /** Per attachment. A long report would otherwise crowd out the readings. */
+  maxAttachmentChars: 6_000,
+  maxBodyBytes: 256 * 1024,
 } as const;
 
 export interface CoachReading {
@@ -26,9 +29,16 @@ export interface CoachReading {
   notes?: string | null;
 }
 
+export interface CoachAttachment {
+  kind: string;
+  name: string;
+  text: string;
+}
+
 export interface CoachRequestBody {
   question: string;
   guidelineName: string;
+  attachments?: CoachAttachment[];
   readings: CoachReading[];
   averages: { days: number; systolic: number; diastolic: number; count: number }[];
   variabilitySD?: number | null;
@@ -87,11 +97,29 @@ export function validateCoachRequest(
 
   if (failures.length > 0) return { ok: false, failures };
 
+  // Attachments arrive as text the device already extracted. Anything that is
+  // not a string is dropped rather than forwarded — the client is trusted to
+  // send text, but not trusted to be correct about it.
+  const attachments = Array.isArray(b.attachments)
+    ? b.attachments
+        .filter(
+          (a): a is CoachAttachment =>
+            !!a && typeof a.text === "string" && a.text.trim().length > 0
+        )
+        .slice(0, LIMITS.maxAttachments)
+        .map((a) => ({
+          kind: typeof a.kind === "string" ? a.kind.slice(0, 40) : "file",
+          name: typeof a.name === "string" ? a.name.slice(0, 120) : "attachment",
+          text: a.text.slice(0, LIMITS.maxAttachmentChars),
+        }))
+    : [];
+
   const body = b as CoachRequestBody;
   return {
     ok: true,
     body: {
       ...body,
+      attachments,
       readings: body.readings.slice(0, LIMITS.maxReadings),
       medications: (body.medications ?? []).slice(0, LIMITS.maxMedications),
       lifestyle: (body.lifestyle ?? []).slice(0, LIMITS.maxLifestyle),

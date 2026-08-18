@@ -1,25 +1,38 @@
+import PhotosUI
 import SwiftData
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct CoachView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.modelContext) private var context
+
     @Query(sort: \BPReading.recordedAt, order: .reverse) private var allReadings: [BPReading]
     @Query private var allMedications: [Medication]
     @Query private var allDoses: [MedicationDose]
     @Query private var allLifestyle: [LifestyleEntry]
+    @Query(sort: \MedicalDocument.importedAt, order: .reverse) private var allDocuments: [MedicalDocument]
+    @Query(sort: \AIConversation.startedAt, order: .reverse) private var allConversations: [AIConversation]
 
+    @State private var conversation: AIConversation?
     @State private var draft = ""
-    @State private var transcript: [ChatMessage] = []
+    @State private var attachments: [CoachAttachment] = []
     @State private var isThinking = false
     @State private var error: AppError?
-    @State private var section: Section = .dashboard
+    @State private var lastFailedQuestion: String?
 
-    enum Section: String, CaseIterable { case dashboard, chat }
+    @State private var voice = VoiceTranscription()
+    @State private var isShowingAttachMenu = false
+    @State private var isShowingCamera = false
+    @State private var isShowingFiles = false
+    @State private var isShowingReports = false
+    @State private var isShowingHistory = false
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var attachmentError: String?
 
-    struct ChatMessage: Identifiable {
-        let id = UUID()
-        let isUser: Bool
-        let text: String
+    private var messages: [AIMessage] {
+        (conversation?.messages ?? []).sorted { $0.createdAt < $1.createdAt }
     }
 
     private var snapshot: BPContextSnapshot {
@@ -35,266 +48,379 @@ struct CoachView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Section", selection: $section) {
-                ForEach(Section.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, Theme.Spacing.lg)
-            .padding(.vertical, Theme.Spacing.md)
-
-            switch section {
-            case .dashboard: dashboard
-            case .chat: chat
-            }
+            transcript
+            composer
         }
         .background(Theme.background)
-        .navigationTitle("Coach")
+        .navigationTitle("AI Coach")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { isShowingHistory = true } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .accessibilityLabel("Conversation history")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { newConversation() } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .accessibilityLabel("New conversation")
+            }
+        }
+        .sheet(isPresented: $isShowingHistory) {
+            ConversationHistoryView(selected: $conversation)
+        }
+        .sheet(isPresented: $isShowingReports) {
+            AttachReportView(documents: myDocuments) { attach(document: $0) }
+        }
+        .fullScreenCover(isPresented: $isShowingCamera) {
+            CameraPicker { attach(image: $0, name: "Photo") }.ignoresSafeArea()
+        }
+        .sheet(isPresented: $isShowingFiles) {
+            DocumentPicker(types: [.pdf, .image, .plainText]) { attach(fileAt: $0) }
+        }
+        .onChange(of: selectedPhoto) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    attach(image: image, name: "Photo")
+                } else {
+                    attachmentError = "That photo could not be opened."
+                }
+                selectedPhoto = nil
+            }
+        }
+        .task { if conversation == nil { conversation = allConversations.first } }
     }
 
-    // MARK: - Dashboard
+    private var myDocuments: [MedicalDocument] {
+        allDocuments.filter { $0.profileID == app.activeProfile.id }
+    }
 
-    private var dashboard: some View {
-        ScrollView {
-            VStack(spacing: Theme.Spacing.lg) {
-                if !app.coach.isConfigured { unconfiguredCard }
-                contextCards
-                guardrailsCard
+    // MARK: - Transcript
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                    if messages.isEmpty { welcome }
+
+                    ForEach(messages) { message in
+                        MessageBubble(message: message)
+                            .id(message.id)
+                    }
+
+                    if isThinking {
+                        HStack(spacing: Theme.Spacing.sm) {
+                            ProgressView().controlSize(.small)
+                            Text("Thinking").font(.caption).foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                    }
+
+                    if let error {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            ErrorBanner(error: error) { self.error = nil }
+                            if lastFailedQuestion != nil {
+                                Button("Try again") { retry() }
+                                    .font(.subheadline)
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+                .padding(Theme.Spacing.lg)
             }
-            .padding(Theme.Spacing.lg)
+            .onChange(of: messages.count) { _, _ in
+                withAnimation { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
+            }
         }
     }
 
-    private var unconfiguredCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                Label("Coach not set up yet", systemImage: "sparkles")
-                    .font(.headline)
-                Text("""
-                No AI service is connected. When one is, the coach will explain your own \
-                readings and trends in plain language — using only the summary shown below.
-
-                Everything else in BP Coach works without it.
-                """)
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var welcome: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            if !app.coach.isConfigured {
+                CardView {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        Label("Coach not set up yet", systemImage: "sparkles").font(.headline)
+                        Text("""
+                        No AI service is connected in this build, so the coach cannot answer. \
+                        Everything else in BP Coach works without it.
+                        """)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                    }
+                }
             }
-        }
-    }
 
-    /// Shows exactly what would be sent. The user should be able to inspect the
-    /// payload rather than take it on trust.
-    private var contextCards: some View {
-        let context = snapshot
-
-        return VStack(spacing: Theme.Spacing.lg) {
             CardView {
                 VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                     SectionHeader(
-                        title: "What the coach would see",
-                        subtitle: "A summary capped at \(AIContextEngine.readingLimit) readings — never your full database"
+                        title: "What it can help with",
+                        subtitle: "It explains your own data — it does not diagnose"
                     )
-                    contextRow("Readings", "\(context.recentReadings.count)")
-                    contextRow("Average windows", "\(context.averages.count)")
-                    contextRow("Medications", "\(context.medications.count)")
-                    contextRow("Lifestyle categories", "\(context.lifestyle.count)")
-                    contextRow("Guideline", context.guidelineName)
-                    contextRow("Profile", app.activeProfile.name)
-
-                    if context.isTooSparse {
-                        Text("Not enough readings yet for the coach to say anything useful.")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.top, Theme.Spacing.xs)
-                    }
-                }
-            }
-
-            if !context.averages.isEmpty {
-                CardView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                        SectionHeader(title: "BP context")
-                        ForEach(context.averages, id: \.days) { average in
+                    ForEach(SuggestedQuestion.forContext(snapshot, hasDocuments: !myDocuments.isEmpty)) { item in
+                        Button {
+                            draft = item.text
+                        } label: {
                             HStack {
-                                Text("\(average.days)-day average")
-                                    .foregroundStyle(Theme.textSecondary)
+                                Text(item.text)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .multilineTextAlignment(.leading)
                                 Spacer()
-                                Text("\(average.systolic)/\(average.diastolic)")
-                                    .font(Theme.number(16, weight: .semibold))
+                                Image(systemName: "arrow.up.left")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textTertiary)
                             }
-                            .font(.subheadline)
                         }
-                        if let sd = context.variabilitySD {
-                            HStack {
-                                Text("Variability").foregroundStyle(Theme.textSecondary)
-                                Spacer()
-                                Text(String(format: "±%.1f", sd))
-                                    .font(Theme.number(16, weight: .semibold))
-                            }
-                            .font(.subheadline)
-                        }
+                        .buttonStyle(.plain)
+                        Divider()
                     }
                 }
             }
 
-            if !context.medications.isEmpty {
-                CardView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                        SectionHeader(title: "Medication context")
-                        ForEach(context.medications, id: \.name) { medication in
-                            HStack {
-                                Text(medication.name).foregroundStyle(Theme.textSecondary)
-                                Spacer()
-                                Text(medication.adherencePercent.map { "\(Int($0))%" } ?? "No doses")
-                                    .font(Theme.number(16, weight: .semibold))
-                            }
-                            .font(.subheadline)
-                        }
-                    }
-                }
-            }
-
-            if context.stepsToday != nil || context.restingHeartRate != nil {
-                CardView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                        SectionHeader(title: "Activity context")
-                        HStack {
-                            if let steps = context.stepsToday {
-                                StatTile(title: "Steps", value: "\(steps)")
-                            }
-                            if let hr = context.restingHeartRate {
-                                StatTile(title: "Resting HR", value: "\(hr) bpm")
-                            }
-                        }
+            CardView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Label("What it will never do", systemImage: "xmark.shield")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(CoachGuardrails.prohibited, id: \.self) { rule in
+                        Text("· \(rule.capitalized)")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
                     }
                 }
             }
         }
     }
 
-    private var guardrailsCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                SectionHeader(
-                    title: "What the coach will never do",
-                    subtitle: "Enforced in code, not just in instructions"
-                )
-                ForEach(CoachGuardrails.prohibited, id: \.self) { rule in
-                    Label(rule.capitalized, systemImage: "xmark.circle")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Text("Urgency is decided by fixed clinical rules the AI cannot reach.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.top, Theme.Spacing.xs)
-            }
-        }
-    }
-
-    private func contextRow(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label).foregroundStyle(Theme.textSecondary)
-            Spacer()
-            Text(value)
-        }
-        .font(.subheadline)
-    }
-
-    // MARK: - Chat
-
-    private var chat: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                        if transcript.isEmpty {
-                            EmptyStateView(
-                                symbol: "bubble.left.and.text.bubble.right",
-                                title: app.coach.isConfigured ? "Ask anything about your data" : "Chat unavailable",
-                                message: app.coach.isConfigured
-                                    ? "Try: what moved my blood pressure this week?"
-                                    : "The AI service is not configured, so the coach cannot answer. Your readings and trends still work."
-                            )
-                        }
-
-                        ForEach(transcript) { message in
-                            MessageBubble(message: message).id(message.id)
-                        }
-
-                        if isThinking {
-                            LoadingView(message: "Thinking")
-                        }
-
-                        if let error {
-                            ErrorBanner(error: error) { self.error = nil }
-                        }
-                    }
-                    .padding(Theme.Spacing.lg)
-                }
-                .onChange(of: transcript.count) { _, _ in
-                    withAnimation { proxy.scrollTo(transcript.last?.id, anchor: .bottom) }
-                }
-            }
-
-            composer
-        }
-    }
+    // MARK: - Composer
 
     private var composer: some View {
-        HStack(spacing: Theme.Spacing.sm) {
-            TextField("Ask about your readings", text: $draft, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
-                .disabled(!app.coach.isConfigured)
-
-            Button {
-                send()
-            } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.title2)
+        VStack(spacing: Theme.Spacing.sm) {
+            if let attachmentError {
+                Text(attachmentError)
+                    .font(.caption)
+                    .foregroundStyle(Theme.statusModerate)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || isThinking)
-            .accessibilityLabel("Send")
+
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        ForEach(attachments) { attachment in
+                            AttachmentChip(attachment: attachment) {
+                                attachments.removeAll { $0.id == attachment.id }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if voice.isRecording {
+                RecordingBar(voice: voice) {
+                    let text = voice.stop()
+                    if !text.isEmpty {
+                        draft = draft.isEmpty ? text : "\(draft) \(text)"
+                    }
+                } onCancel: {
+                    voice.cancel()
+                }
+            } else {
+                HStack(spacing: Theme.Spacing.sm) {
+                    Menu {
+                        Button { isShowingCamera = true } label: {
+                            Label("Camera", systemImage: "camera")
+                        }
+                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                            Label("Photo", systemImage: "photo")
+                        }
+                        Button { isShowingFiles = true } label: {
+                            Label("File or PDF", systemImage: "doc")
+                        }
+                        if !myDocuments.isEmpty {
+                            Button { isShowingReports = true } label: {
+                                Label("Saved report", systemImage: "doc.text.magnifyingglass")
+                            }
+                        }
+                        Button { attachHealthData() } label: {
+                            Label("Health data", systemImage: "heart.text.square")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .accessibilityLabel("Add an attachment")
+
+                    TextField("Ask about your readings", text: $draft, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...5)
+
+                    Button {
+                        Task { await voice.start() }
+                    } label: {
+                        Image(systemName: "mic.fill")
+                            .font(.title3)
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .accessibilityLabel("Dictate")
+
+                    Button {
+                        send()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.title2)
+                    }
+                    .disabled(!canSend)
+                    .accessibilityLabel("Send")
+                }
+            }
+
+            if case .denied(let message) = voice.state {
+                Text(message).font(.caption).foregroundStyle(Theme.statusElevated)
+            }
+            if case .failed(let message) = voice.state {
+                Text(message).font(.caption).foregroundStyle(Theme.statusModerate)
+            }
         }
         .padding(Theme.Spacing.lg)
         .background(Theme.surface)
     }
 
+    private var canSend: Bool {
+        !isThinking
+            && (!draft.trimmingCharacters(in: .whitespaces).isEmpty || !attachments.isEmpty)
+    }
+
+    // MARK: - Attaching
+
+    private func attach(image: UIImage, name: String) {
+        attachmentError = nil
+        Task {
+            do {
+                attachments.append(try await AttachmentReader.read(image: image, name: name))
+                Haptics.success()
+            } catch {
+                attachmentError = error.localizedDescription
+            }
+        }
+    }
+
+    private func attach(fileAt url: URL) {
+        attachmentError = nil
+        Task {
+            do {
+                attachments.append(try await AttachmentReader.read(fileAt: url))
+                Haptics.success()
+            } catch {
+                attachmentError = error.localizedDescription
+            }
+        }
+    }
+
+    private func attach(document: MedicalDocument) {
+        attachments.append(AttachmentReader.read(document: document))
+        Haptics.success()
+    }
+
+    /// The context snapshot already accompanies every message. This makes that
+    /// visible and explicit when the user asks for it.
+    private func attachHealthData() {
+        let context = snapshot
+        var lines = ["Recent health summary (\(context.guidelineName))"]
+        for average in context.averages {
+            lines.append("  \(average.days)-day average: \(average.systolic)/\(average.diastolic) from \(average.count) readings")
+        }
+        if let steps = context.stepsToday { lines.append("  Steps today: \(steps)") }
+        if let hr = context.restingHeartRate { lines.append("  Resting heart rate: \(hr) bpm") }
+        for medication in context.medications {
+            let adherence = medication.adherencePercent.map { " — \(Int($0))% taken" } ?? ""
+            lines.append("  \(medication.name) \(medication.dose)\(adherence)")
+        }
+
+        attachments.append(CoachAttachment(
+            kind: .healthData,
+            name: "Health summary",
+            text: lines.joined(separator: "\n")
+        ))
+        Haptics.success()
+    }
+
+    // MARK: - Sending
+
+    private func newConversation() {
+        let fresh = AIConversation(profileID: app.activeProfile.id)
+        context.insert(fresh)
+        try? context.save()
+        conversation = fresh
+        attachments = []
+        draft = ""
+        error = nil
+    }
+
     private func send() {
         let question = draft.trimmingCharacters(in: .whitespaces)
-        guard !question.isEmpty else { return }
+        let payloads = attachments.map {
+            CoachAttachmentPayload(kind: $0.kind.rawValue, name: $0.name, text: $0.text)
+        }
+
+        let target: AIConversation
+        if let conversation {
+            target = conversation
+        } else {
+            target = AIConversation(profileID: app.activeProfile.id)
+            context.insert(target)
+            conversation = target
+        }
+
+        // The title comes from the first question, so history is scannable.
+        if target.messages.isEmpty, !question.isEmpty {
+            target.title = String(question.prefix(48))
+        }
+
+        var displayed = question
+        if !attachments.isEmpty {
+            let names = attachments.map(\.name).joined(separator: ", ")
+            displayed += displayed.isEmpty ? "Attached: \(names)" : "\n\nAttached: \(names)"
+        }
+
+        let userMessage = AIMessage(isFromUser: true, text: displayed)
+        target.messages.append(userMessage)
+        try? context.save()
+
         draft = ""
-        transcript.append(ChatMessage(isUser: true, text: question))
+        attachments = []
+        error = nil
+        lastFailedQuestion = question
         isThinking = true
 
-        let context = snapshot
-
+        let contextSnapshot = snapshot
         Task {
             defer { isThinking = false }
             do {
-                let response = try await app.coach.respond(to: .freeform(question), context: context)
-                transcript.append(ChatMessage(isUser: false, text: response.text))
-                error = nil
+                let response = try await app.coach.respond(
+                    to: .freeform(question.isEmpty ? "What does this say?" : question),
+                    context: contextSnapshot,
+                    attachments: payloads
+                )
+                target.messages.append(AIMessage(isFromUser: false, text: response.text))
+                try? context.save()
+                lastFailedQuestion = nil
+            } catch let coachError as CoachError {
+                self.error = coachError == .notConfigured ? .coachUnavailable
+                    : .saveFailed(coachError.errorDescription ?? "The coach could not answer.")
             } catch {
                 self.error = .coachUnavailable
             }
         }
     }
-}
 
-struct MessageBubble: View {
-    let message: CoachView.ChatMessage
-
-    var body: some View {
-        HStack {
-            if message.isUser { Spacer(minLength: 48) }
-            Text(message.text)
-                .padding(Theme.Spacing.md)
-                .background(message.isUser ? Theme.accentSoft : Theme.surface)
-                .foregroundStyle(Theme.textPrimary)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .fixedSize(horizontal: false, vertical: true)
-            if !message.isUser { Spacer(minLength: 48) }
-        }
+    private func retry() {
+        guard let question = lastFailedQuestion else { return }
+        draft = question
+        error = nil
+        send()
     }
 }

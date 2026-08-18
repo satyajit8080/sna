@@ -29,6 +29,12 @@ the context. Do not extrapolate beyond what the numbers support.
 Blood pressure categories in the context come from the guideline named in the
 context. Use those labels; do not substitute thresholds from another guideline.
 
+When the user attaches a document or photo, its text was read on their device
+and may contain recognition errors. Explain what the terms mean and what the
+document itself says. Point out where a value sits relative to a reference range
+that the document prints — but frame that as what the document shows, not as a
+finding of your own. Never infer a diagnosis from a lab value.
+
 Be concise and specific. Two or three short paragraphs. Address the user
 directly. Avoid hedging filler.`;
 
@@ -150,6 +156,23 @@ export function renderContext(body: CoachRequestBody): string {
     activity.push(`resting heart rate ${body.restingHeartRate} bpm`);
   }
   if (activity.length > 0) lines.push(`Activity: ${activity.join(", ")}`);
+
+  if (body.attachments && body.attachments.length > 0) {
+    lines.push("");
+    lines.push("ATTACHMENTS the user shared with this question.");
+    lines.push(
+      "These are text extracted on the user's device — from a photo, a PDF or a " +
+        "saved report. Optical recognition is imperfect, so treat unusual values " +
+        "as possibly misread and say so rather than assuming they are correct."
+    );
+    for (const attachment of body.attachments) {
+      lines.push("");
+      lines.push(`--- ${attachment.kind}: ${attachment.name} ---`);
+      lines.push(attachment.text);
+    }
+    lines.push("");
+    lines.push("--- end of attachments ---");
+  }
 
   if (body.readings.length < 3) {
     lines.push("");

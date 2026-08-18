@@ -10,6 +10,13 @@ enum CoachRequest: Sendable {
     case freeform(String)
 }
 
+/// Text extracted from an attachment, on the device, ready to send.
+struct CoachAttachmentPayload: Sendable, Equatable {
+    let kind: String
+    let name: String
+    let text: String
+}
+
 struct CoachResponse: Sendable {
     let text: String
     /// What the answer was actually based on, so the user can check it.
@@ -42,7 +49,17 @@ enum CoachError: LocalizedError {
 /// reports that honestly rather than showing invented coaching text.
 protocol AICoachService: Sendable {
     var isConfigured: Bool { get }
-    func respond(to request: CoachRequest, context: BPContextSnapshot) async throws -> CoachResponse
+    func respond(
+        to request: CoachRequest,
+        context: BPContextSnapshot,
+        attachments: [CoachAttachmentPayload]
+    ) async throws -> CoachResponse
+}
+
+extension AICoachService {
+    func respond(to request: CoachRequest, context: BPContextSnapshot) async throws -> CoachResponse {
+        try await respond(to: request, context: context, attachments: [])
+    }
 }
 
 /// Active until a provider is selected and approved.
@@ -52,7 +69,11 @@ protocol AICoachService: Sendable {
 struct UnconfiguredCoachService: AICoachService {
     let isConfigured = false
 
-    func respond(to request: CoachRequest, context: BPContextSnapshot) async throws -> CoachResponse {
+    func respond(
+        to request: CoachRequest,
+        context: BPContextSnapshot,
+        attachments: [CoachAttachmentPayload]
+    ) async throws -> CoachResponse {
         throw CoachError.notConfigured
     }
 }

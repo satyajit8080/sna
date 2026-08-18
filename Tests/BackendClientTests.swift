@@ -136,3 +136,87 @@ struct BackendClientTests {
         #expect(CoachError.refused("nope").errorDescription == "nope")
     }
 }
+
+/// Coach attachments.
+///
+/// The privacy property that matters: attachments are reduced to text on the
+/// device, so an image never crosses the network. These pin that.
+@Suite("Coach attachments")
+@MainActor
+struct CoachAttachmentTests {
+
+    @Test("An attachment carries text, not image data")
+    func attachmentIsText() {
+        let attachment = CoachAttachment(
+            kind: .photo, name: "Label", text: "Sodium 480mg per serving"
+        )
+        #expect(!attachment.isEmpty)
+        #expect(attachment.text.contains("480"))
+    }
+
+    @Test("Empty attachments are recognised as empty")
+    func emptyDetected() {
+        #expect(CoachAttachment(kind: .document, name: "x", text: "   ").isEmpty)
+        #expect(CoachAttachment(kind: .document, name: "x", text: "").isEmpty)
+    }
+
+    @Test("Long text is truncated for preview but kept in full for sending")
+    func previewTruncates() {
+        let attachment = CoachAttachment(
+            kind: .document, name: "Report", text: String(repeating: "a", count: 500)
+        )
+        #expect(attachment.preview.count < 200)
+        #expect(attachment.text.count == 500)
+    }
+
+    /// A stored document contributes its extracted values, its reference ranges
+    /// and its uncertainty — the last of these matters most.
+    @Test("A saved report becomes readable attachment text")
+    func documentBecomesText() {
+        let document = MedicalDocument(profileID: UUID(), kind: .bloodTest, title: "Blood test")
+        document.values = [
+            ExtractedValue(
+                name: "LDL cholesterol", value: "118", unit: "mg/dl",
+                referenceRange: "70 – 130", isWithinRange: true, confidence: .high
+            ),
+            ExtractedValue(name: "Creatinine", value: "2.4", confidence: .low),
+        ]
+
+        let attachment = AttachmentReader.read(document: document)
+        #expect(attachment.kind == .report)
+        #expect(attachment.text.contains("LDL cholesterol"))
+        #expect(attachment.text.contains("within range"))
+        #expect(attachment.text.contains("read uncertainly"))
+    }
+
+    @Test("Suggested questions adapt to sparse data")
+    func suggestionsForSparseData() {
+        let sparse = BPContextSnapshot(generatedAt: .now, guidelineName: "ACC/AHA 2017")
+        let items = SuggestedQuestion.forContext(sparse, hasDocuments: false)
+        #expect(!items.isEmpty)
+        #expect(items.contains { $0.text.lowercased().contains("taking my readings") })
+    }
+
+    @Test("Report questions only appear when reports exist")
+    func suggestionsRespectDocuments() {
+        var context = BPContextSnapshot(generatedAt: .now, guidelineName: "ACC/AHA 2017")
+        context.recentReadings = (0..<5).map { _ in
+            .init(systolic: 120, diastolic: 80, pulse: nil, recordedAt: .now,
+                  timeOfDay: "Morning", source: "Manual", category: "Normal", notes: nil)
+        }
+
+        let without = SuggestedQuestion.forContext(context, hasDocuments: false)
+        let with = SuggestedQuestion.forContext(context, hasDocuments: true)
+
+        #expect(!without.contains { $0.text.contains("report") })
+        #expect(with.contains { $0.text.contains("report") })
+    }
+
+    @Test("Attachment payloads carry only kind, name and text")
+    func payloadShape() {
+        let payload = CoachAttachmentPayload(kind: "photo", name: "Label", text: "content")
+        let mirror = Mirror(reflecting: payload)
+        let fields = Set(mirror.children.compactMap(\.label))
+        #expect(fields == ["kind", "name", "text"])
+    }
+}
