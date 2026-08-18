@@ -530,8 +530,10 @@ workflows:
             echo "BLOCKED: openssl rejects this key."
             cat /tmp/openssl.err
             echo ""
-            echo "Regenerate with:"
-            echo "  ssh-keygen -t rsa -b 2048 -m PEM -f bpcoach_cert.key -q -N '\"\"'"
+            echo "The key must have NO passphrase. Regenerate it and press"
+            echo "Enter twice when prompted — do not pass -N, which on Windows"
+            echo "PowerShell sets a literal two-quote passphrase:"
+            echo "  ssh-keygen -t rsa -b 2048 -m PEM -f bpcoach_cert.key"
             exit 1
           fi
           echo "openssl accepts the key."
