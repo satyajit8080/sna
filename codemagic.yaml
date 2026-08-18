@@ -255,15 +255,32 @@ workflows:
       - name: C3 · Deployment target verification
         script: |
           set -ex
+          # Anchor on the setting name. A loose grep also matches
+          # DEPLOYMENT_TARGET_SETTING_NAME = IPHONEOS_DEPLOYMENT_TARGET, whose
+          # value is the setting's *name* rather than a version number.
           xcodebuild -project "${PROJECT_NAME}.xcodeproj" -scheme "$SCHEME_NAME" \
             -showBuildSettings 2>/dev/null \
-            | grep IPHONEOS_DEPLOYMENT_TARGET | tee /tmp/target.txt
+            | grep -E "^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = " \
+            | tee /tmp/target.txt
 
-          ACTUAL=$(awk -F' = ' '/IPHONEOS_DEPLOYMENT_TARGET/{gsub(/ /,"",$2); print $2; exit}' /tmp/target.txt)
-          echo "Declared: $ACTUAL · Expected: $EXPECTED_DEPLOYMENT_TARGET"
-          [ "$ACTUAL" = "$EXPECTED_DEPLOYMENT_TARGET" ] || {
-            echo "BLOCKED: deployment target is $ACTUAL, not $EXPECTED_DEPLOYMENT_TARGET"; exit 1; }
-          echo "OK: build above SUCCEEDED at iOS $ACTUAL"
+          [ -s /tmp/target.txt ] || {
+            echo "BLOCKED: IPHONEOS_DEPLOYMENT_TARGET not found in build settings"; exit 1; }
+
+          # Every target in the scheme is checked, not just the first — the app
+          # and the test bundle must agree.
+          # Trim per line with sed, not `tr -d [:space:]` — tr would also strip
+          # the newlines and concatenate "17.0" and "17.0" into "17.017.0".
+          VALUES=$(sed -E 's/^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = //; s/[[:space:]]*$//' \
+                   /tmp/target.txt | sort -u)
+          echo "Declared: [$(echo $VALUES | tr '\n' ' ')] · Expected: $EXPECTED_DEPLOYMENT_TARGET"
+
+          for VALUE in $VALUES; do
+            if [ "$VALUE" != "$EXPECTED_DEPLOYMENT_TARGET" ]; then
+              echo "BLOCKED: a target declares iOS $VALUE, not $EXPECTED_DEPLOYMENT_TARGET"
+              exit 1
+            fi
+          done
+          echo "OK: build and tests above succeeded at iOS $EXPECTED_DEPLOYMENT_TARGET"
 
       - name: C4 · PNG bundle exclusion check
         script: |
