@@ -23,11 +23,16 @@ targets:
       - path: Sources
     settings:
       base:
+        # Inherited from SnapCal. BP Coach ships as an update to the existing
+        # App Store record, replacing a retired product. A different identifier
+        # would create a separate app and orphan the existing users.
         PRODUCT_BUNDLE_IDENTIFIER: app.snapcal.ios
         PRODUCT_NAME: BPCoach
         # Overridden by CI. Never contains a secret — only a public base URL.
         BPCOACH_API_BASE_URL: $(inherited)
-        MARKETING_VERSION: "0.1.0"
+        # Must exceed SnapCal's last release (1.0.0). A version at or below the
+        # published one is rejected on upload.
+        MARKETING_VERSION: "2.0.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
     info:
