@@ -129,8 +129,19 @@ final class HealthKitService {
 
     // MARK: - Types
 
+    /// Types to request read access for.
+    ///
+    /// Blood pressure is requested as its two component quantity types, never as
+    /// `HKCorrelationType(.bloodPressure)`. A correlation type cannot be
+    /// authorized — passing one makes HealthKit raise an Objective-C exception
+    /// from `_throwIfAuthorizationDisallowedForSharing`, which Swift cannot
+    /// catch, so the process dies. Authorizing the components is what grants
+    /// access to the correlation anyway.
+    ///
+    /// Reading and querying a correlation is fine; only the authorization
+    /// request rejects it.
     private var readTypes: Set<HKObjectType> {
-        var types: Set<HKObjectType> = [
+        [
             HKQuantityType(.bloodPressureSystolic),
             HKQuantityType(.bloodPressureDiastolic),
             HKQuantityType(.heartRate),
@@ -141,8 +152,6 @@ final class HealthKitService {
             HKQuantityType(.bodyMass),
             HKCategoryType(.sleepAnalysis),
         ]
-        types.insert(HKCorrelationType(.bloodPressure))
-        return types
     }
 
     /// Writing is limited to blood pressure the user entered here. Nothing else
