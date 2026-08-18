@@ -40,10 +40,15 @@ targets:
         MARKETING_VERSION: "2.0.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: BP Coach
+        # Required by App Store validation for any app built against the iOS 11
+        # SDK or later. Xcode only synthesises this when it generates the
+        # Info.plist itself; this project supplies its own, so it is set here.
+        CFBundleIconName: AppIcon
         # Injected at build time. Empty in the repo: no environment is baked in,
         # and an empty value makes the app fall back to unconfigured stubs.
         BPCoachAPIBaseURL: $(BPCOACH_API_BASE_URL)
