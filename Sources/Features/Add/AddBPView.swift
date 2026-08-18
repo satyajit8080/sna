@@ -140,7 +140,11 @@ struct AddBPView: View {
         try? context.save()
 
         if saveToHealth, app.activeProfile.kind.canUseHealthKit {
-            Task { try? await app.health.save(reading: reading, for: app.activeProfile) }
+            // Write access is requested here, the first time it is actually
+            // needed, rather than during onboarding. `save` refuses if the
+            // bundle cannot support writing, so this can never abort.
+            Task { try? await app.health.saveRequestingAuthorizationIfNeeded(
+                reading: reading, for: app.activeProfile) }
         }
 
         let result = SafetyEngine.assess(reading)
