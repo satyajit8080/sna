@@ -128,6 +128,35 @@ final class HealthKitService {
 
     // MARK: - Authorization
 
+    /// Read-only authorization. This is what onboarding asks for.
+    ///
+    /// `_throwIfAuthorizationDisallowedForSharing` is a HealthKit validator that
+    /// raises an Objective-C exception — uncatchable from Swift, so it kills the
+    /// process. It only runs for the *share* list. Asking for read access alone
+    /// cannot reach it, so first run cannot crash regardless of how the bundle
+    /// is configured.
+    ///
+    /// Write access is requested separately, and only when the user actually
+    /// chooses to save a reading back to Health.
+    @discardableResult
+    func requestReadAuthorization(for profile: UserProfile) async throws -> Bool {
+        guard isAvailable else { throw HealthKitError.unavailable }
+        guard profile.kind.canUseHealthKit else { throw HealthKitError.notOwnerProfile }
+        guard hasUsageDescription("NSHealthShareUsageDescription") else {
+            throw HealthKitError.missingUsageDescription("NSHealthShareUsageDescription")
+        }
+
+        hasRequestedAuthorization = true
+        do {
+            try await store.requestAuthorization(toShare: [], read: readTypes)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
     @discardableResult
     func requestAuthorization(for profile: UserProfile) async throws -> Bool {
         guard isAvailable else { throw HealthKitError.unavailable }
@@ -248,6 +277,34 @@ final class HealthKitService {
         )
         try await store.save(correlation)
         reading.healthKitUUID = correlation.uuid.uuidString
+    }
+
+    /// Saves a reading to Health, requesting write authorization first if the
+    /// bundle supports it.
+    ///
+    /// Every path that could reach HealthKit's sharing validator goes through
+    /// here, and it returns early rather than calling into HealthKit when the
+    /// write purpose string is absent.
+    @discardableResult
+    func saveRequestingAuthorizationIfNeeded(
+        reading: BPReading,
+        for profile: UserProfile
+    ) async throws -> Bool {
+        guard isAvailable, profile.kind.canUseHealthKit else { return false }
+        guard hasUsageDescription("NSHealthUpdateUsageDescription") else {
+            lastError = "This build cannot write to Health."
+            return false
+        }
+
+        do {
+            try await store.requestAuthorization(toShare: writeTypes, read: [])
+            try await save(reading: reading, for: profile)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
     }
 
     // MARK: - Context metrics
