@@ -469,51 +469,89 @@ workflows:
           # A signing certificate is a public certificate plus a private key.
           # Apple issues the certificate; the private key is yours and Apple
           # never sees it. The CLI cannot save a certificate without one, so
-          # there is no useful fallback here — fail early and say why.
+          # there is no useful fallback — fail early and say why.
           if [ -z "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
             echo "=============================================="
             echo "BLOCKED: CERTIFICATE_PRIVATE_KEY is not set."
             echo ""
-            echo "It must be added as an environment variable AND placed in a"
-            echo "group this workflow imports. That group is: appstore"
+            echo "It must be an environment variable in a group this workflow"
+            echo "imports. That group is: appstore"
             echo ""
             echo "A variable with no group, or in a group not listed under"
             echo "environment.groups, exists in the UI but never reaches the"
-            echo "build — which is what has happened here."
-            echo ""
-            echo "CodeMagic → app settings → Environment variables:"
-            echo "  name   : CERTIFICATE_PRIVATE_KEY"
-            echo "  value  : the whole PEM key, both BEGIN and END lines"
-            echo "  group  : appstore"
-            echo "  secure : ticked"
+            echo "build."
             echo "=============================================="
-            echo ""
-            echo "Variables this build CAN see (names only, no values):"
-            env | cut -d= -f1 | grep -iE 'CERT|KEY|BUNDLE|BPCOACH|APP' | sort || true
+            env | cut -d= -f1 | grep -iE 'CERT|KEY|BUNDLE|BPCOACH' | sort || true
             exit 1
           fi
 
-          echo "CERTIFICATE_PRIVATE_KEY is present (${#CERTIFICATE_PRIVATE_KEY} chars)."
-          case "$CERTIFICATE_PRIVATE_KEY" in
-            *"BEGIN RSA PRIVATE KEY"*|*"BEGIN PRIVATE KEY"*) echo "Format looks right." ;;
-            *) echo "BLOCKED: the value is not a PEM private key."
-               echo "It must start with -----BEGIN RSA PRIVATE KEY----- and"
-               echo "include every line through -----END RSA PRIVATE KEY-----."
-               exit 1 ;;
+          # Normalise before use. A key pasted from a Windows editor carries
+          # CRLF line endings, and PEM parsing rejects the stray carriage
+          # returns with an unhelpful "Not a valid certificate private key".
+          printf '%s' "$CERTIFICATE_PRIVATE_KEY" | tr -d '\r' > /tmp/cert_key.pem
+
+          # A trailing newline is required; some editors drop the last one.
+          [ -n "$(tail -c 1 /tmp/cert_key.pem)" ] && echo "" >> /tmp/cert_key.pem
+
+          chmod 600 /tmp/cert_key.pem
+          LINES=$(wc -l < /tmp/cert_key.pem | tr -d ' ')
+          echo "Key normalised: $(wc -c < /tmp/cert_key.pem | tr -d ' ') bytes, $LINES lines."
+
+          if [ "$LINES" -lt 5 ]; then
+            echo "BLOCKED: the key is $LINES line(s). A PEM key is ~25 lines."
+            echo "The newlines were lost when the value was pasted. Re-copy the"
+            echo "file with its line breaks intact."
+            exit 1
+          fi
+
+          # An encrypted key is the most common cause of the CLI's unhelpful
+          # "Not a valid certificate private key". On Windows PowerShell,
+          # `-N '""'` passes a literal two-quote passphrase rather than an empty
+          # one, so the key comes out protected.
+          if grep -qE "ENCRYPTED|Proc-Type" /tmp/cert_key.pem; then
+            echo "BLOCKED: this key is passphrase-protected. It must have none."
+            echo ""
+            echo "Regenerate, pressing Enter twice at the passphrase prompts:"
+            echo "  ssh-keygen -t rsa -b 2048 -m PEM -f bpcoach_cert.key"
+            exit 1
+          fi
+
+          case "$(head -1 /tmp/cert_key.pem)" in
+            *"OPENSSH PRIVATE KEY"*)
+              echo "BLOCKED: this is an OpenSSH-format key, not PEM."
+              echo "Regenerate with the -m PEM flag:"
+              echo "  ssh-keygen -t rsa -b 2048 -m PEM -f bpcoach_cert.key"
+              exit 1 ;;
           esac
+
+          # Verify locally before handing it to the CLI, so a bad key gives a
+          # precise error instead of a usage dump.
+          if ! openssl rsa -in /tmp/cert_key.pem -check -noout -passin pass: 2>/tmp/openssl.err; then
+            echo "BLOCKED: openssl rejects this key."
+            cat /tmp/openssl.err
+            echo ""
+            echo "Regenerate with:"
+            echo "  ssh-keygen -t rsa -b 2048 -m PEM -f bpcoach_cert.key -q -N '\"\"'"
+            exit 1
+          fi
+          echo "openssl accepts the key."
 
           keychain initialize
 
-          # Reusing the same key each build keeps one certificate. A fresh key
-          # would issue a new one, and Apple caps distribution certificates.
+          # Passed as a file rather than @env, so the value the CLI sees is the
+          # normalised one. Reusing the same key each build keeps a single
+          # certificate — Apple caps how many distribution certs an account may
+          # hold.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --platform IOS \
             --create \
-            --certificate-key="@env:CERTIFICATE_PRIVATE_KEY"
+            --certificate-key="@file:/tmp/cert_key.pem"
 
           keychain add-certificates
           xcode-project use-profiles
+
+          rm -f /tmp/cert_key.pem
 
       - name: R5 · Build the archive and IPA
         script: |
