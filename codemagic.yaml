@@ -504,6 +504,18 @@ workflows:
             exit 1
           fi
 
+          # Fingerprint the value so a stale variable is obvious. The body is
+          # never printed — only structure and a hash.
+          echo "--- key diagnostic ---"
+          echo "first line : $(head -1 /tmp/cert_key.pem)"
+          echo "last  line : $(tail -1 /tmp/cert_key.pem)"
+          echo "bytes      : $(wc -c < /tmp/cert_key.pem | tr -d ' ')"
+          echo "lines      : $(wc -l < /tmp/cert_key.pem | tr -d ' ')"
+          echo "sha256     : $(shasum -a 256 /tmp/cert_key.pem | cut -c1-16)"
+          echo "(If sha256 matches the previous run, the CodeMagic variable was"
+          echo " not actually updated — delete it and add it again.)"
+          echo "----------------------"
+
           # An encrypted key is the most common cause of the CLI's unhelpful
           # "Not a valid certificate private key". On Windows PowerShell,
           # `-N '""'` passes a literal two-quote passphrase rather than an empty
