@@ -436,13 +436,34 @@ workflows:
       - name: R3 · Set the build number
         script: |
           set -e
-          # TestFlight rejects a build number it has already seen, so it is
-          # derived from the latest build already uploaded rather than from
-          # the value committed in project.yml.
-          LATEST=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" 2>/dev/null || echo "0")
-          NEXT=$(( ${LATEST:-0} + 1 ))
-          echo "Latest on TestFlight: ${LATEST:-0} · uploading as: $NEXT"
-          echo "BUILD_NUMBER=$NEXT" >> $CM_ENV
+          # TestFlight rejects a build number it has already seen, and it never
+          # forgets — even for builds that were later deleted.
+          #
+          # Asking App Store Connect alone is not enough: a build still
+          # processing does not report yet, so the lookup returns nothing and
+          # the number resets to 1, colliding with what is already up there.
+          # CodeMagic's own build counter only ever increases, so the higher of
+          # the two is used as the floor.
+
+          ASC=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" \
+                  --platform IOS 2>/dev/null | tr -dc '0-9' | tail -c 8)
+          [ -n "$ASC" ] || ASC=0
+
+          # CodeMagic sets BUILD_NUMBER to this app's build index. Read it
+          # before anything overwrites it.
+          CM=${BUILD_NUMBER:-0}
+          case "$CM" in ''|*[!0-9]*) CM=0 ;; esac
+
+          FLOOR=$ASC
+          [ "$CM" -gt "$FLOOR" ] && FLOOR=$CM
+          NEXT=$(( FLOOR + 1 ))
+
+          echo "App Store Connect reports : $ASC"
+          echo "CodeMagic build counter   : $CM"
+          echo "Uploading as build number : $NEXT"
+
+          # A distinct name, so CodeMagic's own BUILD_NUMBER is left intact.
+          echo "NEW_BUILD_NUMBER=$NEXT" >> $CM_ENV
 
       - name: R3b · Diagnose the signing account
         script: |
@@ -615,7 +636,7 @@ workflows:
           # Apple account. Archiving needs it back on, and the value from the
           # spec would otherwise win.
           XCARGS="CODE_SIGNING_ALLOWED=YES"
-          XCARGS="$XCARGS CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+          XCARGS="$XCARGS CURRENT_PROJECT_VERSION=$NEW_BUILD_NUMBER"
 
           # Only pass the URL when there is one. An empty assignment is still an
           # assignment, and would bake an empty string over any default.
@@ -653,6 +674,15 @@ workflows:
           echo "--- HealthKit usage strings present? ---"
           /usr/libexec/PlistBuddy -c "Print :NSHealthShareUsageDescription" "$APP/Info.plist" \
             || { echo "BLOCKED: missing NSHealthShareUsageDescription — App Review rejects this"; exit 1; }
+
+          echo "--- build number baked in? ---"
+          BAKED_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist" 2>/dev/null || echo "")
+          echo "CFBundleVersion = $BAKED_VERSION (expected $NEW_BUILD_NUMBER)"
+          if [ "$BAKED_VERSION" != "$NEW_BUILD_NUMBER" ]; then
+            echo "BLOCKED: the build number did not reach the bundle."
+            echo "Uploading it would be rejected as a duplicate."
+            exit 1
+          fi
 
           echo "--- app icon present? ---"
           ICON_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP/Info.plist" 2>/dev/null || echo "")
