@@ -8,12 +8,30 @@ import Foundation
 enum BackendConfig {
     /// Set at build time via the `BPCOACH_API_BASE_URL` Info.plist value, which
     /// `project.yml` populates from an xcconfig or CI variable.
+    /// The configured backend, or nil when this build has none.
+    ///
+    /// Validation is stricter than "parses as a URL". `URL(string:)` happily
+    /// accepts a bare word like the CI sentinel `unset`, treating it as a
+    /// relative path — the app then believes it is configured, calls a URL that
+    /// cannot resolve, and reports a connection failure instead of an honest
+    /// "not set up". A scheme and a host are both required.
     static var baseURL: URL? {
-        guard
-            let raw = Bundle.main.object(forInfoDictionaryKey: "BPCoachAPIBaseURL") as? String,
-            !raw.isEmpty,
-            let url = URL(string: raw)
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "BPCoachAPIBaseURL") as? String
         else { return nil }
+
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // The CI placeholder, and anything else that is plainly not a URL.
+        guard trimmed.lowercased() != "unset",
+              !trimmed.hasPrefix("$("),
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              let host = url.host(),
+              host.contains(".")
+        else { return nil }
+
         return url
     }
 
