@@ -258,7 +258,8 @@ struct CoachSettingsView: View {
     var body: some View {
         List {
             Section {
-                LabeledContent("Status", value: app.coach.isConfigured ? "Connected" : "Not configured")
+                LabeledContent("Status", value: app.coach.isConfigured ? "Configured" : "Not configured")
+                LabeledContent("Endpoint", value: BackendConfig.baseURL?.host() ?? "none")
             } footer: {
                 Text("""
                 No AI provider is connected. When one is added it will sit behind the same \
