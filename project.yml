@@ -79,7 +79,6 @@ targets:
       path: Sources/BPCoach.entitlements
       properties:
         com.apple.developer.healthkit: true
-        com.apple.developer.healthkit.access: []
 
   BPCoachTests:
     type: bundle.unit-test
