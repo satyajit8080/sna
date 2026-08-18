@@ -606,12 +606,29 @@ workflows:
       - name: R5 · Build the archive and IPA
         script: |
           set -ex
+
+          # Build settings go through --archive-xcargs. `build-ipa` has no `--`
+          # passthrough, unlike plain xcodebuild.
+          #
+          # CODE_SIGNING_ALLOWED=YES is essential: project.yml disables signing
+          # globally so the CI workflow can build for the simulator without an
+          # Apple account. Archiving needs it back on, and the value from the
+          # spec would otherwise win.
+          XCARGS="CODE_SIGNING_ALLOWED=YES"
+          XCARGS="$XCARGS CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+
+          # Only pass the URL when there is one. An empty assignment is still an
+          # assignment, and would bake an empty string over any default.
+          if [ -n "${API_BASE_URL:-}" ]; then
+            XCARGS="$XCARGS BPCOACH_API_BASE_URL=$API_BASE_URL"
+          fi
+
+          echo "archive xcargs: $XCARGS"
+
           xcode-project build-ipa \
             --project "${PROJECT_NAME}.xcodeproj" \
             --scheme "$SCHEME_NAME" \
-            -- \
-            BPCOACH_API_BASE_URL="$API_BASE_URL" \
-            CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+            --archive-xcargs "$XCARGS"
 
       - name: R6 · Verify what is inside the IPA
         script: |
