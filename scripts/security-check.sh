@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Security invariant sweep. Run in CI and locally.
+set -uo pipefail
+FAIL=0
+chk(){ if [ "$2" -eq 0 ]; then echo "  PASS  $1"; else echo "  FAIL  $1"; FAIL=1; fi; }
+
+echo "=== SECURITY SWEEP ==="
+
+# 1. No API keys committed anywhere
+! grep -rIn --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git \
+  --exclude="$(basename "$0")" \
+  -E "(sk-ant-[A-Za-z0-9_-]{10,}|AIza[A-Za-z0-9_-]{20,}|api[_-]?key['\"]?[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9_-]{16,})" . >/dev/null 2>&1
+chk "no API keys in source" $?
+
+# 2. No .env committed
+[ ! -f backend/.env ]
+chk "no backend/.env present" $?
+
+# 3. Provider endpoint never called from iOS
+! grep -rn "openrouter.ai\|api.anthropic.com\|api.nal.usda.gov" Sources >/dev/null 2>&1
+chk "iOS never calls a provider directly" $?
+
+# 4. No networking in the HealthKit path
+! grep -rn "URLSession\|URLRequest" Sources/Services/Health/ >/dev/null 2>&1
+chk "no networking in HealthKit service" $?
+
+# 5. HealthKit snapshot fields are not in the wire payload
+! grep -n "hrv\|sleepMinutes\|weightKilograms" Sources/Services/AI/BackendCoachService.swift >/dev/null 2>&1
+chk "raw HealthKit metrics not transmitted" $?
+
+# 6. No profile identifier in the wire payload
+! grep -n "profileID" Sources/Services/AI/BackendCoachService.swift >/dev/null 2>&1
+chk "no profileID transmitted" $?
+
+# 7. Clinical thresholds only in the guideline and safety engines
+! grep -rn "systolic >= 130\|systolic > 140\|diastolic >= 90\|> 180" \
+  Sources/Features Sources/Core >/dev/null 2>&1
+chk "no clinical thresholds outside the engines" $?
+
+# 8. Backend never logs request bodies
+grep -q "req.body" backend/src/app.ts
+chk "request bodies redacted in logger" $?
+
+# 9. Container does not run as root
+grep -q "USER node" backend/Dockerfile
+chk "container runs unprivileged" $?
+
+# 10. No SnapCal source carried over. Comments referencing the audit are fine;
+#     what must not exist is SnapCal code — a type, import or identifier.
+! grep -rn "SnapCal" Sources Tests --include='*.swift' \
+  | grep -vE ':[[:space:]]*(//|///|\*)' >/dev/null 2>&1
+chk "no SnapCal code in shipped source" $?
+
+# 11. Health endpoint has no upstream dependency
+! grep -A6 '"/health"' backend/src/routes/health.ts | grep -q "fetch\|openrouter\|usda"
+chk "liveness probe is dependency-free" $?
+
+# 12. Rate limiting registered
+grep -q "rateLimit" backend/src/app.ts
+chk "rate limiting registered" $?
+
+echo ""
+[ "$FAIL" -eq 0 ] && echo "SWEEP: PASS" || echo "SWEEP: FAIL"
+exit $FAIL

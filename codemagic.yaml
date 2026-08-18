@@ -1,0 +1,256 @@
+# Phase 0 evidence workflow — BP Coach
+#
+# Collects every Phase 0 verification gate on real macOS/Xcode.
+# No stage fabricates a result: each prints raw command output or exits non-zero
+# with an explicit BLOCKED marker.
+#
+# Project generation: XcodeGen from project.yml. The .xcodeproj is NOT committed —
+# it is generated fresh on every run, so project.yml cannot drift from reality.
+
+workflows:
+  phase0-evidence:
+    name: BP Coach — Build & Test
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+
+    environment:
+      xcode: latest
+      vars:
+        PROJECT_NAME: BPCoach
+        SCHEME_NAME: BPCoach
+        EXPECTED_DEPLOYMENT_TARGET: "17.0"
+        # ⚠️ UNVERIFIED — confirm from run A6 output or the XcodeGen releases page,
+        # then pin exactly. Left loose on the first run deliberately.
+        XCODEGEN_VERSION: ""
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: bp-coach
+          include: true
+
+    scripts:
+
+      # ══════════════════════════════════════════════════════════
+      # STAGE A — environment evidence
+      # ══════════════════════════════════════════════════════════
+
+      - name: A1 · Xcode version
+        script: |
+          set -x
+          xcodebuild -version
+
+      - name: A2 · Swift version
+        script: |
+          set -x
+          swift --version
+
+      - name: A3 · Available iOS SDKs
+        script: |
+          set -x
+          xcodebuild -showsdks
+          echo "--- iphoneos / iphonesimulator ---"
+          xcodebuild -showsdks | grep -iE 'iphoneos|iphonesimulator' || true
+
+      - name: A4 · Available simulator destinations
+        script: |
+          set -x
+          xcrun simctl list runtimes
+          echo "--- available iPhone devices ---"
+          xcrun simctl list devices available | grep -i iphone
+
+      - name: A5 · Git commit and working-tree state
+        script: |
+          set -x
+          git rev-parse HEAD
+          git log -1 --format='%H%n%an%n%cd%n%s'
+          git branch --show-current
+          echo "--- porcelain (empty means clean) ---"
+          git status --porcelain
+          echo "--- remotes ---"
+          git remote -v
+          echo "--- submodules (expect none) ---"
+          cat .gitmodules 2>/dev/null || echo "no .gitmodules — good"
+          echo "--- confirm no committed .xcodeproj ---"
+          git ls-files | grep -c 'xcodeproj' || echo "0 — correct, project is generated"
+          echo "--- confirm no SnapCal source copied ---"
+          git ls-files | grep -i snapcal || echo "none — correct"
+
+      # ══════════════════════════════════════════════════════════
+      # STAGE B — project generation and discovery
+      # ══════════════════════════════════════════════════════════
+
+      - name: A6 · Install XcodeGen
+        script: |
+          set -ex
+          if [ -n "$XCODEGEN_VERSION" ]; then
+            brew install xcodegen
+            INSTALLED=$(xcodegen --version)
+            echo "Installed: $INSTALLED · Pinned expectation: $XCODEGEN_VERSION"
+          else
+            brew install xcodegen
+          fi
+          echo "--- RECORD THIS VERSION AND PIN IT ---"
+          xcodegen --version
+
+      - name: B1 · Generate the Xcode project
+        script: |
+          set -ex
+          [ -f project.yml ] || { echo "BLOCKED: project.yml missing"; exit 1; }
+          xcodegen generate --spec project.yml --project . 2>&1 | tee /tmp/xcodegen.log
+
+      - name: B2 · Verify the project was generated
+        script: |
+          set -e
+          if [ ! -d "${PROJECT_NAME}.xcodeproj" ]; then
+            echo "=============================================="
+            echo "PHASE 0 GATE: BLOCKED"
+            echo "XcodeGen did not produce ${PROJECT_NAME}.xcodeproj."
+            echo "No build or test result may be claimed."
+            echo "=============================================="
+            exit 1
+          fi
+          echo "OK: ${PROJECT_NAME}.xcodeproj generated"
+          ls -la "${PROJECT_NAME}.xcodeproj"
+
+      - name: B3 · xcodebuild -list
+        script: |
+          set -ex
+          xcodebuild -list -project "${PROJECT_NAME}.xcodeproj" | tee /tmp/schemes.txt
+          grep -q "$SCHEME_NAME" /tmp/schemes.txt || {
+            echo "BLOCKED: expected scheme $SCHEME_NAME not found"; exit 1; }
+
+      - name: B4 · Resolve simulator destination
+        script: |
+          set -ex
+          xcodebuild -project "${PROJECT_NAME}.xcodeproj" -scheme "$SCHEME_NAME" \
+            -showdestinations 2>&1 | tee /tmp/destinations.txt
+
+          # First available iOS Simulator entry, as printed by Xcode itself.
+          DEST_NAME=$(grep 'platform:iOS Simulator' /tmp/destinations.txt \
+                      | grep -v 'placeholder' \
+                      | head -1 \
+                      | sed -n 's/.*name:\([^,}]*\).*/\1/p' \
+                      | sed 's/^ *//;s/ *$//')
+          [ -n "$DEST_NAME" ] || { echo "BLOCKED: no simulator destination"; exit 1; }
+          echo "Resolved destination: [$DEST_NAME]"
+          echo "DEST_NAME=$DEST_NAME" >> $CM_ENV
+
+      # ══════════════════════════════════════════════════════════
+      # STAGE C — build, test, target, bundle
+      # ══════════════════════════════════════════════════════════
+
+      - name: C1 · Build verification
+        script: |
+          set -ex
+          xcodebuild build \
+            -project "${PROJECT_NAME}.xcodeproj" \
+            -scheme "$SCHEME_NAME" \
+            -destination "platform=iOS Simulator,name=$DEST_NAME" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee /tmp/build.log | tail -40
+          grep -q "BUILD SUCCEEDED" /tmp/build.log
+
+      - name: C2 · Test verification
+        script: |
+          set -ex
+          xcodebuild test \
+            -project "${PROJECT_NAME}.xcodeproj" \
+            -scheme "$SCHEME_NAME" \
+            -destination "platform=iOS Simulator,name=$DEST_NAME" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee /tmp/test.log | tail -60
+          grep -qE "TEST SUCCEEDED|TEST EXECUTE SUCCEEDED" /tmp/test.log
+          echo "--- confirm no skipped tests ---"
+          grep -c "Test skipped" /tmp/test.log || echo "0 skipped — correct"
+
+      - name: C3 · Deployment target verification
+        script: |
+          set -ex
+          xcodebuild -project "${PROJECT_NAME}.xcodeproj" -scheme "$SCHEME_NAME" \
+            -showBuildSettings 2>/dev/null \
+            | grep IPHONEOS_DEPLOYMENT_TARGET | tee /tmp/target.txt
+
+          ACTUAL=$(awk -F' = ' '/IPHONEOS_DEPLOYMENT_TARGET/{gsub(/ /,"",$2); print $2; exit}' /tmp/target.txt)
+          echo "Declared: $ACTUAL · Expected: $EXPECTED_DEPLOYMENT_TARGET"
+          [ "$ACTUAL" = "$EXPECTED_DEPLOYMENT_TARGET" ] || {
+            echo "BLOCKED: deployment target is $ACTUAL, not $EXPECTED_DEPLOYMENT_TARGET"; exit 1; }
+          echo "OK: build above SUCCEEDED at iOS $ACTUAL"
+
+      - name: C4 · PNG bundle exclusion check
+        script: |
+          set -ex
+          APP=$(find ~/Library/Developer/Xcode/DerivedData "${CM_BUILD_DIR}" \
+                 -name "${PROJECT_NAME}.app" -type d 2>/dev/null | head -1)
+          [ -n "$APP" ] || { echo "BLOCKED: no .app produced"; exit 1; }
+          echo "App bundle: $APP"
+          echo "--- bundle contents ---"
+          ls -la "$APP"
+          echo "--- design-reference PNGs (expect none) ---"
+          find "$APP" -name 'part-*.png' | tee /tmp/pngs.txt
+          [ ! -s /tmp/pngs.txt ] || { echo "BLOCKED: design PNGs are bundled"; exit 1; }
+          echo "OK: no design-reference PNG in the bundle"
+
+      # ══════════════════════════════════════════════════════════
+      # STAGE D — iOS 17.0 API availability probe
+      # ══════════════════════════════════════════════════════════
+
+      - name: A0 · Security sweep
+        script: |
+          set -e
+          chmod +x scripts/security-check.sh
+          ./scripts/security-check.sh
+
+      - name: D1 · Invariant sweep
+        script: |
+          set -e
+          echo "--- no networking in the HealthKit path ---"
+          ! grep -rn "URLSession\|URLRequest" Sources/Services/Health/ || {
+            echo "BLOCKED: networking found in the HealthKit service"; exit 1; }
+
+          echo "--- no SnapCal source ---"
+          ! git ls-files | grep -i snapcal || {
+            echo "BLOCKED: SnapCal file found"; exit 1; }
+
+          echo "--- no hard-coded thresholds outside the guideline engine ---"
+          ! grep -rn "systolic >= 130\|systolic > 140\|diastolic >= 90" \
+            Sources/Features Sources/Core || {
+            echo "BLOCKED: clinical threshold outside the guideline engine"; exit 1; }
+
+          echo "--- no committed project file ---"
+          ! git ls-files | grep -q 'xcodeproj' || {
+            echo "BLOCKED: .xcodeproj is committed; it must be generated"; exit 1; }
+
+          echo "OK: invariants hold"
+
+      - name: Z · Evidence summary
+        script: |
+          echo "════════════════════════════════════════"
+          echo "PHASE 0 EVIDENCE — all output above is raw."
+          echo "Any stage that did not run leaves its gate BLOCKED."
+          echo "════════════════════════════════════════"
+          echo "XcodeGen version (pin this):"; xcodegen --version
+          echo "Commit:"; git rev-parse HEAD
+
+      - name: E1 · Backend build and tests
+        script: |
+          set -ex
+          cd backend
+          node --version
+          npm ci
+          npx tsc --noEmit
+          npm run build
+          node --test test/*.test.js
+
+    artifacts:
+      - /tmp/*.log
+      - /tmp/*.txt
+
+    publishing:
+      email:
+        recipients:
+          - $NOTIFY_EMAIL
+        notify:
+          success: true
+          failure: true

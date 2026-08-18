@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BP Coach — screen preview</title>
+<style>
+/* ============================================================
+   Tokens copied verbatim from Sources/Core/DesignSystem/Theme.swift
+   Light and dark values are the two halves of Color(light:dark:)
+   ============================================================ */
+:root{
+  --accent:#0F766E; --accentSoft:#CCFBF1;
+  --bg:#F7F8FA; --surface:#FFFFFF; --surfaceRaised:#FFFFFF; --border:#E3E7EC;
+  --textPrimary:#0D1218; --textSecondary:#5A6472; --textTertiary:#8B95A3;
+  --statusNormal:#0E9F6E; --statusElevated:#B45309; --statusMild:#C2410C;
+  --statusModerate:#B91C1C; --statusSevere:#7F1D1D;
+  --systolic:#1D4ED8; --diastolic:#7C3AED; --pulse:#BE185D;
+  --xs:4px; --sm:8px; --md:12px; --lg:16px; --xl:24px; --xxl:32px;
+  --rCard:16px; --rControl:10px; --rPill:999px;
+}
+body[data-mode="dark"]{
+  --accent:#2DD4BF; --accentSoft:#134E4A;
+  --bg:#0B0F14; --surface:#151B23; --surfaceRaised:#1D252F; --border:#2A3441;
+  --textPrimary:#F2F5F8; --textSecondary:#9AA6B4; --textTertiary:#6B7480;
+  --statusNormal:#34D399; --statusElevated:#FBBF24; --statusMild:#FB923C;
+  --statusModerate:#F87171; --statusSevere:#EF4444;
+  --systolic:#60A5FA; --diastolic:#A78BFA; --pulse:#F472B6;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{
+  font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  background:#8E9299; color:#12161c; padding:28px 16px 64px;
+  -webkit-font-smoothing:antialiased;
+}
+body[data-mode="dark"]{background:#05070A;color:#dfe4ea}
+
+/* ---------- page chrome (deliberately quiet) ---------- */
+.head{max-width:1180px;margin:0 auto 26px;display:flex;align-items:flex-end;
+  justify-content:space-between;gap:16px;flex-wrap:wrap}
+.head h1{font-size:19px;font-weight:650;letter-spacing:-.01em;color:#fff}
+body[data-mode="dark"] .head h1{color:#eef2f6}
+.head p{font-size:13px;color:#E1E4E8;max-width:52ch;margin-top:3px}
+body[data-mode="dark"] .head p{color:#8b939c}
+.toggle{display:flex;gap:2px;background:rgba(0,0,0,.22);padding:3px;border-radius:var(--rPill)}
+.toggle button{font:inherit;font-size:12.5px;font-weight:600;border:0;cursor:pointer;
+  padding:6px 15px;border-radius:var(--rPill);background:transparent;color:#fff}
+.toggle button[aria-pressed="true"]{background:#fff;color:#12161c}
+
+.grid{max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:34px 26px;
+  justify-content:center;align-items:flex-start}
+figure{width:300px}
+figcaption{margin-top:11px}
+.cap-t{font-size:13.5px;font-weight:650;color:#fff;letter-spacing:-.005em}
+.cap-s{font-size:12px;color:#DDE1E5;margin-top:2px;line-height:1.4}
+body[data-mode="dark"] .cap-t{color:#e8edf2}
+body[data-mode="dark"] .cap-s{color:#79818a}
+
+/* ---------- device ---------- */
+.phone{width:300px;height:635px;border-radius:42px;background:#000;padding:9px;
+  box-shadow:0 18px 44px rgba(0,0,0,.34);position:relative}
+.screen{width:100%;height:100%;border-radius:34px;background:var(--bg);overflow:hidden;
+  position:relative;display:flex;flex-direction:column;color:var(--textPrimary)}
+.notch{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:92px;height:24px;
+  background:#000;border-radius:var(--rPill);z-index:9}
+.status{display:flex;justify-content:space-between;padding:11px 22px 4px;font-size:11.5px;
+  font-weight:650;flex:0 0 auto}
+
+/* ---------- nav ---------- */
+.nav{padding:2px var(--lg) 8px;flex:0 0 auto;display:flex;align-items:flex-end;
+  justify-content:space-between;gap:8px}
+.nav h2{font-size:27px;font-weight:700;letter-spacing:-.022em}
+.nav-inline{padding:6px var(--lg) 9px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.nav-inline .t{font-size:16px;font-weight:650;flex:1;text-align:center}
+.nav-inline .a{font-size:15px;color:var(--accent)}
+.icon-btn{font-size:20px;color:var(--accent);line-height:1}
+
+/* ---------- scroll body ---------- */
+.body{flex:1;overflow:hidden;padding:var(--lg);display:flex;flex-direction:column;
+  gap:var(--lg)}
+.body.tight{gap:var(--md)}
+.body.flush{padding:0}
+
+/* ---------- card ---------- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rCard);
+  padding:var(--lg);display:flex;flex-direction:column;gap:var(--md)}
+.card.sm{padding:var(--md);gap:var(--sm)}
+
+.sec-t{font-size:15px;font-weight:650;letter-spacing:-.01em}
+.sec-s{font-size:11.5px;color:var(--textSecondary);margin-top:1px}
+.lbl{font-size:12.5px;font-weight:520;color:var(--textSecondary)}
+.mut{font-size:11.5px;color:var(--textTertiary)}
+.fnote{font-size:11.5px;color:var(--textSecondary);line-height:1.45}
+
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.rowT{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+
+/* ---------- BP value ---------- */
+.bp{display:flex;align-items:baseline;gap:var(--sm);font-feature-settings:"tnum"}
+.bp .n{font:700 40px/1 ui-rounded,-apple-system,"SF Pro Rounded",system-ui;letter-spacing:-.02em}
+.bp .sl{font:500 28px/1 ui-rounded,-apple-system,system-ui;color:var(--textSecondary)}
+.bp .u{font-size:12px;font-weight:520;color:var(--textSecondary)}
+.bp .p{font-size:13px;font-weight:520;color:var(--pulse);margin-left:auto}
+.bp.s .n{font-size:21px}.bp.s .sl{font-size:16px}
+
+/* ---------- badge ---------- */
+.badge{font-size:11.5px;font-weight:620;color:#fff;padding:4px 10px;border-radius:var(--rPill);
+  white-space:nowrap}
+.badge.c{font-size:10.5px;padding:3px 8px}
+.b-normal{background:var(--statusNormal)}.b-elev{background:var(--statusElevated)}
+.b-mild{background:var(--statusMild)}.b-mod{background:var(--statusModerate)}
+.b-sev{background:var(--statusSevere)}
+
+/* ---------- stat tiles ---------- */
+.tiles{display:flex;gap:var(--md)}
+.tile{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.tile .v{font:600 20px/1.1 ui-rounded,-apple-system,system-ui;letter-spacing:-.015em}
+.tile .c{font-size:10.5px;color:var(--textTertiary);line-height:1.3}
+
+/* ---------- banner ---------- */
+.banner{border-radius:var(--rControl);padding:var(--md);display:flex;flex-direction:column;
+  gap:var(--xs)}
+.banner .h{font-size:12.5px;font-weight:640;display:flex;gap:6px;align-items:center}
+.banner .m{font-size:11.5px;line-height:1.42}
+.bn-sev{background:color-mix(in srgb,var(--statusSevere) 12%,transparent);color:var(--statusSevere)}
+.bn-elev{background:color-mix(in srgb,var(--statusElevated) 12%,transparent);color:var(--statusElevated)}
+
+/* ---------- controls ---------- */
+.seg{display:flex;background:color-mix(in srgb,var(--textSecondary) 12%,transparent);
+  border-radius:9px;padding:2px}
+.seg div{flex:1;text-align:center;font-size:12.5px;font-weight:530;padding:5px 2px;
+  border-radius:7px;color:var(--textPrimary)}
+.seg div.on{background:var(--surface);font-weight:620;box-shadow:0 1px 3px rgba(0,0,0,.14)}
+
+.btn{background:var(--accent);color:#fff;font-size:14px;font-weight:620;text-align:center;
+  padding:11px;border-radius:var(--rControl)}
+.btn.o{background:transparent;color:var(--accent);
+  border:1px solid color-mix(in srgb,var(--accent) 42%,transparent)}
+.btn.sm{font-size:12.5px;padding:7px 13px;border-radius:8px;display:inline-block}
+
+.prog{height:6px;border-radius:var(--rPill);
+  background:color-mix(in srgb,var(--textSecondary) 20%,transparent);overflow:hidden}
+.prog i{display:block;height:100%;border-radius:var(--rPill);background:var(--accent)}
+
+.pill{font-size:10px;font-weight:640;padding:2px 7px;border-radius:var(--rPill);
+  background:var(--accentSoft);color:var(--accent)}
+
+/* ---------- list ---------- */
+.list{background:var(--surface);border-radius:var(--rCard);overflow:hidden;
+  border:1px solid var(--border)}
+.li{padding:11px var(--md);display:flex;align-items:center;gap:10px;font-size:14px;
+  border-bottom:1px solid var(--border)}
+.li:last-child{border-bottom:0}
+.li .ic{width:22px;color:var(--accent);font-size:14px;text-align:center;flex:0 0 22px}
+.li .g{flex:1;min-width:0}
+.li .sub{font-size:11px;color:var(--textSecondary);margin-top:1px}
+.li .val{font-size:13px;color:var(--textSecondary)}
+.li .chev{color:var(--textTertiary);font-size:12px}
+.grp-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--textSecondary);padding:0 var(--md) 6px}
+
+/* ---------- divider ---------- */
+.div{height:1px;background:var(--border)}
+
+/* ---------- chart ---------- */
+.chart{height:118px;position:relative}
+.chart svg{width:100%;height:100%;overflow:visible}
+.legend{display:flex;gap:var(--lg)}
+.legend span{font-size:11px;color:var(--textSecondary);display:flex;align-items:center;gap:5px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+
+/* ---------- tab bar ---------- */
+.tabs{flex:0 0 auto;display:flex;border-top:1px solid var(--border);background:var(--surface);
+  padding:7px 0 16px}
+.tab{flex:1;text-align:center;font-size:9.5px;color:var(--textTertiary);
+  display:flex;flex-direction:column;align-items:center;gap:2px}
+.tab .i{font-size:19px;line-height:1}
+.tab.on{color:var(--accent)}
+.tab.mid .i{font-size:27px;margin-top:-3px}
+
+/* ---------- empty state ---------- */
+.empty{display:flex;flex-direction:column;align-items:center;gap:var(--md);
+  text-align:center;padding:var(--xl) var(--sm)}
+.empty .i{font-size:29px;color:var(--textTertiary)}
+.empty .t{font-size:15px;font-weight:640}
+.empty .m{font-size:12.5px;color:var(--textSecondary);line-height:1.45}
+
+/* ---------- onboarding ---------- */
+.ob{flex:1;display:flex;flex-direction:column;padding:var(--lg);gap:var(--lg);text-align:center}
+.ob .glyph{font-size:46px;color:var(--accent);margin-top:6px}
+.ob h3{font-size:26px;font-weight:700;letter-spacing:-.02em}
+.ob .sub{font-size:13px;color:var(--textSecondary)}
+.ob .txt{font-size:12.5px;color:var(--textSecondary);line-height:1.5;text-align:left}
+.opt{display:flex;gap:10px;text-align:left;background:var(--surface);padding:var(--md);
+  border-radius:var(--rControl);align-items:flex-start}
+.opt .r{color:var(--accent);font-size:15px;flex:0 0 auto;margin-top:1px}
+.opt .n{font-size:14px;font-weight:640}
+.opt .d{font-size:11px;color:var(--textSecondary);margin-top:2px;line-height:1.4}
+
+/* ---------- timer ---------- */
+.timer{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--xl);padding:var(--lg);text-align:center}
+.ring{width:172px;height:172px;position:relative}
+.ring svg{transform:rotate(-90deg)}
+.ring .mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2px}
+.ring .t{font:700 38px/1 ui-rounded,-apple-system,system-ui;font-feature-settings:"tnum"}
+.ring .l{font-size:12.5px;color:var(--textSecondary)}
+
+/* ---------- chat ---------- */
+.bub{max-width:78%;padding:10px var(--md);border-radius:var(--rCard);font-size:13px;
+  line-height:1.42}
+.bub.u{background:var(--accentSoft);color:var(--textPrimary);align-self:flex-end}
+.bub.a{background:var(--surface);border:1px solid var(--border);align-self:flex-start}
+
+/* ---------- stepper ---------- */
+.step{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 0;border-bottom:1px solid var(--border)}
+.step:last-child{border-bottom:0}
+.step .k{font-size:14px}
+.step .v{font:700 25px/1 ui-rounded,-apple-system,system-ui;font-feature-settings:"tnum";
+  margin-left:auto}
+.stepper{display:flex;background:color-mix(in srgb,var(--textSecondary) 14%,transparent);
+  border-radius:7px;overflow:hidden;flex:0 0 auto}
+.stepper span{padding:3px 10px;font-size:15px;color:var(--textPrimary)}
+.stepper span:first-child{border-right:1px solid var(--border)}
+
+.dotrow{display:flex;gap:4px;align-items:center}
+.d10{width:9px;height:9px;border-radius:50%}
+
+.form-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--textSecondary);padding:0 2px 5px}
+
+@media (max-width:700px){
+  figure{width:100%;max-width:320px}
+  .phone{width:100%;height:auto;aspect-ratio:300/635}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body data-mode="light">
+
+<div class="head">
+  <div>
+    <h1>BP Coach — screen preview</h1>
+    <p>Rendered from the tokens in <code>Theme.swift</code> and the layouts in <code>Sources/Features/</code>. Not a simulator screenshot — a faithful drawing of what the SwiftUI code specifies.</p>
+  </div>
+  <div class="toggle" role="group" aria-label="Appearance">
+    <button id="bLight" aria-pressed="true">Light</button>
+    <button id="bDark" aria-pressed="false">Dark</button>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+/* Tab bar shared by the five main screens */
+const tabs = on => `<div class="tabs">
+  ${[['Home','⌂'],['History','📈'],['Add','⊕'],['Coach','💬'],['More','⊞']]
+    .map(([l,i],x)=>`<div class="tab ${x===on?'on':''} ${x===2?'mid':''}"><div class="i">${i}</div>${l}</div>`)
+    .join('')}
+</div>`;
+
+const status = `<div class="status"><span>9:41</span><span>▮▮▮ ᯤ ▰</span></div>`;
+
+/* Simple line chart, values normalised into the viewbox */
+function chart(sys, dia){
+  const w=250,h=110,lo=Math.min(...dia)-12,hi=Math.max(...sys)+12,r=hi-lo;
+  const pts = a => a.map((v,i)=>`${(i/(a.length-1))*w},${h-((v-lo)/r)*h}`).join(' ');
+  const dots = (a,c) => a.map((v,i)=>
+    `<circle cx="${(i/(a.length-1))*w}" cy="${h-((v-lo)/r)*h}" r="2.6" fill="${c}"/>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"
+     role="img" aria-label="Blood pressure trend">
+    <polyline points="${pts(sys)}" fill="none" stroke="var(--systolic)" stroke-width="2.2"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="${pts(dia)}" fill="none" stroke="var(--diastolic)" stroke-width="2.2"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    ${dots(sys,'var(--systolic)')}${dots(dia,'var(--diastolic)')}
+  </svg></div>`;
+}
+
+function bars(vals, target){
+  const w=250,h=96,max=Math.max(...vals,target)*1.12,bw=w/vals.length;
+  return `<div class="chart" style="height:96px"><svg viewBox="0 0 ${w} ${h}"
+      preserveAspectRatio="none" role="img" aria-label="Daily sodium against target">
+    ${vals.map((v,i)=>{const bh=(v/max)*h;return `<rect x="${i*bw+2.5}" y="${h-bh}"
+      width="${bw-5}" height="${bh}" rx="2"
+      fill="${v>target?'var(--statusElevated)':'var(--statusNormal)'}"/>`}).join('')}
+    <line x1="0" x2="${w}" y1="${h-(target/max)*h}" y2="${h-(target/max)*h}"
+      stroke="var(--textTertiary)" stroke-width="1" stroke-dasharray="4 4"/>
+  </svg></div>`;
+}
+
+const SYS=[128,134,126,131,124,129,122,127,120],
+      DIA=[84,88,82,85,80,83,79,82,78];
+
+const screens = [
+{
+ t:'Onboarding · guideline choice',
+ s:'The one decision that changes every label afterwards, so it gets its own step and an explainer.',
+ h:`${status}<div class="ob">
+   <div class="glyph">☰</div>
+   <h3>Which guideline?</h3>
+   <div class="sub">This decides how your readings are labelled</div>
+   <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+     <div class="opt"><div class="r">◉</div><div><div class="n">ACC/AHA 2017</div>
+       <div class="d">United States. Calls 130/80 and above high blood pressure — a lower threshold than most.</div></div></div>
+     <div class="opt"><div class="r">○</div><div><div class="n">ESC/ESH 2023</div>
+       <div class="d">Europe. Uses grades rather than stages and treats 140/90 as the threshold.</div></div></div>
+     <div class="opt"><div class="r">○</div><div><div class="n">Custom</div>
+       <div class="d">Thresholds you or your clinician have set. Use only on medical advice.</div></div></div>
+   </div>
+   <div style="flex:1"></div>
+   <div class="btn">Continue</div>
+ </div>`
+},
+{
+ t:'Home · with data',
+ s:'Latest reading, trend, averages, medication, sodium, Health. Every card deep-links.',
+ h:`${status}
+  <div class="nav"><h2>Good morning</h2><div class="icon-btn">⊕</div></div>
+  <div class="body">
+    <div class="card">
+      <div class="row"><span class="lbl">Latest reading</span><span class="badge b-elev">Elevated</span></div>
+      <div class="bp"><span class="n">128</span><span class="sl">/</span><span class="n">82</span>
+        <span class="u">mmHg</span><span class="p">♥ 72</span></div>
+      <div class="mut">2 hours ago · Manual</div>
+      <div><span class="btn o sm">Edit</span></div>
+    </div>
+    <div class="card">
+      <div><div class="sec-t">Blood pressure</div><div class="sec-s">Last 30 days · ACC/AHA 2017</div></div>
+      ${chart(SYS,DIA)}
+      <div class="legend"><span><i class="dot" style="background:var(--systolic)"></i>Systolic</span>
+        <span><i class="dot" style="background:var(--diastolic)"></i>Diastolic</span></div>
+    </div>
+    <div class="card">
+      <div><div class="sec-t">Averages</div><div class="sec-s">Home readings only</div></div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">7 days</span><span class="v" style="color:var(--statusElevated)">127/83</span><span class="c">9 readings</span></div>
+        <div class="tile"><span class="lbl">30 days</span><span class="v" style="color:var(--statusElevated)">129/84</span><span class="c">31 readings</span></div>
+        <div class="tile"><span class="lbl">90 days</span><span class="v" style="color:var(--statusNormal)">124/79</span><span class="c">76 readings</span></div>
+      </div>
+    </div>
+  </div>${tabs(0)}`
+},
+{
+ t:'Home · first run',
+ s:'Empty states give direction, not mood. No placeholder numbers, no fake chart.',
+ h:`${status}
+  <div class="nav"><h2>Good evening</h2><div class="icon-btn">⊕</div></div>
+  <div class="body">
+    <div class="card"><div class="empty">
+      <div class="i">♡</div>
+      <div class="t">Let's get your first reading</div>
+      <div class="m">Sit quietly for five minutes, rest your arm at heart height, then measure.</div>
+      <div class="btn" style="padding:9px 18px">Add a reading</div>
+    </div></div>
+  </div>${tabs(0)}`
+},
+{
+ t:'Add reading',
+ s:'The category badge updates live as you turn the steppers, naming the guideline it came from.',
+ h:`${status}
+  <div class="nav-inline"><span class="a">Cancel</span><span class="t">Add reading</span><span class="a" style="font-weight:620">Save</span></div>
+  <div class="body">
+    <div class="form-h">Reading</div>
+    <div class="card" style="gap:0">
+      <div class="step"><span class="k">Systolic</span><span class="v" style="color:var(--systolic)">128</span><span class="stepper"><span>−</span><span>+</span></span></div>
+      <div class="step"><span class="k">Diastolic</span><span class="v" style="color:var(--diastolic)">82</span><span class="stepper"><span>−</span><span>+</span></span></div>
+      <div class="step"><span class="k">Pulse</span><span class="v" style="color:var(--pulse);font-size:21px">72</span><span class="stepper"><span>−</span><span>+</span></span></div>
+    </div>
+    <div class="row" style="justify-content:flex-start;gap:8px;padding:0 2px">
+      <span class="badge c b-elev">Elevated</span><span class="mut">by ACC/AHA 2017</span>
+    </div>
+    <div class="form-h" style="margin-top:2px">Context</div>
+    <div class="list">
+      <div class="li"><span class="g">When</span><span class="val">Today 7:38 AM</span></div>
+      <div class="li"><span class="g">Source</span><span class="val">Manual ›</span></div>
+      <div class="li"><span class="g" style="color:var(--textTertiary)">Notes (optional)</span></div>
+    </div>
+    <div class="list"><div class="li"><span class="g">Save to Apple Health</span>
+      <span style="color:var(--accent);font-size:18px">◉</span></div></div>
+    <div class="fnote">Your readings stay on this device. BP Coach does not send health data to any server.</div>
+  </div>`
+},
+{
+ t:'Crisis check — deterministic',
+ s:'A reading above 180/120 asks about symptoms before deciding. The AI never touches this path.',
+ h:`${status}
+  <div class="nav-inline"><span class="t">Quick check</span></div>
+  <div class="body">
+    <div class="card">
+      <div class="banner bn-sev">
+        <div class="h">⚠ This reading is very high</div>
+        <div class="m">Before anything else — are you having any symptoms right now? Your answer changes what you should do next.</div>
+      </div>
+    </div>
+    <div class="form-h">Are you experiencing any of these right now?</div>
+    <div class="list">
+      ${['Chest pain or pressure','Shortness of breath','Weakness or numbness on one side',
+         'Trouble speaking or understanding','Sudden vision change','Severe, unusual headache']
+        .map(s=>`<div class="li"><span class="g">${s}</span></div>`).join('')}
+    </div>
+    <div class="list">
+      <div class="li"><span class="g" style="color:var(--accent)">None of these</span></div>
+      <div class="li"><span class="g" style="color:var(--accent);font-weight:620">Continue</span></div>
+    </div>
+  </div>`
+},
+{
+ t:'Rule of 3 · rest timer',
+ s:'Five minutes seated before measuring. Skipping it typically adds a few points.',
+ h:`${status}
+  <div class="nav-inline"><span class="a">Cancel</span><span class="t">Rule of 3</span><span style="width:44px"></span></div>
+  <div class="timer">
+    <div class="ring">
+      <svg width="172" height="172" viewBox="0 0 172 172">
+        <circle cx="86" cy="86" r="79" fill="none" stroke="var(--border)" stroke-width="12"/>
+        <circle cx="86" cy="86" r="79" fill="none" stroke="var(--accent)" stroke-width="12"
+          stroke-linecap="round" stroke-dasharray="496" stroke-dashoffset="188"/>
+      </svg>
+      <div class="mid"><div class="t">3:07</div><div class="l">resting</div></div>
+    </div>
+    <div>
+      <div style="font-size:17px;font-weight:620;margin-bottom:6px">Sit quietly</div>
+      <div class="fnote" style="text-align:center">Back supported, feet flat, legs uncrossed.
+        Arm resting at heart height. No talking, no phone.</div>
+    </div>
+    <div style="width:100%">
+      <div class="btn">I'm ready — start measuring</div>
+      <div class="mut" style="text-align:center;margin-top:7px">Skipping the rest usually adds a few points.</div>
+    </div>
+  </div>`
+},
+{
+ t:'History · trends',
+ s:'Y axis fits the data. A fixed 40–200 scale flattens a narrow range into a straight line.',
+ h:`${status}
+  <div class="nav"><h2>History</h2></div>
+  <div class="body tight">
+    <div class="seg"><div class="on">Trends</div><div>Readings</div><div>Analysis</div><div>Metrics</div></div>
+    <div class="seg"><div>7d</div><div>14d</div><div class="on">30d</div><div>90d</div></div>
+    <div class="card">
+      <div><div class="sec-t">Blood pressure</div><div class="sec-s">Last 30 days · ACC/AHA 2017</div></div>
+      ${chart(SYS,DIA)}
+      <div class="legend"><span><i class="dot" style="background:var(--systolic)"></i>Systolic</span>
+        <span><i class="dot" style="background:var(--diastolic)"></i>Diastolic</span></div>
+    </div>
+    <div class="card">
+      <div><div class="sec-t">Range</div><div class="sec-s">Last 30 days</div></div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">Highest</span>
+          <span class="v" style="color:var(--statusModerate)">148/94</span><span class="c">12 Aug</span></div>
+        <div class="tile"><span class="lbl">Lowest</span>
+          <span class="v" style="color:var(--statusNormal)">112/71</span><span class="c">3 Aug</span></div>
+      </div>
+    </div>
+  </div>${tabs(1)}`
+},
+{
+ t:'History · readings by day',
+ s:'Grouped into days, weeks or months. Days with no reading are omitted, never charted as zero.',
+ h:`${status}
+  <div class="nav"><h2>History</h2></div>
+  <div class="body tight">
+    <div class="seg"><div>Trends</div><div class="on">Readings</div><div>Analysis</div><div>Metrics</div></div>
+    <div class="seg"><div class="on">Day</div><div>Week</div><div>Month</div></div>
+    <div class="card">
+      <div class="rowT"><div><div class="sec-t">Today</div><div class="sec-s">2 readings</div></div>
+        <div style="font:600 16px ui-rounded,system-ui;color:var(--textSecondary)">126/81</div></div>
+      <div class="div"></div>
+      <div class="row"><div><div class="bp s"><span class="n">128</span><span class="sl">/</span><span class="n">82</span></div>
+        <div class="mut">7:38 AM · Morning</div></div><span class="badge c b-elev">Elevated</span></div>
+      <div class="row"><div><div class="bp s"><span class="n">124</span><span class="sl">/</span><span class="n">79</span></div>
+        <div class="mut">9:12 PM · Evening</div></div><span class="badge c b-normal">Normal</span></div>
+    </div>
+    <div class="card">
+      <div class="rowT"><div><div class="sec-t">Yesterday</div><div class="sec-s">1 reading</div></div>
+        <div style="font:600 16px ui-rounded,system-ui;color:var(--textSecondary)">134/88</div></div>
+      <div class="div"></div>
+      <div class="row"><div><div class="bp s"><span class="n">134</span><span class="sl">/</span><span class="n">88</span></div>
+        <div class="mut">7:52 AM · Morning</div></div><span class="badge c b-mild">Stage 1</span></div>
+    </div>
+  </div>${tabs(1)}`
+},
+{
+ t:'History · analysis',
+ s:'Patterns are described as patterns. "Not a diagnosis" is said plainly, not buried in a disclaimer.',
+ h:`${status}
+  <div class="nav"><h2>History</h2></div>
+  <div class="body tight">
+    <div class="seg"><div>Trends</div><div>Readings</div><div class="on">Analysis</div><div>Metrics</div></div>
+    <div class="card">
+      <div class="sec-t">Morning vs evening</div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">Morning</span><span class="v">131/85</span><span class="c">18 readings</span></div>
+        <div class="tile"><span class="lbl">Evening</span><span class="v">123/79</span><span class="c">15 readings</span></div>
+      </div>
+      <div class="fnote">Your mornings run about 8 points higher than your evenings.</div>
+    </div>
+    <div class="card">
+      <div><div class="sec-t">Home vs clinic</div><div class="sec-s">A gap can suggest a white-coat pattern</div></div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">Home</span><span class="v">127/82</span></div>
+        <div class="tile"><span class="lbl">Clinic</span><span class="v">146/91</span></div>
+      </div>
+      <div class="fnote">This is a pattern in your own numbers, not a diagnosis. Your doctor interprets it.</div>
+    </div>
+    <div class="card">
+      <div><div class="sec-t">Variability</div><div class="sec-s">How much your readings move around</div></div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">Systolic spread</span><span class="v">±6.4</span></div>
+        <div class="tile"><span class="lbl">Diastolic spread</span><span class="v">±4.1</span></div>
+      </div>
+    </div>
+  </div>${tabs(1)}`
+},
+{
+ t:'Coach · unconfigured',
+ s:'No provider is wired up, so it says so and shows the exact payload it would send. No invented advice.',
+ h:`${status}
+  <div class="nav"><h2>Coach</h2></div>
+  <div class="body tight">
+    <div class="seg"><div class="on">Dashboard</div><div>Chat</div></div>
+    <div class="card">
+      <div class="sec-t">✦ Coach not set up yet</div>
+      <div class="fnote">No AI service is connected. When one is, the coach will explain your own
+        readings and trends in plain language — using only the summary below. Everything else in
+        BP Coach works without it.</div>
+    </div>
+    <div class="card sm">
+      <div><div class="sec-t">What the coach would see</div>
+        <div class="sec-s">A summary capped at 30 readings — never your full database</div></div>
+      ${[['Readings','30'],['Average windows','3'],['Medications','2'],
+         ['Lifestyle categories','2'],['Guideline','ACC/AHA 2017'],['Profile','Satyajit']]
+        .map(([k,v])=>`<div class="row" style="font-size:12.5px">
+          <span style="color:var(--textSecondary)">${k}</span><span>${v}</span></div>`).join('')}
+    </div>
+    <div class="card sm">
+      <div><div class="sec-t">What the coach will never do</div>
+        <div class="sec-s">Enforced in code, not just in instructions</div></div>
+      ${['Diagnosing a condition','Predicting future blood pressure',
+         'Recommending starting, stopping or changing a medication',
+         'Deciding whether a situation is an emergency']
+        .map(s=>`<div style="font-size:12.5px;color:var(--textSecondary)">⊘ ${s}</div>`).join('')}
+    </div>
+  </div>${tabs(3)}`
+},
+{
+ t:'Coach · chat',
+ s:'Loading and error states are real states. An unavailable service explains itself.',
+ h:`${status}
+  <div class="nav"><h2>Coach</h2></div>
+  <div class="body tight" style="justify-content:flex-start">
+    <div class="seg"><div>Dashboard</div><div class="on">Chat</div></div>
+    <div style="display:flex;flex-direction:column;gap:10px;flex:1;padding-top:4px">
+      <div class="bub u">Why was my BP higher yesterday?</div>
+      <div class="bub a">Your reading yesterday morning was 134/88, about 8 points above your
+        30-day average. Two things in your own data line up with it: you logged 3,100 mg of sodium
+        the evening before, and Health recorded 5h 20m of sleep.</div>
+      <div class="bub u">What should I change?</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0">
+        <div style="font-size:15px;color:var(--textSecondary)">◠</div>
+        <div class="mut">Thinking</div>
+      </div>
+    </div>
+    <div class="list"><div class="li">
+      <span class="g" style="color:var(--textTertiary)">Ask about your readings</span>
+      <span style="color:var(--accent);font-size:19px">⬆</span></div></div>
+  </div>${tabs(3)}`
+},
+{
+ t:'Medications',
+ s:'Pending doses are shown separately — counting a dose that is not yet due as missed would be wrong.',
+ h:`${status}
+  <div class="nav-inline"><span class="a">‹ More</span><span class="t">Medications</span><span class="a">＋</span></div>
+  <div class="body tight">
+    <div class="card">
+      <div><div class="sec-t">Overall adherence</div><div class="sec-s">Pending doses are not counted</div></div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">Taken</span><span class="v" style="color:var(--statusNormal)">84</span></div>
+        <div class="tile"><span class="lbl">Skipped</span><span class="v">3</span></div>
+        <div class="tile"><span class="lbl">Missed</span><span class="v" style="color:var(--statusElevated)">6</span></div>
+        <div class="tile"><span class="lbl">Pending</span><span class="v">1</span></div>
+      </div>
+      <div class="prog"><i style="width:90%;background:var(--statusNormal)"></i></div>
+      <div class="fnote">90% of resolved doses taken</div>
+    </div>
+    <div class="card">
+      <div class="rowT">
+        <div><div class="sec-t">Amlodipine</div><div class="sec-s">5 mg · Once daily</div>
+          <div class="mut">8:00 AM</div></div>
+        <div style="text-align:center"><div style="font:600 19px ui-rounded,system-ui;color:var(--statusNormal)">92%</div>
+          <div class="mut">taken</div></div>
+      </div>
+      <div class="row" style="justify-content:flex-start;gap:7px">
+        <span class="btn sm">✓ Taken</span><span class="btn o sm">✕ Skip</span>
+        <span class="btn o sm" style="margin-left:auto">Edit</span>
+      </div>
+      <div class="div"></div>
+      <div class="dotrow"><span class="mut" style="margin-right:4px">Recent</span>
+        ${['n','n','n','m','n','n','n','s','n','n','n','n']
+          .map(x=>`<i class="d10" style="background:${
+            x==='n'?'var(--statusNormal)':x==='m'?'var(--statusModerate)':'var(--textTertiary)'}"></i>`).join('')}
+      </div>
+    </div>
+  </div>`
+},
+{
+ t:'Sodium',
+ s:'Target defaults to the AHA ideal, not the tolerable upper limit. Over-target days turn amber.',
+ h:`${status}
+  <div class="nav-inline"><span class="a">‹ More</span><span class="t">Sodium</span><span class="a">＋</span></div>
+  <div class="body tight">
+    <div class="card">
+      <div><div class="sec-t">Today</div><div class="sec-s">Target 1500 mg</div></div>
+      <div class="row" style="align-items:baseline">
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <span style="font:700 36px/1 ui-rounded,system-ui;color:var(--statusElevated)">1840</span>
+          <span class="lbl">mg</span></div>
+        <span class="pill">Estimate</span>
+      </div>
+      <div class="prog"><i style="width:82%;background:var(--statusElevated)"></i></div>
+      <div class="fnote">You are over your target for today.</div>
+    </div>
+    <div class="card">
+      <div><div class="sec-t">Sodium</div><div class="sec-s">Daily total against your target</div></div>
+      ${bars([980,1420,1720,1180,2240,1360,1840],1500)}
+    </div>
+    <div class="card sm">
+      <div class="sec-t">Today's entries</div>
+      <div class="row"><div><div style="font-size:13.5px">Lunch: tinned tomato soup</div>
+        <div class="mut">12:40 PM</div></div><div style="font-size:13px">890 mg</div></div>
+      <div class="row"><div><div style="font-size:13.5px">Dinner: soy-glazed salmon</div>
+        <div class="mut">7:15 PM</div></div><div style="font-size:13px">950 mg</div></div>
+    </div>
+  </div>`
+},
+{
+ t:'Settings',
+ s:'Privacy and data control are top-level, not buried three levels down.',
+ h:`${status}
+  <div class="nav"><h2>Settings</h2></div>
+  <div class="body flush" style="padding-top:4px">
+    <div style="padding:0 var(--lg);display:flex;flex-direction:column;gap:var(--lg)">
+      <div class="list">
+        <div class="li"><span class="ic">👥</span><span class="g">Profiles</span><span class="chev">›</span></div>
+        <div class="li"><span class="ic">☰</span><span class="g">BP guideline</span>
+          <span class="val">ACC/AHA 2017</span><span class="chev">›</span></div>
+      </div>
+      <div class="list">
+        <div class="li"><span class="ic">🔔</span><span class="g">Notifications</span><span class="chev">›</span></div>
+        <div class="li"><span class="ic">💧</span><span class="g">Sodium target</span><span class="chev">›</span></div>
+        <div class="li"><span class="ic">♥</span><span class="g">Apple Health</span><span class="chev">›</span></div>
+        <div class="li"><span class="ic">✦</span><span class="g">AI coach</span>
+          <span class="val">Not configured</span><span class="chev">›</span></div>
+      </div>
+      <div class="list">
+        <div class="li"><span class="ic">🔒</span><span class="g">Privacy</span><span class="chev">›</span></div>
+        <div class="li"><span class="ic">⬆</span><span class="g">Export & delete data</span><span class="chev">›</span></div>
+      </div>
+      <div class="list">
+        <div class="li"><span class="ic">ⓘ</span><span class="g">About</span><span class="chev">›</span></div>
+      </div>
+    </div>
+  </div>${tabs(4)}`
+},
+{
+ t:'Apple Health',
+ s:'States what it reads and where the data goes. Import is deduplicated by sample UUID.',
+ h:`${status}
+  <div class="nav-inline"><span class="a">‹ Settings</span><span class="t">Apple Health</span><span style="width:56px"></span></div>
+  <div class="body flush" style="padding-top:10px">
+    <div style="padding:0 var(--lg);display:flex;flex-direction:column;gap:var(--lg)">
+      <div class="list">
+        <div class="li"><span class="g">Available on this device</span><span class="val">Yes</span></div>
+        <div class="li"><span class="g">Last sync</span><span class="val">Today 8:04 AM</span></div>
+      </div>
+      <div class="fnote" style="padding:0 4px;margin-top:-8px">Health data flows one way: Apple Health
+        into BP Coach, stored on this device. Nothing is sent to a server.</div>
+      <div class="list">
+        <div class="li"><span class="g" style="color:var(--accent)">Connect Apple Health</span></div>
+        <div class="li"><span class="ic">⬇</span><span class="g" style="color:var(--accent)">Import blood pressure</span></div>
+      </div>
+      <div class="grp-h">What BP Coach reads</div>
+      <div class="list" style="margin-top:-10px">
+        ${[['♥','Blood pressure'],['〜','Heart rate and HRV'],['🚶','Steps and active energy'],
+           ['🛏','Sleep'],['⚖','Weight']]
+          .map(([i,l])=>`<div class="li"><span class="ic">${i}</span><span class="g">${l}</span></div>`).join('')}
+      </div>
+    </div>
+  </div>`
+}];
+
+document.getElementById('grid').innerHTML = screens.map(s=>`
+  <figure>
+    <div class="phone"><div class="notch"></div><div class="screen">${s.h}</div></div>
+    <figcaption><div class="cap-t">${s.t}</div><div class="cap-s">${s.s}</div></figcaption>
+  </figure>`).join('');
+
+const L=document.getElementById('bLight'), D=document.getElementById('bDark');
+function set(mode){
+  document.body.dataset.mode=mode;
+  L.setAttribute('aria-pressed', mode==='light');
+  D.setAttribute('aria-pressed', mode==='dark');
+}
+L.onclick=()=>set('light'); D.onclick=()=>set('dark');
+</script>
+</body>
+</html>
