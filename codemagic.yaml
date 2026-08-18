@@ -35,6 +35,10 @@ workflows:
       events:
         - push
       branch_patterns:
+        # You are working on main. Both are watched so a manual build is not
+        # required after every push.
+        - pattern: main
+          include: true
         - pattern: bp-coach
           include: true
 
