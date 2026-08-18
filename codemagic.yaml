@@ -654,6 +654,22 @@ workflows:
           /usr/libexec/PlistBuddy -c "Print :NSHealthShareUsageDescription" "$APP/Info.plist" \
             || { echo "BLOCKED: missing NSHealthShareUsageDescription — App Review rejects this"; exit 1; }
 
+          echo "--- app icon present? ---"
+          ICON_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP/Info.plist" 2>/dev/null || echo "")
+          [ -n "$ICON_NAME" ] || {
+            echo "BLOCKED: CFBundleIconName missing — App Store error 90713."; exit 1; }
+          echo "CFBundleIconName = $ICON_NAME"
+
+          # Apple requires a 120x120 PNG for iPhone. The asset catalog compiler
+          # derives it from the 1024 source, so its absence means the catalog
+          # was not compiled into the bundle at all.
+          if [ -f "$APP/Assets.car" ]; then
+            echo "Assets.car present ($(du -h "$APP/Assets.car" | cut -f1))"
+          else
+            echo "BLOCKED: no Assets.car — the icon catalog did not compile."
+            exit 1
+          fi
+
           echo "--- design references must not be shipped ---"
           find "$APP" -name 'part-*.png' | grep . && { echo "BLOCKED: design PNG in the IPA"; exit 1; } || echo "OK"
 
