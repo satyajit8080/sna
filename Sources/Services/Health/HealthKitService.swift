@@ -1,6 +1,7 @@
 import Foundation
 import HealthKit
 import Observation
+import Security
 
 /// HealthKit bridge.
 ///
@@ -20,6 +21,7 @@ final class HealthKitService {
         case unavailable
         case notOwnerProfile
         case missingUsageDescription(String)
+        case missingEntitlement
 
         var errorDescription: String? {
             switch self {
@@ -29,8 +31,33 @@ final class HealthKitService {
                 "Apple Health is only connected to the device owner's profile. Other profiles use readings you enter yourself."
             case .missingUsageDescription(let key):
                 "This build cannot connect to Apple Health: \(key) is missing from its configuration."
+            case .missingEntitlement:
+                "This build is not signed for Apple Health. The HealthKit capability is missing from its App ID, so Health cannot be connected. Your readings still work normally."
             }
         }
+    }
+
+    /// Whether the running binary actually carries the HealthKit entitlement.
+    ///
+    /// Without it, HealthKit raises an Objective-C exception from inside
+    /// `_throwIfAuthorizationDisallowedForSharing` — even when the share set is
+    /// empty — and Swift cannot catch it, so the process dies. Reading the
+    /// entitlement from the signed task turns that into a message.
+    ///
+    /// The capability is granted on the App ID in the Developer portal and
+    /// baked into the provisioning profile at signing; it cannot be fixed in
+    /// code, only detected.
+    static var hasHealthKitEntitlement: Bool {
+        guard let task = SecTaskCreateFromSelf(nil) else {
+            // Cannot determine. Assume present rather than blocking a working
+            // build — the simulator reports nothing useful here.
+            return true
+        }
+        let value = SecTaskCopyValueForEntitlement(
+            task, "com.apple.developer.healthkit" as CFString, nil
+        )
+        if let boolean = value as? Bool { return boolean }
+        return value != nil
     }
 
     /// iOS terminates the process outright — no catchable error — if HealthKit
@@ -144,6 +171,10 @@ final class HealthKitService {
         guard profile.kind.canUseHealthKit else { throw HealthKitError.notOwnerProfile }
         guard hasUsageDescription("NSHealthShareUsageDescription") else {
             throw HealthKitError.missingUsageDescription("NSHealthShareUsageDescription")
+        }
+        guard Self.hasHealthKitEntitlement else {
+            lastError = "HealthKit entitlement missing from this build."
+            throw HealthKitError.missingEntitlement
         }
 
         hasRequestedAuthorization = true
@@ -293,6 +324,10 @@ final class HealthKitService {
         guard isAvailable, profile.kind.canUseHealthKit else { return false }
         guard hasUsageDescription("NSHealthUpdateUsageDescription") else {
             lastError = "This build cannot write to Health."
+            return false
+        }
+        guard Self.hasHealthKitEntitlement else {
+            lastError = "HealthKit entitlement missing from this build."
             return false
         }
 
