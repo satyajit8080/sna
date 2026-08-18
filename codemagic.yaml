@@ -318,27 +318,10 @@ workflows:
           fi
           echo "OK"
 
-      - name: D1 · Invariant sweep
-        script: |
-          set -e
-          echo "--- no networking in the HealthKit path ---"
-          ! grep -rn "URLSession\|URLRequest" Sources/Services/Health/ || {
-            echo "BLOCKED: networking found in the HealthKit service"; exit 1; }
-
-          echo "--- no SnapCal source ---"
-          ! git ls-files | grep -i snapcal || {
-            echo "BLOCKED: SnapCal file found"; exit 1; }
-
-          echo "--- no hard-coded thresholds outside the guideline engine ---"
-          ! grep -rn "systolic >= 130\|systolic > 140\|diastolic >= 90" \
-            Sources/Features Sources/Core || {
-            echo "BLOCKED: clinical threshold outside the guideline engine"; exit 1; }
-
-          echo "--- no committed project file ---"
-          ! git ls-files | grep -q 'xcodeproj' || {
-            echo "BLOCKED: .xcodeproj is committed; it must be generated"; exit 1; }
-
-          echo "OK: invariants hold"
+      # The invariant sweep that used to sit here duplicated stage A0 with an
+      # older, looser copy of the same checks — and its SnapCal test matched
+      # docs/SNAPCAL_AUDIT.md, the audit document itself. A0 runs
+      # scripts/security-check.sh, which is the single source of truth.
 
       - name: Z · Evidence summary
         script: |
