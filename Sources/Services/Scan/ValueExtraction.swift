@@ -125,7 +125,7 @@ enum ValueExtraction {
 /// is exactly the error that must never be saved silently.
 enum PrescriptionExtraction {
 
-    struct Suggestion: Identifiable {
+    struct Suggestion: Identifiable, Equatable {
         let id = UUID()
         var name: String
         var dose: String?
