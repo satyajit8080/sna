@@ -12,6 +12,7 @@ struct OnboardingFlow: View {
     @State private var step = 0
     @State private var name = ""
     @State private var selectedGuideline: BPGuidelineID = .accAha2017
+    @State private var healthError: String?
 
     private let stepCount = 6
 
@@ -140,21 +141,39 @@ struct OnboardingFlow: View {
             title: "Apple Health",
             subtitle: "Optional, and it works both ways",
             message: """
-            BP Coach can read blood pressure, heart rate, sleep, steps and weight from \
-            Health, and save readings you enter back to it.
+            BP Coach can read blood pressure, heart rate, sleep, steps and weight \
+            from Health.
 
             None of this leaves your device. BP Coach has no server and no account.
             """,
             primaryTitle: "Connect Health",
             primaryAction: {
                 Task {
-                    try? await app.health.requestAuthorization(for: app.activeProfile)
-                    step = 5
+                    do {
+                        try await app.health.requestReadAuthorization(for: app.activeProfile)
+                        step = 5
+                    } catch {
+                        // Onboarding must never be a dead end. Show what went
+                        // wrong and let the user carry on without Health.
+                        healthError = error.localizedDescription
+                    }
                 }
             },
             secondaryTitle: "Not now",
             secondaryAction: { step = 5 }
-        )
+        ) {
+            if let healthError {
+                VStack(spacing: Theme.Spacing.sm) {
+                    Text(healthError)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.statusModerate)
+                        .multilineTextAlignment(.center)
+                    Button("Continue without Health") { step = 5 }
+                        .font(.subheadline)
+                }
+                .padding(.horizontal, Theme.Spacing.xl)
+            }
+        }
     }
 
     private var notificationPermission: some View {
