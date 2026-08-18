@@ -483,6 +483,39 @@ workflows:
           echo "create one — App Manager cannot create certificates."
           set -e
 
+      - name: R3c · Delete stale provisioning profiles
+        script: |
+          set +e
+          # A provisioning profile is frozen when it is created. Adding a
+          # capability to the App ID afterwards does NOT update existing
+          # profiles, and `fetch-signing-files --create` reuses whatever it
+          # finds rather than regenerating.
+          #
+          # That is exactly how an app ends up signed without the HealthKit
+          # entitlement while the portal shows HealthKit ticked. Deleting first
+          # forces a fresh profile reflecting the App ID as it stands today.
+          echo "Existing App Store profiles for $BUNDLE_ID:"
+          app-store-connect profiles list \
+            --bundle-id-identifier "$BUNDLE_ID" \
+            --profile-type IOS_APP_STORE \
+            --json > /tmp/profiles.json 2>/dev/null
+          head -60 /tmp/profiles.json
+
+          # Profile resource ids are the "id" fields in the JSON response.
+          IDS=$(grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' /tmp/profiles.json \
+                | sed -E 's/.*"id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+                | sort -u)
+
+          if [ -z "$IDS" ]; then
+            echo "None found — a fresh profile will be created."
+          else
+            for ID in $IDS; do
+              echo "Deleting profile $ID"
+              app-store-connect profiles delete "$ID" --log-stream stdout 2>&1 | tail -2
+            done
+          fi
+          set -e
+
       - name: R4 · Apply signing profiles
         script: |
           set -e
@@ -685,10 +718,28 @@ workflows:
           done
 
           echo "--- HealthKit entitlement present? ---"
-          codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q "com.apple.developer.healthkit" \
-            && echo "healthkit entitlement signed in" \
-            || { echo "BLOCKED: HealthKit entitlement missing from the signed app."
-                 echo "Enable HealthKit on the App ID in the Developer portal."; exit 1; }
+          echo "Entitlements actually signed into the binary:"
+          codesign -d --entitlements :- "$APP" 2>/dev/null | tr -d '\0' | grep -iE "key|healthkit" | head -20
+
+          echo ""
+          echo "Entitlements granted by the embedded provisioning profile:"
+          PROFILE="$APP/embedded.mobileprovision"
+          if [ -f "$PROFILE" ]; then
+            strings "$PROFILE" | grep -i "healthkit" | head -5 \
+              || echo "  (no healthkit entry in the profile)"
+          else
+            echo "  BLOCKED: no embedded.mobileprovision in the app"; exit 1
+          fi
+
+          if ! codesign -d --entitlements :- "$APP" 2>/dev/null | tr -d '\0' | grep -q "com.apple.developer.healthkit"; then
+            echo ""
+            echo "BLOCKED: HealthKit entitlement is missing from the signed app."
+            echo "The App ID has the capability but the profile predates it."
+            echo "Stage R3c should have deleted the stale profile — check its log."
+            exit 1
+          fi
+          echo ""
+          echo "OK: healthkit entitlement signed in"
 
           echo "--- build number baked in? ---"
           BAKED_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist" 2>/dev/null || echo "")
