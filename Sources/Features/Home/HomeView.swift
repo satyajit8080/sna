@@ -57,6 +57,20 @@ struct HomeView: View {
         .sheet(item: $editing) { EditBPView(reading: $0) }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
         .task { await app.health.refreshSnapshot(for: app.activeProfile) }
+        // Home only counts as calm when nothing on screen is asking for
+        // attention — no safety banner, no drift warning.
+        .reviewPrompt(app.reviewPrompt, readings: readings, isCalmMoment: isCalmMoment)
+    }
+
+    /// True when nothing on Home is asking for the user's attention.
+    ///
+    /// A review request on top of a high-reading warning would be badly timed,
+    /// so the safety state gates it as well as the usage thresholds.
+    private var isCalmMoment: Bool {
+        guard let latest = readings.first else { return false }
+        if SafetyEngine.assess(latest).urgency > .none { return false }
+        if BPStatistics.hasDrifted(readings) { return false }
+        return true
     }
 
     /// Readings taken today. Surfaced because a second reading in a sitting is
