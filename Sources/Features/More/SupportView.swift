@@ -71,6 +71,16 @@ struct SupportView: View {
 
             Section {
                 Button {
+                    if let url = ReviewPrompt.writeReviewURL { openURL(url) }
+                } label: {
+                    Label("Rate BP Coach", systemImage: "star.fill")
+                }
+            } footer: {
+                Text("Reviews help other people find the app. It opens the App Store.")
+            }
+
+            Section {
+                Button {
                     openURL(supportMailto)
                 } label: {
                     Label("Email support", systemImage: "envelope.fill")
