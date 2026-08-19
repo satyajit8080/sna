@@ -146,16 +146,32 @@ struct HomeView: View {
                         .foregroundStyle(Brand.textSecondary)
                         .padding(.top, 6)
 
-                    Button { editing = reading } label: {
-                        Text("Edit")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Brand.onAccent)
-                            .padding(.horizontal, 12)
-                            .frame(height: 22)
-                            .background(Brand.accent)
-                            .clipShape(Capsule())
+                    // History sits beside Edit, as in the design. It is the main
+                    // way in now that History has no tab of its own.
+                    HStack(spacing: 9) {
+                        Button { editing = reading } label: {
+                            Text("Edit")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Brand.onAccent)
+                                .padding(.horizontal, 12)
+                                .frame(height: 22)
+                                .background(Brand.accent)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        NavigationLink { UnifiedHistoryView() } label: {
+                            Text("History")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Brand.textPrimary)
+                                .padding(.horizontal, 12)
+                                .frame(height: 22)
+                                .overlay {
+                                    Capsule().strokeBorder(Brand.cardStroke, lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                     .padding(.top, 14)
                 }
             } else {

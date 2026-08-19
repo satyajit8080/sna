@@ -8,6 +8,8 @@ struct AddSymptomView: View {
 
     /// Set when logging straight after a reading, so the two can be correlated.
     var relatedReadingID: UUID?
+    /// Preselected when arriving from a tile on the symptoms grid.
+    var preselected: SymptomKind?
 
     @State private var selected: Set<SymptomKind> = []
     @State private var severity: SymptomSeverity = .mild
@@ -81,6 +83,9 @@ struct AddSymptomView: View {
                     Button("Save") { save() }.disabled(selected.isEmpty)
                 }
             }
+            .onAppear {
+                if let preselected { selected.insert(preselected) }
+            }
         }
     }
 
@@ -108,121 +113,131 @@ struct AddSymptomView: View {
     }
 }
 
+/// Symptoms, implemented from the Figma design: a tappable grid of the common
+/// ones, then recent entries.
 struct SymptomHistoryView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \SymptomEntry.recordedAt, order: .reverse) private var allSymptoms: [SymptomEntry]
 
+    @State private var quickLog: SymptomKind?
     @State private var isAdding = false
+
+    /// The six shown as tiles. The rest are reachable through "Other".
+    private let featured: [SymptomKind] = [
+        .headache, .dizziness, .fatigue, .palpitations, .swelling, .other,
+    ]
 
     private var mine: [SymptomEntry] {
         allSymptoms.filter { $0.profileID == app.activeProfile.id }
     }
 
-    private var last90: [SymptomEntry] {
-        mine.filter { $0.recordedAt > Date.now.addingTimeInterval(-90 * 86_400) }
-    }
-
     var body: some View {
-        Group {
-            if mine.isEmpty {
-                EmptyStateView(
-                    symbol: "list.bullet.clipboard",
-                    title: "No symptoms logged",
-                    message: "Logging how you feel alongside your readings makes patterns easier to spot.",
-                    actionTitle: "Log a symptom",
-                    action: { isAdding = true }
-                )
-            } else {
-                ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        frequencyCard
-                        recentList
+        BrandScreen {
+            BrandHeader(
+                title: "Symptoms",
+                showsBack: true,
+                onBack: { dismiss() },
+                trailing: [("plus", { isAdding = true })]
+            )
+
+            BrandHeroCard(
+                title: "How are you feeling?",
+                message: "Track your symptoms to help your coach understand you better.",
+                symbol: "heart.text.square.fill"
+            )
+
+            Text("Add New Symptom")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Brand.textPrimary)
+
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3),
+                spacing: 15
+            ) {
+                ForEach(featured, id: \.self) { kind in
+                    Button { quickLog = kind } label: {
+                        VStack(spacing: 12) {
+                            BrandIconTile(symbol: kind.symbol, tint: tint(for: kind))
+                            Text(kind.label)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Brand.background)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
-                    .padding(Theme.Spacing.lg)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Log \(kind.label)")
                 }
             }
-        }
-        .background(Theme.background)
-        .navigationTitle("Symptoms")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { isAdding = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Log a symptom")
+
+            BrandSectionHeader("Recent Symptoms")
+
+            if mine.isEmpty {
+                BrandCard {
+                    Text("Nothing logged yet. Tap a symptom above to record one.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                }
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(mine.prefix(20)) { entry in
+                        BrandCard(padding: 12) {
+                            HStack(spacing: 14) {
+                                BrandIconTile(
+                                    symbol: entry.kind.symbol,
+                                    tint: tint(for: entry.kind),
+                                    size: 49
+                                )
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.kind.label)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(Brand.textPrimary)
+                                    HStack(spacing: 8) {
+                                        Text(entry.severity.label)
+                                        Circle().fill(Brand.textSecondary).frame(width: 4, height: 4)
+                                        Text(entry.recordedAt.formatted(
+                                            .dateTime.month().day().hour().minute()
+                                        ))
+                                    }
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Brand.textSecondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) {
+                                context.delete(entry)
+                                try? context.save()
+                            }
+                        }
+                    }
+                }
             }
         }
         .sheet(isPresented: $isAdding) { AddSymptomView() }
-    }
-
-    private var frequencyCard: some View {
-        let grouped = Dictionary(grouping: last90, by: \.kind)
-            .map { (kind: $0.key, count: $0.value.count) }
-            .sorted { $0.count > $1.count }
-
-        return CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                SectionHeader(title: "Most frequent", subtitle: "Last 90 days")
-                if grouped.isEmpty {
-                    Text("Nothing logged in the last 90 days.")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    ForEach(grouped, id: \.kind) { item in
-                        HStack {
-                            Label(item.kind.label, systemImage: item.kind.symbol)
-                            Spacer()
-                            Text("\(item.count)×").foregroundStyle(Theme.textSecondary)
-                        }
-                        .font(.subheadline)
-                    }
-                }
-            }
+        .sheet(item: $quickLog) { kind in
+            AddSymptomView(preselected: kind)
         }
     }
 
-    private var recentList: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            SectionHeader(title: "Recent")
-            ForEach(mine.prefix(50)) { entry in
-                CardView(padding: Theme.Spacing.md) {
-                    HStack {
-                        Image(systemName: entry.kind.symbol)
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.kind.label).font(.subheadline.weight(.medium))
-                            Text(entry.recordedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .foregroundStyle(Theme.textTertiary)
-                            if let notes = entry.notes, !notes.isEmpty {
-                                Text(notes).font(.caption).foregroundStyle(Theme.textSecondary)
-                            }
-                        }
-                        Spacer()
-                        Text(entry.severity.label)
-                            .font(.caption.weight(.medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(severityColor(entry.severity).opacity(0.15))
-                            .foregroundStyle(severityColor(entry.severity))
-                            .clipShape(Capsule())
-                    }
-                }
-                .swipeActions {
-                    Button("Delete", role: .destructive) {
-                        context.delete(entry)
-                        try? context.save()
-                    }
-                }
-            }
-        }
+    /// Red-flag symptoms carry the warning colour so they stand apart in the
+    /// grid — the same distinction `SafetyEngine` makes.
+    private func tint(for kind: SymptomKind) -> Color {
+        kind.isRedFlag ? Brand.restingHeartRate : Brand.accent
     }
+}
 
-    private func severityColor(_ severity: SymptomSeverity) -> Color {
-        switch severity {
-        case .mild: Theme.statusNormal
-        case .moderate: Theme.statusElevated
-        case .severe: Theme.statusModerate
-        }
-    }
+extension SymptomKind: Identifiable {
+    var id: String { rawValue }
 }
