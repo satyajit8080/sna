@@ -9,52 +9,93 @@ struct MoreView: View {
     @Query private var allAppointments: [Appointment]
 
     var body: some View {
-        List {
+        BrandScreen {
+            BrandHeader(title: "More", subtitle: "Settings and everything else")
+
             if app.isMultiProfile {
-                Section {
-                    ProfileSwitcher()
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                }
+                ProfileSwitcher()
             }
 
-            // Everyday destinations sit above the settings categories: they are
-            // what people actually open More for.
-            Section("Your health") {
-                link("Medicine Reminder", "pills.fill", count: activeMedications) {
+            group("Health Management") {
+                row("Medicine Reminder", "pills.fill", Brand.medication, activeMedications) {
                     MedicationListView()
                 }
-                link("Doctor Appointments", "calendar", count: upcomingAppointments) {
+                row("Doctor Appointments", "calendar", Brand.sleep, upcomingAppointments) {
                     AppointmentListView()
                 }
-                link("Symptoms", "list.bullet.clipboard") { SymptomHistoryView() }
-                link("Weight", "scalemass.fill") { WeightHistoryView() }
-                link("Activity", "figure.walk") { ActivityHistoryView() }
-                link("Food & Sodium", "fork.knife") { SodiumListView() }
-                link("Medical Reports", "doc.text", count: documentCount) { DocumentListView() }
+                row("Symptoms", "list.bullet.clipboard.fill", Brand.restingHeartRate) {
+                    SymptomHistoryView()
+                }
+                row("Weight", "scalemass.fill", Brand.weight) { WeightHistoryView() }
+                row("Activity", "figure.walk", Brand.accent) { ActivityHistoryView() }
+                row("Lifestyle & Sodium", "leaf.fill", Brand.steps) { SodiumListView() }
+                row("Apple Health", "heart.fill", Brand.restingHeartRate) { HealthDataView() }
             }
 
-            Section("Records") {
-                link("History", "clock.arrow.circlepath", count: readingCount) {
+            group("Your Data") {
+                row("All Readings", "chart.xyaxis.line", Brand.accent, readingCount) {
                     UnifiedHistoryView()
                 }
-                link("Health Report", "square.and.arrow.up.on.square") { HealthReportView() }
+                row("Medical Reports", "doc.text.fill", Brand.textSecondary, documentCount) {
+                    DocumentListView()
+                }
+                row("Health Report", "square.and.arrow.up.on.square.fill", Brand.accent) {
+                    HealthReportView()
+                }
+                row("Export & Delete", "lock.fill", Brand.weight) { PrivacyView() }
             }
 
-            // The eight categories from the specification, in order.
-            Section {
-                link("Apple Health", "heart.fill") { HealthDataView() }
-                link("Notification Management", "bell.fill") { NotificationSettingsView() }
-                link("Subscription", "star.fill") { SubscriptionView() }
-                link("Profile & Account", "person.crop.circle.fill") { ProfileSettingsView() }
-                link("Privacy & Data", "lock.fill") { PrivacyView() }
-                link("Help & Support", "questionmark.circle.fill") { SupportView() }
-                link("About", "info.circle.fill") { AboutView() }
-                link("Terms of Use", "doc.plaintext.fill") { TermsView() }
-                link("App Settings", "gearshape.fill") { AppSettingsView() }
+            group("App") {
+                row("Settings", "gearshape.fill", Brand.textSecondary) { AppSettingsView() }
+                row("Notifications", "bell.fill", Brand.medication) { NotificationSettingsView() }
+                row("Subscription", "star.fill", Brand.steps) { SubscriptionView() }
+                row("How to measure", "book.fill", Brand.accent) { MeasurementGuideView() }
+                row("Help & Support", "questionmark.circle.fill", Brand.sleep) { SupportView() }
+                row("About", "info.circle.fill", Brand.textSecondary) { AboutView() }
+                row("Terms of Use", "doc.plaintext.fill", Brand.textSecondary) { TermsView() }
             }
         }
-        .navigationTitle("More")
+    }
+
+    private func group<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Brand.textPrimary)
+            content()
+        }
+    }
+
+    private func row<Destination: View>(
+        _ title: String,
+        _ symbol: String,
+        _ tint: Color,
+        _ count: Int? = nil,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        NavigationLink { destination() } label: {
+            BrandCard(padding: 12) {
+                HStack(spacing: 14) {
+                    BrandIconTile(symbol: symbol, tint: tint, size: 49)
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Spacer(minLength: 0)
+                    if let count, count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Brand.textSecondary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var readingCount: Int {
@@ -70,26 +111,6 @@ struct MoreView: View {
         allAppointments.filter { $0.profileID == app.activeProfile.id && $0.isUpcoming }.count
     }
 
-    private func link<Destination: View>(
-        _ title: String,
-        _ symbol: String,
-        count: Int? = nil,
-        @ViewBuilder destination: @escaping () -> Destination
-    ) -> some View {
-        NavigationLink {
-            destination()
-        } label: {
-            if let count, count > 0 {
-                LabeledContent {
-                    Text("\(count)")
-                } label: {
-                    Label(title, systemImage: symbol)
-                }
-            } else {
-                Label(title, systemImage: symbol)
-            }
-        }
-    }
 }
 
 /// Measurement technique. Fixed editorial content following standard
@@ -114,35 +135,33 @@ struct MeasurementGuideView: View {
          "No caffeine, exercise or smoking in the 30 minutes beforehand. Empty your bladder first."),
     ]
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                Text("Most unexpected readings come down to technique rather than a change in your health.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    @Environment(\.dismiss) private var dismiss
 
-                ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
-                    CardView {
-                        HStack(alignment: .top, spacing: Theme.Spacing.md) {
-                            Image(systemName: step.0)
-                                .font(.title3)
-                                .foregroundStyle(Theme.accent)
-                                .frame(width: 28)
-                            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                                Text(step.1).font(.headline)
-                                Text(step.2)
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+    var body: some View {
+        BrandScreen {
+            BrandHeader(title: "How to measure", showsBack: true, onBack: { dismiss() })
+
+            Text("Most unexpected readings come down to technique rather than a change in your health.")
+                .font(.system(size: 14))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                BrandCard(padding: 16) {
+                    HStack(alignment: .top, spacing: 14) {
+                        BrandIconTile(symbol: step.0, tint: Brand.accent)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(step.1)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Text(step.2)
+                                .font(.system(size: 13))
+                                .foregroundStyle(Brand.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
             }
-            .padding(Theme.Spacing.lg)
         }
-        .background(Theme.background)
-        .navigationTitle("How to measure")
     }
 }

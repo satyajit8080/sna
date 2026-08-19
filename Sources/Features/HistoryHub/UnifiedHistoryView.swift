@@ -65,27 +65,72 @@ struct UnifiedHistoryView: View {
             : DateInterval(start: customEnd, end: customStart)
     }
 
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        VStack(spacing: 0) {
-            controls
-            content
+        ZStack {
+            Brand.background.ignoresSafeArea()
+            VStack(spacing: 0) {
+                BrandHeader(title: "History", showsBack: true, onBack: { dismiss() })
+                    .padding(.horizontal, Brand.Metric.pagePadding)
+                searchField
+                controls
+                content
+            }
         }
-        .background(Theme.background)
-        .navigationTitle("History")
-        .searchable(text: $search, prompt: "Search notes and labels")
+        .navigationBarHidden(true)
         .sheet(item: $editingReading) { EditBPView(reading: $0) }
         .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }
         .navigationDestination(item: $viewingDocument) { DocumentDetailView(document: $0) }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15))
+                .foregroundStyle(Brand.textSecondary)
+            TextField("", text: $search, prompt:
+                Text("Search notes and labels").foregroundStyle(Brand.textSecondary))
+                .foregroundStyle(Brand.textPrimary)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .background(Brand.background)
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Brand.cardStroke, lineWidth: 1)
+        }
+        .padding(.horizontal, Brand.Metric.pagePadding)
+        .padding(.top, 12)
     }
 
     // MARK: - Controls
 
     private var controls: some View {
         VStack(spacing: Theme.Spacing.sm) {
-            Picker("Range", selection: $range) {
-                ForEach(DateRange.allCases) { Text($0.label).tag($0) }
+            HStack(spacing: 0) {
+                ForEach(DateRange.allCases) { option in
+                    Button {
+                        range = option
+                        Haptics.selection()
+                    } label: {
+                        Text(option.label)
+                            .font(.system(size: 13, weight: range == option ? .semibold : .regular))
+                            .foregroundStyle(range == option ? Brand.onAccent : Brand.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 30)
+                            .background(range == option ? Brand.accent : .clear)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .pickerStyle(.segmented)
+            .padding(3)
+            .background(Brand.background)
+            .overlay {
+                Capsule().strokeBorder(Brand.cardStroke, lineWidth: 1)
+            }
+            .clipShape(Capsule())
 
             if range == .custom {
                 HStack {
@@ -113,8 +158,8 @@ struct UnifiedHistoryView: View {
                 .padding(.horizontal, 2)
             }
         }
-        .padding(.horizontal, Theme.Spacing.lg)
-        .padding(.vertical, Theme.Spacing.md)
+        .padding(.horizontal, Brand.Metric.pagePadding)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Content
@@ -133,15 +178,15 @@ struct UnifiedHistoryView: View {
                         // variability, derived metrics — lives in its own screen
                         // rather than being duplicated here.
                         NavigationLink { HistoryView() } label: {
-                            CardView(padding: Theme.Spacing.md) {
+                            BrandCard(padding: 12) {
                                 HStack {
                                     Label("Blood pressure analysis", systemImage: "chart.xyaxis.line")
-                                        .font(.subheadline)
-                                        .foregroundStyle(Theme.textPrimary)
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(Brand.textPrimary)
                                     Spacer()
                                     Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundStyle(Theme.textTertiary)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Brand.textSecondary)
                                 }
                             }
                         }
@@ -160,10 +205,14 @@ struct UnifiedHistoryView: View {
                 } else {
                     ForEach(groupedByDay(entries), id: \.day) { group in
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            SectionHeader(
-                                title: BPGrouping.title(for: group.day, granularity: .daily),
-                                subtitle: "\(group.entries.count) entr\(group.entries.count == 1 ? "y" : "ies")"
-                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(BPGrouping.title(for: group.day, granularity: .daily))
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(Brand.textPrimary)
+                                Text("\(group.entries.count) entr\(group.entries.count == 1 ? "y" : "ies")")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Brand.textSecondary)
+                            }
                             ForEach(group.entries) { entry in
                                 HistoryRow(entry: entry) { open(entry) }
                             }
@@ -171,8 +220,8 @@ struct UnifiedHistoryView: View {
                     }
                 }
             }
-            .padding(.horizontal, Theme.Spacing.lg)
-            .padding(.bottom, Theme.Spacing.xxl)
+            .padding(.horizontal, Brand.Metric.pagePadding)
+            .padding(.bottom, 40)
         }
     }
 
@@ -398,14 +447,14 @@ enum HistoryKind: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
-        case .bloodPressure: Theme.systolicColor
-        case .weight: Theme.diastolicColor
-        case .food: Theme.statusElevated
-        case .medicine: Theme.accent
-        case .symptoms: Theme.statusModerate
-        case .activity: Theme.statusNormal
-        case .reports: Theme.textSecondary
-        case .appointments: Theme.pulseColor
+        case .bloodPressure: Brand.restingHeartRate
+        case .weight: Brand.weight
+        case .food: Brand.steps
+        case .medicine: Brand.medication
+        case .symptoms: Brand.restingHeartRate
+        case .activity: Brand.accent
+        case .reports: Brand.textSecondary
+        case .appointments: Brand.sleep
         }
     }
 }
@@ -454,16 +503,16 @@ struct FilterChip: View {
                 if count > 0 {
                     Text("\(count)")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isOn ? .white.opacity(0.8) : Theme.textTertiary)
+                        .foregroundStyle(isOn ? .white.opacity(0.8) : Brand.textSecondary)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(isOn ? kind.tint : Theme.surface)
-            .foregroundStyle(isOn ? .white : Theme.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(isOn ? kind.tint : Brand.background)
+            .foregroundStyle(isOn ? .white : Brand.textSecondary)
             .clipShape(Capsule())
             .overlay {
-                Capsule().strokeBorder(isOn ? .clear : Theme.border, lineWidth: 1)
+                Capsule().strokeBorder(isOn ? .clear : Brand.cardStroke, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -477,20 +526,21 @@ struct HistoryRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            CardView(padding: Theme.Spacing.md) {
-                HStack(spacing: Theme.Spacing.md) {
-                    Image(systemName: entry.kind.symbol)
-                        .font(.subheadline)
-                        .foregroundStyle(entry.kind.tint)
-                        .frame(width: 24)
+            BrandCard(padding: 12) {
+                HStack(spacing: 12) {
+                    BrandIconTile(symbol: entry.kind.symbol, tint: entry.kind.tint, size: 40)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.title).font(.subheadline.weight(.medium))
-                        Text(entry.detail).font(.caption).foregroundStyle(Theme.textSecondary)
+                        Text(entry.title)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Brand.textPrimary)
+                        Text(entry.detail)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
                         if let note = entry.note, !note.isEmpty {
                             Text(note)
-                                .font(.caption)
-                                .foregroundStyle(Theme.textTertiary)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
                                 .lineLimit(2)
                         }
                     }
@@ -498,13 +548,13 @@ struct HistoryRow: View {
                     Spacer()
 
                     Text(entry.date.formatted(date: .omitted, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(Theme.textTertiary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
 
                     if entry.payload.isNavigable {
                         Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.textTertiary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Brand.textSecondary)
                     }
                 }
             }
