@@ -27,6 +27,8 @@ struct UnifiedHistoryView: View {
     @State private var filters: Set<HistoryKind> = Set(HistoryKind.allCases)
     @State private var search = ""
     @State private var editingReading: BPReading?
+    @State private var viewingDocument: MedicalDocument?
+    @State private var editingAppointment: Appointment?
 
     enum DateRange: String, CaseIterable, Identifiable {
         case week, month, quarter, year, custom
@@ -72,6 +74,8 @@ struct UnifiedHistoryView: View {
         .navigationTitle("History")
         .searchable(text: $search, prompt: "Search notes and labels")
         .sheet(item: $editingReading) { EditBPView(reading: $0) }
+        .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }
+        .navigationDestination(item: $viewingDocument) { DocumentDetailView(document: $0) }
     }
 
     // MARK: - Controls
@@ -161,11 +165,7 @@ struct UnifiedHistoryView: View {
                                 subtitle: "\(group.entries.count) entr\(group.entries.count == 1 ? "y" : "ies")"
                             )
                             ForEach(group.entries) { entry in
-                                HistoryRow(entry: entry) {
-                                    if case .bloodPressure(let reading) = entry.payload {
-                                        editingReading = reading
-                                    }
-                                }
+                                HistoryRow(entry: entry) { open(entry) }
                             }
                         }
                     }
@@ -173,6 +173,17 @@ struct UnifiedHistoryView: View {
             }
             .padding(.horizontal, Theme.Spacing.lg)
             .padding(.bottom, Theme.Spacing.xxl)
+        }
+    }
+
+    /// Opens whatever the row represents. Rows with no destination do nothing,
+    /// and are drawn without a chevron so that is visible up front.
+    private func open(_ entry: HistoryEntry) {
+        switch entry.payload {
+        case .bloodPressure(let reading): editingReading = reading
+        case .document(let document): viewingDocument = document
+        case .appointment(let appointment): editingAppointment = appointment
+        case .symptom, .activity, .lifestyle, .medicationDose: break
         }
     }
 
@@ -216,7 +227,7 @@ struct UnifiedHistoryView: View {
                     HistoryEntry(
                         date: $0.recordedAt, kind: .weight,
                         title: String(format: "%.1f kg", $0.value),
-                        detail: "Weight", note: nil, payload: .other
+                        detail: "Weight", note: nil, payload: .lifestyle($0)
                     )
                 }
         }
@@ -229,7 +240,7 @@ struct UnifiedHistoryView: View {
                         date: $0.recordedAt, kind: .food,
                         title: $0.label,
                         detail: "\(Int($0.value)) mg sodium" + ($0.isEstimate ? " · estimate" : ""),
-                        note: nil, payload: .other
+                        note: nil, payload: .lifestyle($0)
                     )
                 }
         }
@@ -242,7 +253,7 @@ struct UnifiedHistoryView: View {
                     HistoryEntry(
                         date: $0.recordedAt ?? $0.scheduledFor, kind: .medicine,
                         title: byID[$0.medicationID]?.name ?? "Medicine",
-                        detail: $0.status.label, note: nil, payload: .other
+                        detail: $0.status.label, note: nil, payload: .medicationDose
                     )
                 }
         }
@@ -254,7 +265,7 @@ struct UnifiedHistoryView: View {
                     HistoryEntry(
                         date: $0.recordedAt, kind: .symptoms,
                         title: $0.kind.label, detail: $0.severity.label,
-                        note: $0.notes, payload: .other
+                        note: $0.notes, payload: .symptom($0)
                     )
                 }
         }
@@ -266,7 +277,7 @@ struct UnifiedHistoryView: View {
                     HistoryEntry(
                         date: $0.startedAt, kind: .activity,
                         title: $0.kind.label, detail: "\($0.minutes) min",
-                        note: $0.notes, payload: .other
+                        note: $0.notes, payload: .activity($0)
                     )
                 }
         }
@@ -277,8 +288,11 @@ struct UnifiedHistoryView: View {
                 .map {
                     HistoryEntry(
                         date: $0.importedAt, kind: .reports,
-                        title: $0.title, detail: $0.kind.label,
-                        note: nil, payload: .other
+                        title: $0.title,
+                        detail: $0.values.isEmpty
+                            ? "\($0.kind.label) · text only"
+                            : "\($0.kind.label) · \($0.values.count) values",
+                        note: nil, payload: .document($0)
                     )
                 }
         }
@@ -290,7 +304,7 @@ struct UnifiedHistoryView: View {
                     HistoryEntry(
                         date: $0.scheduledFor, kind: .appointments,
                         title: $0.doctorName, detail: $0.specialty ?? "Appointment",
-                        note: $0.notes, payload: .other
+                        note: $0.notes, payload: .appointment($0)
                     )
                 }
         }
@@ -397,9 +411,24 @@ enum HistoryKind: String, CaseIterable, Identifiable {
 }
 
 struct HistoryEntry: Identifiable {
+    /// The record behind the row. Rows without a destination say so by not
+    /// showing a chevron — a row that looks tappable and does nothing is worse
+    /// than one that plainly is not.
     enum Payload {
         case bloodPressure(BPReading)
-        case other
+        case document(MedicalDocument)
+        case appointment(Appointment)
+        case symptom(SymptomEntry)
+        case activity(ActivityEntry)
+        case lifestyle(LifestyleEntry)
+        case medicationDose
+
+        var isNavigable: Bool {
+            switch self {
+            case .bloodPressure, .document, .appointment: true
+            case .symptom, .activity, .lifestyle, .medicationDose: false
+            }
+        }
     }
 
     let id = UUID()
@@ -471,10 +500,18 @@ struct HistoryRow: View {
                     Text(entry.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption)
                         .foregroundStyle(Theme.textTertiary)
+
+                    if entry.payload.isNavigable {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
                 }
             }
         }
         .buttonStyle(.plain)
+        .disabled(!entry.payload.isNavigable)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(entry.payload.isNavigable ? .isButton : [])
     }
 }
