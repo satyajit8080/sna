@@ -14,6 +14,7 @@ final class AppModel {
 
     let guidelines: GuidelineEngine
     let settings: AppSettings
+    let reviewPrompt: ReviewPrompt
     let health = HealthKitService()
 
     /// Real services when a backend URL is baked into the build; honest
@@ -31,6 +32,7 @@ final class AppModel {
         self.defaults = defaults
         self.guidelines = GuidelineEngine(defaults: defaults)
         self.settings = AppSettings(defaults: defaults)
+        self.reviewPrompt = ReviewPrompt(defaults: defaults)
         self.hasCompletedOnboarding = defaults.bool(forKey: Self.onboardingKey)
 
         if let baseURL = BackendConfig.baseURL {
