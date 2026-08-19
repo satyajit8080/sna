@@ -77,6 +77,11 @@ struct DocumentRow: View {
                         Text("\(document.values.count) value\(document.values.count == 1 ? "" : "s")")
                             .font(.caption)
                             .foregroundStyle(Theme.accent)
+                    } else if document.recognisedText?.isEmpty == false {
+                        // Say so plainly. A row that shows nothing looks broken.
+                        Text("Text saved · no values recognised")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textTertiary)
                     }
                 }
 
@@ -115,7 +120,7 @@ struct DocumentDetailView: View {
                     }
                 }
 
-                if !document.values.isEmpty { valuesCard }
+                if !document.values.isEmpty { valuesCard } else { noValuesCard }
 
                 if document.fileURL != nil {
                     Button {
@@ -163,6 +168,31 @@ struct DocumentDetailView: View {
             Button("Keep", role: .cancel) {}
         } message: {
             Text("The file is removed from this device too.")
+        }
+    }
+
+    /// Shown when OCR worked but no known analyte was matched.
+    ///
+    /// The extractor recognises English analyte names. A report in another
+    /// language, or an unusual layout, reads fine but matches nothing — and
+    /// saying that is far better than an empty screen that looks like a bug.
+    private var noValuesCard: some View {
+        CardView {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Label("No values recognised", systemImage: "questionmark.circle")
+                    .font(.subheadline.weight(.semibold))
+                Text("""
+                The page was read and its text is saved below, but nothing matched the \
+                lab values BP Coach knows. That usually means the report is in another \
+                language or uses an unfamiliar layout.
+
+                You can still read the text here, search it from History, or attach the \
+                report to the AI Coach and ask what it says.
+                """)
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
