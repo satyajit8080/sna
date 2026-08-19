@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import { loadConfig } from "../dist/config.js";
 import { validateCoachRequest, LIMITS } from "../dist/schema.js";
-import { screenResponse, renderContext, SCREENED_REPLACEMENT } from "../dist/services/prompt.js";
+import {
+  screenResponse, renderContext, SCREENED_REPLACEMENT, SYSTEM_PROMPT,
+} from "../dist/services/prompt.js";
 import { requestCoaching } from "../dist/services/openrouter.js";
 import { UpstreamError } from "../dist/services/errors.js";
 import { buildApp } from "../dist/app.js";
@@ -141,6 +143,57 @@ describe("output screening", () => {
 
   test("catches diagnosis", () => {
     assert.equal(screenResponse("You likely have hypertension.").safe, false);
+  });
+
+  /** Hedging does not make medication advice acceptable. */
+  test("catches softened medication advice", () => {
+    for (const text of [
+      "You might want to try taking your dose at night.",
+      "Consider shifting the medication to the evening.",
+      "You could try moving your tablet to bedtime.",
+    ]) {
+      assert.equal(screenResponse(text).safe, false, `not caught: ${text}`);
+    }
+  });
+
+  test("catches urgency framed as advice", () => {
+    for (const text of [
+      "You should seek medical attention immediately.",
+      "Get care right away.",
+    ]) {
+      assert.equal(screenResponse(text).safe, false, `not caught: ${text}`);
+    }
+  });
+
+  test("catches predictions about future readings", () => {
+    assert.equal(
+      screenResponse("Your blood pressure will likely improve next week.").safe,
+      false
+    );
+  });
+
+  /** The screen must not fire on ordinary, useful coaching. */
+  test("legitimate answers still pass", () => {
+    for (const text of [
+      "Your reading at 7:38 was 148/94, about 20 points above your 30-day average.",
+      "That is a change to a prescribed medicine, so it is your doctor's call rather than mine.",
+      "I can't see any sodium entries for that week.",
+      "Your mornings average 134/86 against 124/79 in the evenings, over 22 readings.",
+      "Two readings is not enough to call a trend yet.",
+    ]) {
+      assert.equal(screenResponse(text).safe, true, `false positive: ${text}`);
+    }
+  });
+
+  test("the system prompt states the hard limits explicitly", () => {
+    for (const phrase of ["never", "diagnos", "medication", "urgency"]) {
+      assert.match(SYSTEM_PROMPT.toLowerCase(), new RegExp(phrase));
+    }
+  });
+
+  test("the system prompt carries worked examples", () => {
+    assert.match(SYSTEM_PROMPT, /Good:/);
+    assert.match(SYSTEM_PROMPT, /Bad:/);
   });
 
   test("the replacement text names no urgency and no medication action", () => {

@@ -220,3 +220,65 @@ struct CoachAttachmentTests {
         #expect(fields == ["kind", "name", "text"])
     }
 }
+
+/// Backend URL validation.
+///
+/// The CI sentinel `unset` parses as a valid relative URL, so a naive
+/// `URL(string:)` check made the app believe it was configured and report a
+/// connection failure instead of "not set up". These pin the stricter rule.
+@Suite("Backend URL validation")
+struct BackendURLTests {
+
+    /// Mirrors `BackendConfig.baseURL`'s rule so it can be exercised without a
+    /// bundle. Kept identical deliberately.
+    private func isValid(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.lowercased() != "unset",
+              !trimmed.hasPrefix("$("),
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              let host = url.host(),
+              host.contains(".")
+        else { return false }
+        return true
+    }
+
+    @Test("A real https URL is accepted")
+    func acceptsRealURL() {
+        #expect(isValid("https://bp-coach-production.up.railway.app"))
+        #expect(isValid("https://api.example.com/v1"))
+    }
+
+    /// The bug this suite exists for.
+    @Test("The CI sentinel is rejected, not treated as a host")
+    func rejectsSentinel() {
+        #expect(!isValid("unset"))
+        #expect(!isValid("UNSET"))
+    }
+
+    @Test("An unexpanded build variable is rejected")
+    func rejectsUnexpandedVariable() {
+        #expect(!isValid("$(BPCOACH_API_BASE_URL)"))
+    }
+
+    @Test("Empty and whitespace are rejected")
+    func rejectsEmpty() {
+        #expect(!isValid(""))
+        #expect(!isValid("   "))
+    }
+
+    @Test("A bare word or missing scheme is rejected")
+    func rejectsBareWords() {
+        #expect(!isValid("localhost"))
+        #expect(!isValid("example.com"))
+        #expect(!isValid("/v1/coach"))
+    }
+
+    @Test("A non-web scheme is rejected")
+    func rejectsOtherSchemes() {
+        #expect(!isValid("ftp://example.com"))
+        #expect(!isValid("bpcoach://coach"))
+    }
+}

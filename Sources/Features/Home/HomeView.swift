@@ -1,6 +1,12 @@
+import Charts
 import SwiftData
 import SwiftUI
 
+/// Home, implemented from the Figma design.
+///
+/// Every number here comes from stored data. Where a value is genuinely absent
+/// the card says so rather than showing a placeholder — the design's sample
+/// figures are examples, not defaults.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @Environment(GuidelineEngine.self) private var guidelines
@@ -11,303 +17,499 @@ struct HomeView: View {
     @Query private var allDoses: [MedicationDose]
     @Query private var allLifestyle: [LifestyleEntry]
     @Query private var allAppointments: [Appointment]
+    @Query(sort: \ActivityEntry.startedAt, order: .reverse) private var allActivity: [ActivityEntry]
 
     @State private var isPresentingAdd = false
     @State private var editing: BPReading?
-    @State private var error: AppError?
 
     private var readings: [BPReading] {
         allReadings.filter { $0.profileID == app.activeProfile.id }
     }
 
     var body: some View {
-        ScrollView {
-            ErrorContainer(error: $error) {
-                VStack(spacing: Theme.Spacing.lg) {
-                    if app.isMultiProfile { ProfileSwitcher() }
+        ZStack {
+            Brand.background.ignoresSafeArea()
 
-                    if let latest = readings.first {
-                        latestCard(latest)
-                        trendCard
-                        averagesCard
-                        insightCard
-                        medicationCard
-                        sodiumCard
-                        activityCard
-                        appointmentCard
-                        coachCard
-                    } else {
-                        firstRunCard
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    greeting
+                    latestReadingCard
+                    todaysHealth
+                    foodAndSodium
+                    movementCard
+                    medicationCard
+                    coachCard
                 }
-            }
-            .padding(Theme.Spacing.lg)
-        }
-        .background(Theme.background)
-        .navigationTitle(greeting)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { isPresentingAdd = true } label: {
-                    Image(systemName: "plus.circle.fill").font(.title3)
-                }
-                .accessibilityLabel("Add a reading")
+                .padding(.horizontal, Brand.Metric.pagePadding)
+                .padding(.bottom, 32)
             }
         }
+        .navigationBarHidden(true)
         .sheet(isPresented: $isPresentingAdd) { AddBPView() }
         .sheet(item: $editing) { EditBPView(reading: $0) }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
         .task { await app.health.refreshSnapshot(for: app.activeProfile) }
-        // Home only counts as calm when nothing on screen is asking for
-        // attention — no safety banner, no drift warning.
         .reviewPrompt(app.reviewPrompt, readings: readings, isCalmMoment: isCalmMoment)
     }
 
-    /// True when nothing on Home is asking for the user's attention.
-    ///
-    /// A review request on top of a high-reading warning would be badly timed,
-    /// so the safety state gates it as well as the usage thresholds.
-    private var isCalmMoment: Bool {
-        guard let latest = readings.first else { return false }
-        if SafetyEngine.assess(latest).urgency > .none { return false }
-        if BPStatistics.hasDrifted(readings) { return false }
-        return true
+    // MARK: - Greeting
+
+    private var greeting: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(timeOfDayGreeting)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Brand.textTertiary)
+                Text(app.activeProfile.name)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+            }
+            Spacer()
+            NavigationLink { MoreView() } label: {
+                Circle()
+                    .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                    .frame(width: 35, height: 35)
+                    .overlay {
+                        Image(systemName: "bell")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Brand.textPrimary)
+                    }
+            }
+            .accessibilityLabel("Notifications and settings")
+        }
+        .padding(.top, 8)
     }
 
-    /// Readings taken today. Surfaced because a second reading in a sitting is
-    /// normal practice, and it should be obvious whether one was taken.
+    private var timeOfDayGreeting: String {
+        switch Calendar.current.component(.hour, from: .now) {
+        case 4..<12: "Good Morning,"
+        case 12..<17: "Good Afternoon,"
+        default: "Good Evening,"
+        }
+    }
+
+    // MARK: - Latest reading
+
+    private var latestReadingCard: some View {
+        BrandCard {
+            if let reading = readings.first {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top) {
+                        Text("Latest Reading")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                        Spacer()
+                        BrandPill(
+                            text: guidelines.category(for: reading).label,
+                            tint: GuidelineEngine.color(for: guidelines.category(for: reading).severity)
+                        )
+                    }
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("\(reading.systolic)/\(reading.diastolic)")
+                            .font(.system(size: 25, weight: .bold))
+                            .foregroundStyle(Brand.textPrimary)
+                        Text("mmHg")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                        Spacer()
+                        sparkline
+                    }
+                    .padding(.top, 12)
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(GuidelineEngine.color(for: guidelines.category(for: reading).severity))
+                            .frame(width: 8, height: 8)
+                        Text(guidelines.category(for: reading).label)
+                            .foregroundStyle(Brand.accent)
+                        Circle().fill(Brand.textSecondary).frame(width: 4, height: 4)
+                        Text(reading.recordedAt.formatted(date: .omitted, time: .shortened))
+                            .foregroundStyle(Brand.textSecondary)
+                    }
+                    .font(.system(size: 12))
+                    .padding(.top, 12)
+
+                    if let delta = deltaVsAverage(reading) {
+                        HStack(spacing: 6) {
+                            Image(systemName: delta > 0 ? "arrow.up" : "arrow.down")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("\(abs(delta)) mmHg vs 7-day average")
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                        .padding(.top, 6)
+                    }
+
+                    Text("Today's readings: \(todayCount)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                        .padding(.top, 6)
+
+                    Button { editing = reading } label: {
+                        Text("Edit")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Brand.onAccent)
+                            .padding(.horizontal, 12)
+                            .frame(height: 22)
+                            .background(Brand.accent)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 14)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("No readings yet")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Text("Sit quietly for five minutes, rest your arm at heart height, then measure.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                    Button { isPresentingAdd = true } label: {
+                        Text("Add a reading")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Brand.onAccent)
+                            .padding(.horizontal, 14)
+                            .frame(height: 30)
+                            .background(Brand.accent)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    /// The last week at a glance. Drawn only with real readings.
+    private var sparkline: some View {
+        let recent = Array(BPStatistics.within(readings, days: 7).reversed())
+        return Group {
+            if recent.count >= 2 {
+                Chart(recent) { reading in
+                    LineMark(
+                        x: .value("Date", reading.recordedAt),
+                        y: .value("Systolic", reading.systolic)
+                    )
+                    .foregroundStyle(Brand.accent)
+                    .interpolationMethod(.monotone)
+                }
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .frame(width: 126, height: 28)
+                .accessibilityLabel("Systolic over the last 7 days")
+            }
+        }
+    }
+
+    private func deltaVsAverage(_ reading: BPReading) -> Int? {
+        guard let average = BPStatistics.homeAverage(readings, days: 7), average.count >= 2
+        else { return nil }
+        let delta = reading.systolic - average.systolic
+        return delta == 0 ? nil : delta
+    }
+
     private var todayCount: Int {
         readings.filter { Calendar.current.isDateInToday($0.recordedAt) }.count
     }
 
-    /// Deterministic insight. Present whether or not the coach is configured.
-    private var insightCard: some View {
-        let doses = allDoses.filter { $0.profileID == app.activeProfile.id }
-        let sodium = allLifestyle
-            .filter {
-                $0.profileID == app.activeProfile.id && $0.kind == .sodium
-                    && Calendar.current.isDateInToday($0.recordedAt)
+    // MARK: - Today's Health
+
+    private var todaysHealth: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Today's Health", action: "See All") {
+                UnifiedHistoryView()
             }
-            .reduce(0) { $0 + $1.value }
 
-        let insight = DailyInsight.forToday(
-            readings: readings,
-            doses: doses,
-            sodiumToday: sodium,
-            sodiumTarget: SodiumSettings.dailyTarget,
-            guideline: guidelines.active
-        )
-
-        return Group {
-            if let insight {
-                CardView {
-                    HStack(alignment: .top, spacing: Theme.Spacing.md) {
-                        Image(systemName: insight.symbol)
-                            .font(.title3)
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(insight.headline).font(.subheadline.weight(.semibold))
-                            Text(insight.body)
-                                .font(.footnote)
-                                .foregroundStyle(Theme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The next dose still awaiting an answer.
-    private var nextDoseText: String? {
-        let doses = allDoses.filter { $0.profileID == app.activeProfile.id }
-        guard let next = MedicationEngine.nextDue(from: doses) else { return nil }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return "Next dose \(formatter.localizedString(for: next.scheduledFor, relativeTo: .now))"
-    }
-
-    private var appointmentCard: some View {
-        let next = allAppointments
-            .filter { $0.profileID == app.activeProfile.id && $0.isUpcoming }
-            .min { $0.scheduledFor < $1.scheduledFor }
-
-        return Group {
-            if let next {
-                NavigationLink { AppointmentListView() } label: {
-                    CardView {
-                        HStack(spacing: Theme.Spacing.md) {
-                            Image(systemName: "calendar")
-                                .font(.title3)
-                                .foregroundStyle(Theme.accent)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Next appointment")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.textSecondary)
-                                Text(next.doctorName).font(.subheadline.weight(.medium))
-                                Text(next.scheduledFor.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.textTertiary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(Theme.textTertiary)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private var greeting: String {
-        switch Calendar.current.component(.hour, from: .now) {
-        case 4..<12: "Good morning"
-        case 12..<17: "Good afternoon"
-        default: "Good evening"
-        }
-    }
-
-    // MARK: - Cards
-
-    private var firstRunCard: some View {
-        CardView {
-            EmptyStateView(
-                symbol: "heart.text.square",
-                title: "Let's get your first reading",
-                message: "Sit quietly for five minutes, rest your arm at heart height, then measure.",
-                actionTitle: "Add a reading",
-                action: { isPresentingAdd = true }
-            )
-        }
-    }
-
-    private func latestCard(_ reading: BPReading) -> some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                HStack {
-                    Text("Latest reading")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                    CategoryBadge(category: guidelines.category(for: reading))
-                }
-
-                BPValueView(
-                    systolic: reading.systolic,
-                    diastolic: reading.diastolic,
-                    pulse: reading.pulse
+            let snapshot = app.health.snapshot
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible())], spacing: 16) {
+                metricTile(
+                    title: "Steps", symbol: "figure.walk", tint: Brand.steps,
+                    value: snapshot.steps.map { "\($0.formatted())" },
+                    caption: "/10,000 steps",
+                    fraction: snapshot.steps.map { Double($0) / 10_000 }
                 )
-
-                HStack(spacing: Theme.Spacing.xs) {
-                    Text(relativeTime(reading.recordedAt))
-                    Text("·")
-                    Text(reading.source.label)
-                    if todayCount > 1 {
-                        Text("·")
-                        Text("\(todayCount) today")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(Theme.textTertiary)
-
-                let assessment = SafetyEngine.assess(reading)
-                if assessment.urgency > .none {
-                    SafetyBanner(assessment: assessment)
-                }
-
-                HStack(spacing: Theme.Spacing.sm) {
-                    Button("Edit") { editing = reading }
-                        .buttonStyle(.bordered)
-                    // History has no tab any more, so Home is its main entry point.
-                    NavigationLink { UnifiedHistoryView() } label: {
-                        Label("History", systemImage: "clock.arrow.circlepath")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .font(.subheadline)
-                .controlSize(.small)
+                metricTile(
+                    title: "Resting HR", symbol: "heart.fill", tint: Brand.restingHeartRate,
+                    value: snapshot.restingHeartRate.map { "\($0)" },
+                    caption: "bpm",
+                    // 40–100 is the range most resting rates fall in.
+                    fraction: snapshot.restingHeartRate.map { Double($0 - 40) / 60 }
+                )
+                metricTile(
+                    title: "Sleep", symbol: "bed.double.fill", tint: Brand.sleep,
+                    value: snapshot.sleepMinutes.map { "\($0 / 60)h \($0 % 60)m" },
+                    caption: sleepQuality(snapshot.sleepMinutes),
+                    fraction: snapshot.sleepMinutes.map { Double($0) / 480 }
+                )
+                weightTile
             }
         }
     }
 
-    private var trendCard: some View {
-        let recent = BPStatistics.within(readings, days: 30)
-        return Group {
-            if recent.count >= 2 {
-                BPTrendChart(readings: recent, days: 30)
-            }
-        }
+    private func sleepQuality(_ minutes: Int?) -> String {
+        guard let minutes else { return "Not recorded" }
+        return minutes >= 420 ? "Good" : minutes >= 360 ? "A little short" : "Short"
     }
 
-    private var averagesCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                SectionHeader(title: "Averages", subtitle: "Home readings only")
-                HStack(spacing: Theme.Spacing.md) {
-                    ForEach([7, 30, 90], id: \.self) { days in
-                        if let avg = BPStatistics.homeAverage(readings, days: days) {
-                            StatTile(
-                                title: "\(days) days",
-                                value: "\(avg.systolic)/\(avg.diastolic)",
-                                caption: "\(avg.count) reading\(avg.count == 1 ? "" : "s")",
-                                tint: GuidelineEngine.color(
-                                    for: guidelines.category(
-                                        systolic: avg.systolic, diastolic: avg.diastolic
-                                    ).severity
-                                )
-                            )
-                        } else {
-                            StatTile(title: "\(days) days", value: "—", caption: "No data")
+    private func metricTile(
+        title: String, symbol: String, tint: Color,
+        value: String?, caption: String, fraction: Double?
+    ) -> some View {
+        BrandCard(padding: 16, radius: Brand.Metric.tileRadius) {
+            VStack(alignment: .leading, spacing: 0) {
+                BrandIconTile(symbol: symbol, tint: tint)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                    .padding(.top, 14)
+
+                Text(value ?? "—")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(value == nil ? Brand.textTertiary : Brand.textPrimary)
+                    .padding(.top, 4)
+
+                Text(value == nil ? "No data" : caption)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                    .padding(.top, 4)
+
+                Spacer(minLength: 8)
+
+                BrandProgressBar(fraction: fraction ?? 0, tint: tint, height: Brand.Metric.barHeight)
+            }
+            .frame(height: 128, alignment: .top)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value ?? "no data")")
+    }
+
+    /// Weight shows change rather than progress — there is no target to fill.
+    private var weightTile: some View {
+        let weights = allLifestyle
+            .filter { $0.profileID == app.activeProfile.id && $0.kind == .weight }
+            .sorted { $0.recordedAt > $1.recordedAt }
+        let latest = weights.first ?? app.health.snapshot.weightKilograms.map {
+            LifestyleEntry(profileID: app.activeProfile.id, kind: .weight,
+                           value: $0, unit: "kg", label: "Weight")
+        }
+        let delta = weights.count >= 2 ? weights[0].value - weights[1].value : nil
+
+        return BrandCard(padding: 16, radius: Brand.Metric.tileRadius) {
+            VStack(alignment: .leading, spacing: 0) {
+                BrandIconTile(symbol: "scalemass.fill", tint: Brand.weight)
+
+                Text("Weight")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                    .padding(.top, 14)
+
+                Text(latest.map { app.settings.displayWeight($0.value) } ?? "—")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(latest == nil ? Brand.textTertiary : Brand.textPrimary)
+                    .padding(.top, 4)
+
+                if let delta {
+                    HStack(spacing: 5) {
+                        Image(systemName: delta > 0 ? "arrow.up" : "arrow.down")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(String(format: "%.1f kg", abs(delta)))
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.accent)
+                    .padding(.top, 4)
+                } else {
+                    Text(latest == nil ? "No data" : "First entry")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Brand.textSecondary)
+                        .padding(.top, 4)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(height: 128, alignment: .top)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Food & Sodium
+
+    private var foodAndSodium: some View {
+        let today = allLifestyle.filter {
+            $0.profileID == app.activeProfile.id && $0.kind == .sodium
+                && Calendar.current.isDateInToday($0.recordedAt)
+        }
+        let total = today.reduce(0) { $0 + $1.value }
+        let target = Double(SodiumSettings.dailyTarget)
+        let percent = target > 0 ? Int((total / target) * 100) : 0
+
+        return VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Food & Sodium", action: "See Details") { SodiumListView() }
+
+            BrandCard {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text("\(Int(total))")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(Brand.accent)
+                                Text("mg")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Brand.accent)
+                            }
+                            Text("of \(Int(target)) mg")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
+                            Text("Daily sodium goal")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textPrimary)
+                                .padding(.top, 4)
+                        }
+
+                        VStack(alignment: .trailing, spacing: 10) {
+                            HStack(spacing: 8) {
+                                BrandProgressBar(fraction: total / target, tint: Brand.progress)
+                                Text("\(percent)%")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Brand.accent)
+                            }
+                            Text(sodiumMessage(total: total, target: target))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Brand.textSecondary)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(Color.white.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                     }
+
+                    NavigationLink { ScanHubView() } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "viewfinder").font(.system(size: 14))
+                            Text("Scan Food").font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 10))
+                        }
+                        .foregroundStyle(Brand.accent)
+                        .padding(.horizontal, 12)
+                        .frame(height: 38)
+                        .background(Brand.accent.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 16)
                 }
             }
         }
     }
+
+    /// Wording follows the number rather than being fixed, so it stays true.
+    private func sodiumMessage(total: Double, target: Double) -> String {
+        if total == 0 { return "Nothing logged yet today." }
+        if total > target { return "Over your target for today." }
+        if total > target * 0.75 { return "Close to your target — keep dinner light." }
+        return "Good start! You have room for a normal dinner."
+    }
+
+    // MARK: - Movement
+
+    private var movementCard: some View {
+        let snapshot = app.health.snapshot
+        let todayActivity = allActivity.filter {
+            $0.profileID == app.activeProfile.id
+                && Calendar.current.isDateInToday($0.startedAt)
+        }
+        let steps = snapshot.steps ?? 0
+
+        return BrandCard(padding: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                BrandIconTile(symbol: "figure.run", tint: Brand.accent)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Movement")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Brand.textPrimary)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(steps > 0 ? steps.formatted() : "—")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Brand.accent)
+                        Text("/10,000 steps")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                    }
+
+                    BrandProgressBar(fraction: Double(steps) / 10_000, tint: Brand.progress)
+                        .padding(.top, 4)
+
+                    HStack(spacing: 8) {
+                        if let energy = snapshot.activeEnergyKilocalories {
+                            Text("\(energy) active kcal")
+                        }
+                        if let first = todayActivity.first {
+                            Circle().fill(Brand.textSecondary).frame(width: 4, height: 4)
+                            Text("\(first.minutes) min \(first.kind.label)")
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textSecondary)
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    // MARK: - Medications
 
     private var medicationCard: some View {
         let mine = allMedications.filter { $0.profileID == app.activeProfile.id && !$0.isArchived }
-        let myDoses = allDoses.filter { $0.profileID == app.activeProfile.id }
-        let adherence = MedicationEngine.adherence(for: myDoses)
+        let doses = allDoses.filter {
+            $0.profileID == app.activeProfile.id
+                && Calendar.current.isDateInToday($0.scheduledFor)
+        }
+        let taken = doses.filter { $0.status == .taken }.count
 
         return Group {
             if !mine.isEmpty {
                 NavigationLink { MedicationListView() } label: {
-                    CardView {
-                        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                            SectionHeader(
-                                title: "Medication",
-                                subtitle: "\(mine.count) active"
-                            )
-                            if let percent = adherence.percentage {
-                                HStack {
-                                    StatTile(
-                                        title: "Adherence",
-                                        value: "\(Int(percent))%",
-                                        caption: "\(adherence.taken) of \(adherence.resolved) doses",
-                                        tint: percent >= 80 ? Theme.statusNormal : Theme.statusElevated
-                                    )
-                                    if adherence.scheduled > 0 {
-                                        StatTile(
-                                            title: "Pending",
-                                            value: "\(adherence.scheduled)",
-                                            caption: "Not yet due"
-                                        )
-                                    }
+                    BrandCard(padding: 16) {
+                        HStack(alignment: .top, spacing: 12) {
+                            BrandIconTile(symbol: "pills.fill", tint: Brand.medication)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Medications")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(Brand.textPrimary)
+                                Text("\(taken) of \(doses.count) taken today")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Brand.medication)
+                                Text(adherenceMessage(taken: taken, total: doses.count))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Brand.textSecondary)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            if let next = MedicationEngine.nextDue(from: doses) {
+                                VStack(spacing: 2) {
+                                    Text(next.scheduledFor.formatted(.dateTime.hour().minute()))
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Brand.textSecondary)
+                                    Text("Next")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Brand.textSecondary)
                                 }
-                            } else {
-                                Text("No doses recorded yet.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.textSecondary)
-                            }
-
-                            if let nextDoseText {
-                                Label(nextDoseText, systemImage: "clock")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(Brand.progress.opacity(0.1))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(Brand.accent.opacity(0.3), lineWidth: 1)
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                         }
                     }
@@ -317,182 +519,88 @@ struct HomeView: View {
         }
     }
 
-    private var sodiumCard: some View {
-        let today = allLifestyle.filter {
-            $0.profileID == app.activeProfile.id
-                && $0.kind == .sodium
-                && Calendar.current.isDateInToday($0.recordedAt)
-        }
-        let total = ManualSodiumEntry.dailyTotal(today)
-        let target = SodiumSettings.dailyTarget
-
-        return Group {
-            if !today.isEmpty {
-                NavigationLink { SodiumListView() } label: {
-                    CardView {
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            SectionHeader(title: "Sodium today")
-                            HStack {
-                                StatTile(
-                                    title: "Total",
-                                    value: "\(Int(total.total)) mg",
-                                    caption: "Target \(target) mg",
-                                    tint: total.total > Double(target)
-                                        ? Theme.statusElevated : Theme.statusNormal
-                                )
-                                if total.containsEstimate { EstimateTag() }
-                            }
-                            ProgressView(
-                                value: min(total.total, Double(target) * 1.5),
-                                total: Double(target) * 1.5
-                            )
-                            .tint(total.total > Double(target) ? Theme.statusElevated : Theme.accent)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
+    private func adherenceMessage(taken: Int, total: Int) -> String {
+        if total == 0 { return "Nothing scheduled today." }
+        if taken == total { return "Great job! Keep it up." }
+        return "\(total - taken) still to take."
     }
 
-    private var activityCard: some View {
-        let snapshot = app.health.snapshot
-        return Group {
-            if !snapshot.isEmpty {
-                CardView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                        SectionHeader(title: "Today", subtitle: "From Apple Health")
-                        HStack(spacing: Theme.Spacing.md) {
-                            if let steps = snapshot.steps {
-                                StatTile(title: "Steps", value: "\(steps)")
-                            }
-                            if let sleep = snapshot.sleepMinutes {
-                                StatTile(
-                                    title: "Sleep",
-                                    value: "\(sleep / 60)h \(sleep % 60)m",
-                                    caption: "Last night"
-                                )
-                            }
-                            if let energy = snapshot.activeEnergyKilocalories {
-                                StatTile(title: "Active", value: "\(energy) kcal")
-                            }
-                            if let weight = snapshot.weightKilograms {
-                                StatTile(
-                                    title: "Weight",
-                                    value: String(format: "%.1f kg", weight)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // MARK: - Coach
 
     private var coachCard: some View {
-        NavigationLink { CoachView() } label: {
-            CardView {
-                HStack(spacing: Theme.Spacing.md) {
-                    Image(systemName: "sparkles")
-                        .font(.title3)
-                        .foregroundStyle(Theme.accent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Coach").font(.headline)
-                        Text(app.coach.isConfigured
-                             ? "Ask about your readings"
-                             : "Not set up yet")
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
+        let insight = DailyInsight.forToday(
+            readings: readings,
+            doses: allDoses.filter { $0.profileID == app.activeProfile.id },
+            sodiumToday: allLifestyle
+                .filter {
+                    $0.profileID == app.activeProfile.id && $0.kind == .sodium
+                        && Calendar.current.isDateInToday($0.recordedAt)
+                }
+                .reduce(0) { $0 + $1.value },
+            sodiumTarget: SodiumSettings.dailyTarget,
+            guideline: guidelines.active
+        )
+
+        return NavigationLink { CoachView() } label: {
+            BrandCard(padding: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    BrandIconTile(symbol: "bubble.left.and.text.bubble.right.fill", tint: Brand.medication)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Coach")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(Brand.textPrimary)
+                            Spacer()
+                            Text("Ask Coach")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Brand.accent)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Brand.accent)
+                        }
+
+                        Text(insight == nil ? "Getting started" : "Today's Insight")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.accent)
+
+                        Text(insight?.body
+                             ?? "Log a few readings and the coach will start spotting patterns in them.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textTertiary)
                 }
             }
         }
         .buttonStyle(.plain)
     }
 
-    private func relativeTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: .now)
-    }
-}
+    // MARK: - Shared
 
-// MARK: - Supporting views
-
-struct ProfileSwitcher: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        Menu {
-            ForEach(app.profiles) { profile in
-                Button {
-                    app.setActive(profile)
-                } label: {
-                    Label(
-                        profile.name,
-                        systemImage: profile.id == app.activeProfile.id ? "checkmark" : "person"
-                    )
-                }
+    private func sectionHeader<Destination: View>(
+        _ title: String,
+        action: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Brand.textPrimary)
+            Spacer()
+            NavigationLink(destination: destination) {
+                Text(action)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Brand.accent)
             }
-        } label: {
-            HStack(spacing: Theme.Spacing.sm) {
-                Image(systemName: "person.crop.circle.fill").foregroundStyle(Theme.accent)
-                Text(app.activeProfile.name).fontWeight(.semibold)
-                Image(systemName: "chevron.up.chevron.down").font(.caption2)
-                Spacer()
-                if !app.activeProfile.isOwner {
-                    Text("Manual entry only")
-                        .font(.caption2)
-                        .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .foregroundStyle(Theme.textPrimary)
-            .padding(Theme.Spacing.md)
-            .background(Theme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
-        }
-        .accessibilityLabel("Active profile: \(app.activeProfile.name). Double tap to switch.")
-    }
-}
-
-/// Deterministic safety guidance. Wording comes from `SafetyEngine`, never from a
-/// language model.
-struct SafetyBanner: View {
-    let assessment: SafetyEngine.Assessment
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Label(assessment.title, systemImage: symbol)
-                .font(.subheadline.weight(.semibold))
-            Text(assessment.message)
-                .font(.footnote)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Theme.Spacing.md)
-        .background(tint.opacity(0.12))
-        .foregroundStyle(tint)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-
-    private var symbol: String {
-        switch assessment.urgency {
-        case .emergency, .urgent: "exclamationmark.triangle.fill"
-        case .contactDoctor: "phone.fill"
-        default: "info.circle.fill"
         }
     }
 
-    private var tint: Color {
-        switch assessment.urgency {
-        case .emergency, .urgent: Theme.statusSevere
-        case .contactDoctor, .remeasure: Theme.statusElevated
-        case .none: Theme.textSecondary
-        }
+    /// True when nothing on Home is asking for attention.
+    private var isCalmMoment: Bool {
+        guard let latest = readings.first else { return false }
+        if SafetyEngine.assess(latest).urgency > .none { return false }
+        if BPStatistics.hasDrifted(readings) { return false }
+        return true
     }
 }

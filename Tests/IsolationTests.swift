@@ -596,3 +596,101 @@ struct AppSettingsTests {
         #expect(second.weightUnit == .pounds)
     }
 }
+
+/// Review prompt gating.
+///
+/// The rules exist to stop the app asking at a bad moment. In a health app that
+/// is not merely impolite — asking for a rating just after telling someone their
+/// reading needs medical attention is the kind of thing that earns a one-star
+/// review rather than avoiding one.
+@Suite("Review prompt")
+@MainActor
+struct ReviewPromptTests {
+
+    private func prompt() -> ReviewPrompt {
+        ReviewPrompt(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+    }
+
+    private func readings(
+        count: Int, overDays days: Int, systolic: Int = 120, diastolic: Int = 80
+    ) -> [BPReading] {
+        (0..<count).map { index in
+            BPReading(
+                profileID: UUID(), systolic: systolic, diastolic: diastolic,
+                recordedAt: Date.now.addingTimeInterval(-Double(index % days) * 86_400)
+            )
+        }
+    }
+
+    @Test("A new user is never asked")
+    func neverAsksNewUser() {
+        // firstUse is set to now on init, so the day threshold cannot be met.
+        #expect(!prompt().shouldRequest(readings: readings(count: 20, overDays: 10), isCalmMoment: true))
+    }
+
+    @Test("Too few readings does not qualify")
+    func requiresEnoughReadings() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(Date.now.addingTimeInterval(-30 * 86_400), forKey: "review.firstUse")
+        let store = ReviewPrompt(defaults: defaults)
+        #expect(!store.shouldRequest(readings: readings(count: 4, overDays: 4), isCalmMoment: true))
+    }
+
+    /// Ten readings in one sitting is not ten days of use.
+    @Test("Readings must span several days")
+    func requiresDistinctDays() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(Date.now.addingTimeInterval(-30 * 86_400), forKey: "review.firstUse")
+        let store = ReviewPrompt(defaults: defaults)
+        #expect(!store.shouldRequest(readings: readings(count: 12, overDays: 1), isCalmMoment: true))
+    }
+
+    @Test("An engaged user in a calm moment qualifies")
+    func asksEngagedUser() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(Date.now.addingTimeInterval(-30 * 86_400), forKey: "review.firstUse")
+        let store = ReviewPrompt(defaults: defaults)
+        #expect(store.shouldRequest(readings: readings(count: 15, overDays: 10), isCalmMoment: true))
+    }
+
+    /// The rule that matters most.
+    @Test("A crisis-range reading suppresses the prompt entirely")
+    func neverAsksAfterHighReading() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(Date.now.addingTimeInterval(-30 * 86_400), forKey: "review.firstUse")
+        let store = ReviewPrompt(defaults: defaults)
+
+        var set = readings(count: 15, overDays: 10)
+        set.insert(
+            BPReading(profileID: UUID(), systolic: 195, diastolic: 125, recordedAt: .now),
+            at: 0
+        )
+        #expect(!store.shouldRequest(readings: set, isCalmMoment: true))
+    }
+
+    @Test("An uncalm moment overrides every other rule")
+    func calmnessOverrides() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(Date.now.addingTimeInterval(-30 * 86_400), forKey: "review.firstUse")
+        let store = ReviewPrompt(defaults: defaults)
+        #expect(!store.shouldRequest(readings: readings(count: 20, overDays: 12), isCalmMoment: false))
+    }
+
+    @Test("The same version is never asked twice")
+    func asksOncePerVersion() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(Date.now.addingTimeInterval(-30 * 86_400), forKey: "review.firstUse")
+        let store = ReviewPrompt(defaults: defaults)
+        let set = readings(count: 15, overDays: 10)
+
+        #expect(store.shouldRequest(readings: set, isCalmMoment: true))
+        store.markRequested()
+        #expect(!store.shouldRequest(readings: set, isCalmMoment: true))
+    }
+
+    @Test("The direct review link targets the App Store write-review action")
+    func reviewURL() {
+        let url = ReviewPrompt.writeReviewURL
+        #expect(url?.absoluteString.contains("action=write-review") == true)
+    }
+}
