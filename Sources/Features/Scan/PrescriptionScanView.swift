@@ -179,6 +179,9 @@ struct PrescriptionScanView: View {
             }
             .padding(Theme.Spacing.lg)
         }
+        // Text fields sit inside this scroll view; without this the keyboard
+        // covers the Save button with no way to dismiss it.
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private func suggestionCard(_ suggestion: PrescriptionExtraction.Suggestion) -> some View {
