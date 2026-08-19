@@ -2,233 +2,328 @@ import Charts
 import SwiftData
 import SwiftUI
 
+/// Medicine Reminder, implemented from the Figma design.
 struct MedicationListView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+
     @Query private var allMedications: [Medication]
-    @Query private var allDoses: [MedicationDose]
+    @Query(sort: \MedicationDose.scheduledFor) private var allDoses: [MedicationDose]
+
     @State private var isAdding = false
     @State private var editing: Medication?
+    @State private var justAdded: Medication?
 
-    private var medications: [Medication] {
+    private var mine: [Medication] {
         allMedications.filter { $0.profileID == app.activeProfile.id && !$0.isArchived }
     }
 
-    private var doses: [MedicationDose] {
-        allDoses.filter { $0.profileID == app.activeProfile.id }
+    private var todaysDoses: [MedicationDose] {
+        allDoses.filter {
+            $0.profileID == app.activeProfile.id
+                && Calendar.current.isDateInToday($0.scheduledFor)
+        }
+    }
+
+    private var byID: [UUID: Medication] {
+        Dictionary(uniqueKeysWithValues: allMedications.map { ($0.id, $0) })
     }
 
     var body: some View {
-        Group {
-            if medications.isEmpty {
-                EmptyStateView(
-                    symbol: "pills",
-                    title: "No medications",
-                    message: "Add a medication to track doses and see your adherence over time.",
-                    actionTitle: "Add medication",
-                    action: { isAdding = true }
-                )
+        BrandScreen {
+            BrandHeader(
+                title: "Medicine Reminder",
+                showsBack: true,
+                onBack: { dismiss() },
+                trailing: [("bell.fill", {})]
+            )
+
+            BrandHeroCard(
+                title: "Stay on Track with your medication",
+                message: "We'll remind you so you never miss a dose.",
+                symbol: "pills.fill"
+            )
+
+            HStack {
+                Text("Today's Schedule")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                Spacer()
+                if !mine.isEmpty {
+                    Button("Edit") { editing = mine.first }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Brand.accent)
+                }
+            }
+
+            if todaysDoses.isEmpty {
+                BrandCard {
+                    Text(mine.isEmpty
+                         ? "No medicines yet. Add one and BP Coach will remind you."
+                         : "Nothing scheduled for today.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
+                }
             } else {
-                ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        adherenceSummary
-                        ForEach(medications) { medication in
-                            MedicationCard(
-                                medication: medication,
-                                doses: doses.filter { $0.medicationID == medication.id },
-                                onEdit: { editing = medication }
-                            )
-                        }
-                        if !weeklyAdherence.isEmpty {
-                            AdherenceChart(weekly: weeklyAdherence)
-                        }
+                VStack(spacing: 12) {
+                    ForEach(todaysDoses) { dose in
+                        doseRow(dose)
                     }
-                    .padding(Theme.Spacing.lg)
                 }
             }
-        }
-        .background(Theme.background)
-        .navigationTitle("Medications")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { isAdding = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Add medication")
+
+            BrandPrimaryButton(title: "Add Medicine") { isAdding = true }
+
+            if !mine.isEmpty {
+                Text("Medicine Insights")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                insightsCard
             }
         }
-        .sheet(isPresented: $isAdding) { MedicationEditorView(medication: nil) }
-        .sheet(item: $editing) { MedicationEditorView(medication: $0) }
+        .sheet(isPresented: $isAdding) {
+            MedicationEditorView(medication: nil) { justAdded = $0 }
+        }
+        .sheet(item: $editing) { MedicationEditorView(medication: $0) { _ in } }
+        .sheet(item: $justAdded) { MedicationAddedView(medication: $0) }
     }
 
-    private var adherenceSummary: some View {
-        let adherence = MedicationEngine.adherence(for: doses)
-        return CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                SectionHeader(title: "Overall adherence", subtitle: "Pending doses are not counted")
-                HStack(spacing: Theme.Spacing.md) {
-                    StatTile(
-                        title: "Taken",
-                        value: "\(adherence.taken)",
-                        tint: Theme.statusNormal
-                    )
-                    StatTile(title: "Skipped", value: "\(adherence.skipped)")
-                    StatTile(
-                        title: "Missed",
-                        value: "\(adherence.missed)",
-                        tint: adherence.missed > 0 ? Theme.statusElevated : Theme.textPrimary
-                    )
-                    StatTile(title: "Pending", value: "\(adherence.scheduled)")
+    private func doseRow(_ dose: MedicationDose) -> some View {
+        let medication = byID[dose.medicationID]
+
+        return BrandCard(padding: 12) {
+            HStack(spacing: 14) {
+                BrandIconTile(symbol: "pills.fill", tint: Brand.medication, size: 55)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(dose.scheduledFor.formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                    Text("\(medication?.name ?? "Medicine") \(medication?.dose ?? "")")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Text(medication?.frequency.label ?? "")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
                 }
+
+                Spacer(minLength: 0)
+
+                statusControl(dose)
+            }
+        }
+    }
+
+    /// Tapping an unanswered dose marks it taken. A dose that has already been
+    /// answered shows its state rather than a button, so the record cannot be
+    /// changed by a stray tap.
+    @ViewBuilder
+    private func statusControl(_ dose: MedicationDose) -> some View {
+        switch dose.status {
+        case .taken:
+            statusPill("Done", tint: Brand.accent)
+        case .skipped:
+            statusPill("Skipped", tint: Brand.textSecondary)
+        case .missed:
+            statusPill("Missed", tint: Brand.restingHeartRate)
+        case .pending:
+            Button {
+                dose.status = .taken
+                dose.recordedAt = .now
+                try? context.save()
+                Haptics.success()
+            } label: {
+                statusPill("Upcoming", tint: Brand.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Double tap to mark as taken")
+        }
+    }
+
+    private func statusPill(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(tint.opacity(0.15))
+            .clipShape(Capsule())
+    }
+
+    /// Adherence over the last week, computed from real doses.
+    private var insightsCard: some View {
+        let week = allDoses.filter {
+            $0.profileID == app.activeProfile.id
+                && $0.scheduledFor > Date.now.addingTimeInterval(-7 * 86_400)
+        }
+        let adherence = MedicationEngine.adherence(for: week)
+
+        return BrandCard {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(headline(for: adherence.percentage))
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Text(message(for: adherence))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
                 if let percent = adherence.percentage {
-                    ProgressView(value: percent, total: 100)
-                        .tint(percent >= 80 ? Theme.statusNormal : Theme.statusElevated)
-                    Text("\(Int(percent))% of resolved doses taken")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
+                    ZStack {
+                        Circle()
+                            .stroke(Brand.accent.opacity(0.15), lineWidth: 6)
+                        Circle()
+                            .trim(from: 0, to: percent / 100)
+                            .stroke(Brand.accent, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                        Text("\(Int(percent))%")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Brand.textPrimary)
+                    }
+                    .frame(width: 56, height: 56)
                 }
             }
         }
     }
 
-    /// Adherence per calendar week, for the trend chart.
-    private var weeklyAdherence: [(week: Date, percentage: Double)] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: doses) { dose in
-            calendar.dateInterval(of: .weekOfYear, for: dose.scheduledFor)?.start
-                ?? calendar.startOfDay(for: dose.scheduledFor)
+    private func headline(for percentage: Double?) -> String {
+        guard let percentage else { return "Getting started" }
+        if percentage >= 90 { return "Excellent!" }
+        if percentage >= 70 { return "Going well" }
+        return "Room to improve"
+    }
+
+    private func message(for adherence: MedicationEngine.Adherence) -> String {
+        guard let percentage = adherence.percentage else {
+            return "Once you start marking doses, your adherence shows up here."
         }
-        return grouped
-            .compactMap { week, items -> (Date, Double)? in
-                guard let percent = MedicationEngine.adherence(for: items).percentage else {
-                    return nil
-                }
-                return (week, percent)
-            }
-            .sorted { $0.0 < $1.0 }
-            .map { (week: $0.0, percentage: $0.1) }
+        return "You have taken \(Int(percentage))% of your medicines this week."
     }
 }
 
-struct MedicationCard: View {
-    @Environment(\.modelContext) private var context
+/// Confirmation after adding a medicine, from the Figma "Medicine Added" screen.
+struct MedicationAddedView: View {
+    @Environment(\.dismiss) private var dismiss
     let medication: Medication
-    let doses: [MedicationDose]
-    let onEdit: () -> Void
 
     var body: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(medication.name).font(.headline)
-                        Text("\(medication.dose) · \(medication.frequency.label)")
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
-                        Text(scheduleSummary)
-                            .font(.caption)
-                            .foregroundStyle(Theme.textTertiary)
+        NavigationStack {
+            BrandScreen {
+                BrandHeader(title: "Medicine Added", showsBack: true, onBack: { dismiss() })
+
+                BrandCard {
+                    VStack(spacing: 14) {
+                        Circle()
+                            .fill(Brand.accent.opacity(0.15))
+                            .frame(width: 58, height: 58)
+                            .overlay {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 26, weight: .bold))
+                                    .foregroundStyle(Brand.accent)
+                            }
+                        Text("Congratulations!")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Brand.textPrimary)
+                        Text("Your medicine has been successfully added.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Brand.textSecondary)
+                            .multilineTextAlignment(.center)
                     }
-                    Spacer()
-                    if let percent = MedicationEngine.adherence(for: doses).percentage {
-                        VStack(spacing: 0) {
-                            Text("\(Int(percent))%")
-                                .font(Theme.number(20, weight: .semibold))
-                                .foregroundStyle(percent >= 80 ? Theme.statusNormal : Theme.statusElevated)
-                            Text("taken").font(.caption2).foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity)
+                }
+
+                BrandCard(padding: 12) {
+                    HStack(spacing: 14) {
+                        BrandIconTile(symbol: "pills.fill", tint: Brand.medication, size: 55)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(medication.name) \(medication.dose)")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Text(medication.frequency.label)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
                         }
+                        Spacer(minLength: 0)
+                        Text("Active")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.accent)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(Brand.accent.opacity(0.15))
+                            .clipShape(Capsule())
                     }
                 }
 
-                HStack(spacing: Theme.Spacing.sm) {
-                    Button { record(.taken) } label: {
-                        Label("Taken", systemImage: "checkmark")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.accent)
-
-                    Button { record(.skipped) } label: {
-                        Label("Skip", systemImage: "xmark")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Spacer()
-
-                    Button("Edit", action: onEdit)
-                        .buttonStyle(.bordered)
-                }
-                .font(.subheadline)
-                .controlSize(.small)
-
-                if medication.needsRefill {
-                    Label("Running low — time to refill", systemImage: "exclamationmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Theme.statusElevated)
-                }
-
-                if !recentDoses.isEmpty {
-                    Divider()
-                    HStack(spacing: Theme.Spacing.xs) {
-                        Text("Recent").font(.caption).foregroundStyle(Theme.textSecondary)
-                        ForEach(recentDoses) { dose in
-                            Circle()
-                                .fill(color(for: dose.status))
-                                .frame(width: 10, height: 10)
-                                .accessibilityLabel(dose.status.label)
-                        }
+                BrandCard {
+                    VStack(spacing: 0) {
+                        detailRow("calendar", "Schedule", medication.frequency.label)
+                        Divider().background(Brand.cardStroke).padding(.vertical, 14)
+                        detailRow(
+                            "clock",
+                            "Time",
+                            medication.scheduleMinutes.isEmpty
+                                ? "No reminder times set"
+                                : medication.scheduleMinutes
+                                    .sorted()
+                                    .map(Self.timeLabel)
+                                    .joined(separator: ", ")
+                        )
+                        Divider().background(Brand.cardStroke).padding(.vertical, 14)
+                        detailRow(
+                            "bell.fill",
+                            "Reminder",
+                            medication.remindersEnabled
+                                ? "You will get a reminder on time"
+                                : "Reminders are off for this medicine"
+                        )
                     }
                 }
+
+                BrandPrimaryButton(title: "Done") { dismiss() }
             }
         }
     }
 
-    private var recentDoses: [MedicationDose] {
-        Array(doses.sorted { $0.scheduledFor > $1.scheduledFor }.prefix(14))
+    /// Minutes past midnight rendered in the user's locale.
+    private static func timeLabel(_ minutes: Int) -> String {
+        var components = DateComponents()
+        components.hour = minutes / 60
+        components.minute = minutes % 60
+        let date = Calendar.current.date(from: components) ?? .now
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
-    private var scheduleSummary: String {
-        let calendar = Calendar.current
-        let times = medication.scheduleMinutes.compactMap { minutes -> String? in
-            guard let date = calendar.date(
-                byAdding: .minute, value: minutes, to: calendar.startOfDay(for: .now)
-            ) else { return nil }
-            return date.formatted(date: .omitted, time: .shortened)
+    private func detailRow(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(spacing: 14) {
+            BrandIconTile(symbol: symbol, tint: Brand.accent, size: 55)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Brand.textPrimary)
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
         }
-        return times.isEmpty ? "No schedule" : times.joined(separator: ", ")
-    }
-
-    private func color(for status: DoseStatus) -> Color {
-        switch status {
-        case .taken: Theme.statusNormal
-        case .skipped: Theme.textTertiary
-        case .missed: Theme.statusModerate
-        case .scheduled: Theme.border
-        }
-    }
-
-    private func record(_ status: DoseStatus) {
-        let dose = MedicationDose(
-            profileID: medication.profileID,
-            medicationID: medication.id,
-            scheduledFor: .now
-        )
-        dose.status = status
-        dose.recordedAt = .now
-        context.insert(dose)
-
-        if status == .taken, let supply = medication.supplyCount, supply > 0 {
-            medication.supplyCount = supply - 1
-        }
-
-        try? context.save()
-        Haptics.success()
     }
 }
 
-/// Add or edit. One editor for both, so the two paths cannot drift apart.
 struct MedicationEditorView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
     let medication: Medication?
+    /// Called with the saved medicine so the caller can show the confirmation
+    /// screen. Defaults to a no-op for the edit path, which needs no acknowledgement.
+    var onSave: (Medication) -> Void = { _ in }
 
     @State private var name = ""
     @State private var dose = ""
@@ -371,6 +466,9 @@ struct MedicationEditorView: View {
         target.notes = notes.isEmpty ? nil : notes
 
         try? context.save()
+
+        // Only for a newly created medicine — editing needs no acknowledgement.
+        if medication == nil { onSave(target) }
 
         Task {
             if remindersOn && frequency != .asNeeded {

@@ -48,27 +48,24 @@ struct CoachView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            transcript
-            composer
-        }
-        .background(Theme.background)
-        .navigationTitle("AI Coach")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { isShowingHistory = true } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                }
-                .accessibilityLabel("Conversation history")
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { newConversation() } label: {
-                    Image(systemName: "square.and.pencil")
-                }
-                .accessibilityLabel("New conversation")
+        ZStack {
+            Brand.background.ignoresSafeArea()
+            VStack(spacing: 0) {
+                BrandHeader(
+                    title: "Ai Coach",
+                    subtitle: "Your personal BP coach",
+                    trailing: [
+                        ("clock.arrow.circlepath", { isShowingHistory = true }),
+                        ("square.and.pencil", { newConversation() }),
+                    ]
+                )
+                .padding(.horizontal, Brand.Metric.pagePadding)
+
+                transcript
+                composer
             }
         }
+        .navigationBarHidden(true)
         .sheet(isPresented: $isShowingHistory) {
             ConversationHistoryView(selected: $conversation)
         }
@@ -114,11 +111,12 @@ struct CoachView: View {
                     }
 
                     if isThinking {
-                        HStack(spacing: Theme.Spacing.sm) {
-                            ProgressView().controlSize(.small)
-                            Text("Thinking").font(.caption).foregroundStyle(Theme.textSecondary)
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small).tint(Brand.accent)
+                            Text("Thinking")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
                         }
-                        .padding(.horizontal, Theme.Spacing.md)
                     }
 
                     if let error {
@@ -132,7 +130,8 @@ struct CoachView: View {
                         }
                     }
                 }
-                .padding(Theme.Spacing.lg)
+                .padding(.horizontal, Brand.Metric.pagePadding)
+                .padding(.vertical, 16)
             }
             // Without these the keyboard traps the user: the tab bar is covered
             // and there is no other way back.
@@ -146,74 +145,182 @@ struct CoachView: View {
     }
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+        VStack(alignment: .leading, spacing: 20) {
+            greetingCard
+
             if !app.coach.isConfigured {
-                CardView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                        Label("Coach not set up yet", systemImage: "sparkles").font(.headline)
+                BrandCard(padding: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Coach not connected", systemImage: "exclamationmark.circle")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Brand.textPrimary)
                         Text("""
-                        No AI service is connected in this build, so the coach cannot answer. \
-                        Everything else in BP Coach works without it.
+                        No AI service is reachable from this build. Everything else in \
+                        BP Coach works without it.
                         """)
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
 
-            CoachQuickActions(isConfigured: app.coach.isConfigured) { request in
-                send(request: request)
-            }
+            quickActionChips
 
-            CardView {
-                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                    SectionHeader(
-                        title: "What it can help with",
-                        subtitle: "It explains your own data — it does not diagnose"
-                    )
-                    ForEach(SuggestedQuestion.forContext(snapshot, hasDocuments: !myDocuments.isEmpty)) { item in
-                        Button {
-                            draft = item.text
-                        } label: {
-                            HStack {
+            BrandCard(padding: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Things you can ask me")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+
+                    ForEach(SuggestedQuestion.forContext(
+                        snapshot, hasDocuments: !myDocuments.isEmpty
+                    )) { item in
+                        Button { draft = item.text } label: {
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(Brand.accent)
+                                    .frame(width: 6, height: 6)
                                 Text(item.text)
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.textPrimary)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Brand.textSecondary)
                                     .multilineTextAlignment(.leading)
-                                Spacer()
-                                Image(systemName: "arrow.up.left")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.textTertiary)
+                                Spacer(minLength: 0)
                             }
                         }
                         .buttonStyle(.plain)
-                        Divider()
                     }
                 }
             }
 
-            CardView {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            BrandCard(padding: 16) {
+                VStack(alignment: .leading, spacing: 6) {
                     Label("What it will never do", systemImage: "xmark.shield")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
                     ForEach(CoachGuardrails.prohibited, id: \.self) { rule in
                         Text("· \(rule.capitalized)")
-                            .font(.caption)
-                            .foregroundStyle(Theme.textSecondary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
                     }
                 }
             }
         }
     }
 
+    /// Greeting with a streak count.
+    ///
+    /// The streak is consecutive days with a reading, computed from stored data
+    /// — not a number that only ever goes up. A fabricated streak in a health
+    /// app would be the worst kind of engagement metric.
+    private var greetingCard: some View {
+        BrandCard {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Hi \(app.activeProfile.name)!")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Text("How can I help you today?")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Brand.textSecondary)
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Brand.accent)
+                        Text("Evidence-based guidance. Always here for you.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
+                }
+
+                if streakDays > 0 {
+                    VStack(spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "flame.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Brand.accent)
+                            Text("\(streakDays)")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(Brand.textPrimary)
+                        }
+                        Text("Day Streak")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Brand.background)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Consecutive days ending today or yesterday that have a reading.
+    private var streakDays: Int {
+        let calendar = Calendar.current
+        let days = Set(allReadings
+            .filter { $0.profileID == app.activeProfile.id }
+            .map { calendar.startOfDay(for: $0.recordedAt) })
+        guard !days.isEmpty else { return 0 }
+
+        var cursor = calendar.startOfDay(for: .now)
+        // A streak still counts if today's reading has not been taken yet.
+        if !days.contains(cursor) {
+            cursor = calendar.date(byAdding: .day, value: -1, to: cursor) ?? cursor
+            guard days.contains(cursor) else { return 0 }
+        }
+
+        var count = 0
+        while days.contains(cursor) {
+            count += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor)
+            else { break }
+            cursor = previous
+        }
+        return count
+    }
+
+    private var quickActionChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                chip("Share BP Log", "chart.xyaxis.line") { attachHealthData() }
+                chip("Send Photo", "photo") { isShowingCamera = true }
+                chip("Voice Note", "mic.fill") { Task { await voice.start() } }
+            }
+        }
+    }
+
+    private func chip(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: symbol).font(.system(size: 12))
+                Text(title).font(.system(size: 12))
+            }
+            .foregroundStyle(Brand.textPrimary)
+            .padding(.horizontal, 14)
+            .frame(height: 28)
+            .background(Brand.background)
+            .overlay { Capsule().strokeBorder(Brand.cardStroke, lineWidth: 1) }
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Composer
     // MARK: - Composer
 
     private var composer: some View {
         VStack(spacing: Theme.Spacing.sm) {
             if let attachmentError {
                 Text(attachmentError)
-                    .font(.caption)
-                    .foregroundStyle(Theme.statusModerate)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.restingHeartRate)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -259,31 +366,49 @@ struct CoachView: View {
                             Label("Health data", systemImage: "heart.text.square")
                         }
                     } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(Theme.accent)
+                        Circle()
+                            .fill(Brand.accent)
+                            .frame(width: 45, height: 45)
+                            .overlay {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(Brand.onAccent)
+                            }
                     }
                     .accessibilityLabel("Add an attachment")
 
-                    TextField("Ask about your readings", text: $draft, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...5)
-                        .focused($isComposerFocused)
-                        .submitLabel(.send)
+                    HStack(spacing: 10) {
+                        TextField("", text: $draft, axis: .vertical, prompt:
+                            Text("Ask anything...").foregroundStyle(Brand.textSecondary))
+                            .foregroundStyle(Brand.textPrimary)
+                            .lineLimit(1...4)
+                            .focused($isComposerFocused)
+                            .submitLabel(.send)
 
-                    Button {
-                        Task { await voice.start() }
-                    } label: {
-                        Image(systemName: "mic.fill")
-                            .font(.title3)
-                            .foregroundStyle(Theme.accent)
+                        Button { Task { await voice.start() } } label: {
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 15))
+                                .foregroundStyle(Brand.textSecondary)
+                        }
+                        .accessibilityLabel("Dictate")
                     }
-                    .accessibilityLabel("Dictate")
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 45)
+                    .background(Brand.background)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                    }
 
-                    Button {
-                        send()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill").font(.title2)
+                    Button { send() } label: {
+                        Circle()
+                            .fill(canSend ? Brand.accent : Brand.accent.opacity(0.3))
+                            .frame(width: 45, height: 45)
+                            .overlay {
+                                Image(systemName: "paperplane.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(Brand.onAccent)
+                            }
                     }
                     .disabled(!canSend)
                     .accessibilityLabel("Send")
@@ -291,14 +416,15 @@ struct CoachView: View {
             }
 
             if case .denied(let message) = voice.state {
-                Text(message).font(.caption).foregroundStyle(Theme.statusElevated)
+                Text(message).font(.system(size: 12)).foregroundStyle(Brand.textSecondary)
             }
             if case .failed(let message) = voice.state {
-                Text(message).font(.caption).foregroundStyle(Theme.statusModerate)
+                Text(message).font(.system(size: 12)).foregroundStyle(Brand.restingHeartRate)
             }
         }
-        .padding(Theme.Spacing.lg)
-        .background(Theme.surface)
+        .padding(.horizontal, Brand.Metric.pagePadding)
+        .padding(.vertical, 14)
+        .background(Brand.background)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()

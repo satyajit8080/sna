@@ -16,18 +16,24 @@ struct MessageBubble: View {
 
             VStack(alignment: message.isFromUser ? .trailing : .leading, spacing: 4) {
                 Text(message.text)
-                    .padding(Theme.Spacing.md)
-                    .background(message.isFromUser ? Theme.accentSoft : Theme.surface)
-                    .foregroundStyle(Theme.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .font(.system(size: 14))
+                    .padding(14)
+                    .background(message.isFromUser ? Brand.accent.opacity(0.15) : Brand.background)
+                    .foregroundStyle(Brand.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay {
-                        if !message.isFromUser {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                                .strokeBorder(Theme.border, lineWidth: 1)
-                        }
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(
+                                message.isFromUser ? Brand.accent.opacity(0.3) : Brand.cardStroke,
+                                lineWidth: 1
+                            )
                     }
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text(message.createdAt.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textSecondary)
 
                 if !message.isFromUser {
                     HStack(spacing: Theme.Spacing.md) {
@@ -48,8 +54,8 @@ struct MessageBubble: View {
                             Label("Share", systemImage: "square.and.arrow.up")
                         }
                     }
-                    .font(.caption)
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textSecondary)
                     .labelStyle(.titleAndIcon)
                 }
             }
@@ -82,8 +88,8 @@ struct CoachQuickActions: View {
                             .font(.caption.weight(.medium))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                            .background(Theme.accentSoft)
-                            .foregroundStyle(Theme.accent)
+                            .background(Brand.accent.opacity(0.15))
+                            .foregroundStyle(Brand.accent)
                             .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -152,10 +158,10 @@ struct AttachmentChip: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove \(attachment.name)")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Theme.accentSoft)
-            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Brand.accent.opacity(0.15))
+            .foregroundStyle(Brand.accent)
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -165,10 +171,10 @@ struct AttachmentChip: View {
                     .font(.caption.weight(.semibold))
                 Text(attachment.preview)
                     .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(Brand.textSecondary)
                 Text("Only this text is sent — never the image itself.")
                     .font(.caption2)
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(Brand.textSecondary)
             }
             .padding(Theme.Spacing.lg)
             .frame(maxWidth: 320)
@@ -188,14 +194,14 @@ struct RecordingBar: View {
             Button(action: onCancel) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(Brand.textSecondary)
             }
             .accessibilityLabel("Cancel recording")
 
             HStack(spacing: 2) {
                 ForEach(0..<14, id: \.self) { index in
                     Capsule()
-                        .fill(Theme.accent)
+                        .fill(Brand.accent)
                         .frame(width: 3, height: barHeight(index))
                         .animation(.easeOut(duration: 0.15), value: voice.level)
                 }
@@ -203,15 +209,15 @@ struct RecordingBar: View {
             .frame(maxWidth: .infinity)
 
             Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript)
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textSecondary)
                 .lineLimit(1)
                 .frame(maxWidth: 120, alignment: .trailing)
 
             Button(action: onStop) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Brand.accent)
             }
             .accessibilityLabel("Finish recording")
         }
@@ -257,11 +263,11 @@ struct ConversationHistoryView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(conversation.title)
                                         .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(Theme.textPrimary)
+                                        .foregroundStyle(Brand.textPrimary)
                                         .lineLimit(1)
                                     Text("\(conversation.messages.count) messages · \(conversation.startedAt.formatted(date: .abbreviated, time: .shortened))")
                                         .font(.caption)
-                                        .foregroundStyle(Theme.textTertiary)
+                                        .foregroundStyle(Brand.textSecondary)
                                 }
                             }
                         }
@@ -300,10 +306,10 @@ struct AttachReportView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(document.title)
                             .font(.subheadline)
-                            .foregroundStyle(Theme.textPrimary)
+                            .foregroundStyle(Brand.textPrimary)
                         Text("\(document.kind.label) · \(document.values.count) values")
                             .font(.caption)
-                            .foregroundStyle(Theme.textTertiary)
+                            .foregroundStyle(Brand.textSecondary)
                     }
                 }
             }
