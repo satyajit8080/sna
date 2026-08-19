@@ -127,7 +127,7 @@ struct MedicationListView: View {
             statusPill("Skipped", tint: Brand.textSecondary)
         case .missed:
             statusPill("Missed", tint: Brand.restingHeartRate)
-        case .pending:
+        case .scheduled:
             Button {
                 dose.status = .taken
                 dose.recordedAt = .now
