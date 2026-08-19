@@ -378,8 +378,12 @@ struct CoachView: View {
                     .accessibilityLabel("Add an attachment")
 
                     HStack(spacing: 10) {
-                        TextField("", text: $draft, axis: .vertical, prompt:
-                            Text("Ask anything...").foregroundStyle(Brand.textSecondary))
+                        TextField(
+                            "",
+                            text: $draft,
+                            prompt: Text("Ask anything...").foregroundStyle(Brand.textSecondary),
+                            axis: .vertical
+                        )
                             .foregroundStyle(Brand.textPrimary)
                             .lineLimit(1...4)
                             .focused($isComposerFocused)
