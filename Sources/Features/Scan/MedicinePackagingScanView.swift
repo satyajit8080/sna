@@ -192,6 +192,9 @@ struct MedicinePackagingScanView: View {
             }
             .padding(Theme.Spacing.lg)
         }
+        // Text fields sit inside this scroll view; without this the keyboard
+        // covers the Save button with no way to dismiss it.
+        .scrollDismissesKeyboard(.interactively)
     }
 
     /// A tapped line fills the name, and its strength fills the dose if one is
