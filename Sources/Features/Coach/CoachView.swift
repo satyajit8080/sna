@@ -30,6 +30,7 @@ struct CoachView: View {
     @State private var isShowingHistory = false
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var attachmentError: String?
+    @FocusState private var isComposerFocused: Bool
 
     private var messages: [AIMessage] {
         (conversation?.messages ?? []).sorted { $0.createdAt < $1.createdAt }
@@ -133,6 +134,11 @@ struct CoachView: View {
                 }
                 .padding(Theme.Spacing.lg)
             }
+            // Without these the keyboard traps the user: the tab bar is covered
+            // and there is no other way back.
+            .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .onTapGesture { isComposerFocused = false }
             .onChange(of: messages.count) { _, _ in
                 withAnimation { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
             }
@@ -262,6 +268,8 @@ struct CoachView: View {
                     TextField("Ask about your readings", text: $draft, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(1...5)
+                        .focused($isComposerFocused)
+                        .submitLabel(.send)
 
                     Button {
                         Task { await voice.start() }
@@ -291,6 +299,12 @@ struct CoachView: View {
         }
         .padding(Theme.Spacing.lg)
         .background(Theme.surface)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { isComposerFocused = false }
+            }
+        }
     }
 
     private var canSend: Bool {
@@ -412,6 +426,7 @@ struct CoachView: View {
         draft = ""
         attachments = []
         error = nil
+        isComposerFocused = false
         lastFailedQuestion = question
         isThinking = true
 
