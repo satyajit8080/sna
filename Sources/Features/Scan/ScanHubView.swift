@@ -6,7 +6,7 @@ struct ScanHubView: View {
     @State private var route: ScanRoute?
 
     enum ScanRoute: String, Identifiable {
-        case food, medicalReport, prescription, medicinePackaging, barcode
+        case food, foodLabel, medicalReport, prescription, medicinePackaging, barcode
         var id: String { rawValue }
     }
 
@@ -31,11 +31,19 @@ struct ScanHubView: View {
 
             VStack(spacing: 12) {
                 BrandListRow(
+                    title: "Food Scan",
+                    subtitle: "Photograph a meal. Identifies the food and estimates nutrition.",
+                    symbol: "camera.macro",
+                    tint: Brand.steps,
+                    isAvailable: app.foodVision != nil
+                ) { route = .food }
+
+                BrandListRow(
                     title: "Food Label Scan",
-                    subtitle: "Photograph a nutrition panel and read the sodium from it.",
+                    subtitle: "Photograph a nutrition panel. Exact, straight from the label.",
                     symbol: "text.viewfinder",
                     tint: Brand.steps
-                ) { route = .food }
+                ) { route = .foodLabel }
 
                 BrandListRow(
                     title: "Medical Report Scan",
@@ -88,7 +96,8 @@ struct ScanHubView: View {
             case .prescription: PrescriptionScanView()
             case .medicinePackaging: MedicinePackagingScanView()
             case .barcode: BarcodeScanView()
-            case .food: FoodLabelScanView()
+            case .food: FoodPhotoScanView()
+            case .foodLabel: FoodLabelScanView()
             }
         }
     }

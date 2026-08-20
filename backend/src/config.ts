@@ -14,6 +14,8 @@ export interface Config {
    * outage is a config change, not a redeploy.
    */
   openRouterModel: string;
+  /** Vision-capable model for food photo identification. */
+  visionModel: string;
   /** Sent as HTTP-Referer for OpenRouter attribution. Carries no user data. */
   appReferer: string;
   /** USDA FoodData Central key. Absent => /v1/food returns 503. */
@@ -34,6 +36,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     environment,
     openRouterApiKey: env.OPENROUTER_API_KEY?.trim() || null,
     openRouterModel: env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4.5",
+    // Identifying food is a different job from coaching, so it gets its own
+    // model setting and can be changed without touching the coach.
+    visionModel: env.VISION_MODEL?.trim() || "anthropic/claude-sonnet-4.5",
     appReferer: env.APP_REFERER?.trim() || "https://bpcoach.app",
     usdaApiKey: env.USDA_FDC_API_KEY?.trim() || null,
     corsOrigins: (env.CORS_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean),

@@ -23,6 +23,9 @@ final class AppModel {
     /// is no mode where the app shows generated text it did not receive.
     let coach: AICoachService
     let foodProvider: FoodDataProvider
+    /// Nil when no backend is configured, which is what disables food photo
+    /// analysis in the UI rather than a separate flag.
+    let foodVision: FoodVisionService?
 
     private let context: ModelContext
     private let defaults: UserDefaults
@@ -40,9 +43,11 @@ final class AppModel {
         if let baseURL = BackendConfig.baseURL {
             self.coach = BackendCoachService(baseURL: baseURL)
             self.foodProvider = BackendFoodProvider(baseURL: baseURL)
+            self.foodVision = FoodVisionService(baseURL: baseURL)
         } else {
             self.coach = UnconfiguredCoachService()
             self.foodProvider = UnconfiguredFoodDataProvider()
+            self.foodVision = nil
         }
 
         let existing = (try? context.fetch(FetchDescriptor<UserProfile>())) ?? []

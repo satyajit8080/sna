@@ -111,6 +111,11 @@ enum Brand {
     /// `#2b975e` — progress bars for sodium and movement.
     static let progress = Color(hex: 0x2B975E)
 
+    /// Marks a value that was estimated rather than measured or read from a
+    /// label. Distinct from the accent on purpose: an estimate should not look
+    /// like a confirmed figure.
+    static let statusEstimate = Color(hex: 0xE0A33A)
+
     // MARK: - Metrics
 
     enum Metric {
@@ -130,6 +135,9 @@ enum Brand {
 struct BrandCard<Content: View>: View {
     var padding: CGFloat = 20
     var radius: CGFloat = Brand.Metric.cardRadius
+    /// Accent-bordered cards mark the one card on a screen that matters most,
+    /// as the design does for the coach greeting.
+    var strokeColor: Color = Brand.cardStroke
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -139,7 +147,7 @@ struct BrandCard<Content: View>: View {
             .background(Brand.background)
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                    .strokeBorder(strokeColor, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { loadConfig } from "../dist/config.js";
 import { validateCoachRequest, LIMITS } from "../dist/schema.js";
+import { parseDetectedFoods } from "../dist/services/vision.js";
 import { lookupBarcode } from "../dist/services/barcode.js";
 import {
   screenResponse, renderContext, SCREENED_REPLACEMENT, SYSTEM_PROMPT,
@@ -578,5 +579,87 @@ describe("barcode lookup", () => {
       })
     );
     assert.equal(item.defaultServingGrams, null);
+  });
+});
+
+describe("food photo analysis", () => {
+  test("parses a well-formed reply", () => {
+    const items = parseDetectedFoods(
+      '{"items":[{"name":"grilled chicken breast","estimatedGrams":120,"confidence":"high"}]}'
+    );
+    assert.equal(items.length, 1);
+    assert.equal(items[0].name, "grilled chicken breast");
+    assert.equal(items[0].estimatedGrams, 120);
+  });
+
+  /** Models wrap JSON in fences despite being told not to. */
+  test("strips markdown fences", () => {
+    const items = parseDetectedFoods(
+      '```json\n{"items":[{"name":"rice","estimatedGrams":150,"confidence":"medium"}]}\n```'
+    );
+    assert.equal(items.length, 1);
+    assert.equal(items[0].name, "rice");
+  });
+
+  test("ignores prose around the JSON", () => {
+    const items = parseDetectedFoods(
+      'Here is what I found:\n{"items":[{"name":"salad","estimatedGrams":80,"confidence":"low"}]}\nHope that helps!'
+    );
+    assert.equal(items.length, 1);
+    assert.equal(items[0].confidence, "low");
+  });
+
+  test("accepts a bare array", () => {
+    const items = parseDetectedFoods('[{"name":"apple","estimatedGrams":180,"confidence":"high"}]');
+    assert.equal(items.length, 1);
+  });
+
+  /** A parse failure must never become a fabricated result. */
+  test("unparseable output yields nothing rather than a guess", () => {
+    for (const raw of ["", "I cannot see any food", "{broken", "null", "42"]) {
+      assert.deepEqual(parseDetectedFoods(raw), []);
+    }
+  });
+
+  test("an empty plate returns no items", () => {
+    assert.deepEqual(parseDetectedFoods('{"items":[]}'), []);
+  });
+
+  /** An absurd portion would distort the day's total; clamp it. */
+  test("clamps implausible portions", () => {
+    const items = parseDetectedFoods(
+      '{"items":[{"name":"soup","estimatedGrams":999999,"confidence":"high"}]}'
+    );
+    assert.equal(items[0].estimatedGrams, 2000);
+  });
+
+  test("a missing or invalid portion falls back to 100g", () => {
+    const items = parseDetectedFoods(
+      '{"items":[{"name":"bread","confidence":"high"},{"name":"jam","estimatedGrams":-5,"confidence":"high"}]}'
+    );
+    assert.equal(items[0].estimatedGrams, 100);
+    assert.equal(items[1].estimatedGrams, 100);
+  });
+
+  test("an unknown confidence value becomes medium", () => {
+    const items = parseDetectedFoods(
+      '{"items":[{"name":"pasta","estimatedGrams":200,"confidence":"very sure"}]}'
+    );
+    assert.equal(items[0].confidence, "medium");
+  });
+
+  test("nameless entries are dropped", () => {
+    const items = parseDetectedFoods(
+      '{"items":[{"name":"","estimatedGrams":100},{"name":"x","estimatedGrams":100},{"name":"egg","estimatedGrams":50}]}'
+    );
+    assert.equal(items.length, 1);
+    assert.equal(items[0].name, "egg");
+  });
+
+  test("the item count is capped", () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      name: `food ${i}`, estimatedGrams: 50, confidence: "high",
+    }));
+    assert.equal(parseDetectedFoods(JSON.stringify({ items: many })).length, 12);
   });
 });

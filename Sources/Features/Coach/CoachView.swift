@@ -176,8 +176,8 @@ struct CoachView: View {
             BrandCard(padding: 16) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Things you can ask me")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Brand.textPrimary)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Brand.accent)
 
                     ForEach(SuggestedQuestion.forContext(
                         snapshot, hasDocuments: !myDocuments.isEmpty
@@ -220,7 +220,7 @@ struct CoachView: View {
     /// — not a number that only ever goes up. A fabricated streak in a health
     /// app would be the worst kind of engagement metric.
     private var greetingCard: some View {
-        BrandCard {
+        BrandCard(strokeColor: Brand.accent.opacity(0.5)) {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Hi \(app.activeProfile.name)!")
@@ -255,13 +255,13 @@ struct CoachView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Brand.textSecondary)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Brand.background)
+                    .frame(width: 89, height: 62)
+                    .background(Brand.accent.opacity(0.1))
                     .overlay {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                            .strokeBorder(Brand.accent.opacity(0.5), lineWidth: 1)
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
             }
         }

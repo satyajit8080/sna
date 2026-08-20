@@ -18,15 +18,31 @@ struct MessageBubble: View {
                 Text(message.text)
                     .font(.system(size: 14))
                     .padding(14)
-                    .background(message.isFromUser ? Brand.accent.opacity(0.15) : Brand.background)
+                    .background(message.isFromUser ? Brand.accent.opacity(0.2) : Brand.background)
                     .foregroundStyle(Brand.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    // The corner nearest the speaker is square, which is what
+                    // gives each bubble its direction in the design.
+                    .clipShape(
+                        .rect(
+                            topLeadingRadius: 12,
+                            bottomLeadingRadius: message.isFromUser ? 12 : 0,
+                            bottomTrailingRadius: message.isFromUser ? 0 : 12,
+                            topTrailingRadius: 12
+                        )
+                    )
                     .overlay {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(
-                                message.isFromUser ? Brand.accent.opacity(0.3) : Brand.cardStroke,
-                                lineWidth: 1
-                            )
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 12,
+                            bottomLeadingRadius: message.isFromUser ? 12 : 0,
+                            bottomTrailingRadius: message.isFromUser ? 0 : 12,
+                            topTrailingRadius: 12
+                        )
+                        .strokeBorder(
+                            message.isFromUser
+                                ? Brand.accent.opacity(0.5)
+                                : Color.white.opacity(0.2),
+                            lineWidth: 1
+                        )
                     }
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)

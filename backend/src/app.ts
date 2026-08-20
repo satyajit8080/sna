@@ -7,6 +7,7 @@ import { registerLogging } from "./middleware/logging.js";
 import { registerErrorHandler } from "./middleware/errors.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerCoachRoutes } from "./routes/coach.js";
+import { registerVisionRoutes } from "./routes/vision.js";
 import { registerFoodRoutes } from "./routes/food.js";
 
 export async function buildApp(config: Config): Promise<FastifyInstance> {
@@ -50,6 +51,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   registerHealthRoutes(app, config);
   registerCoachRoutes(app, config);
   registerFoodRoutes(app, config);
+  await registerVisionRoutes(app, config);
 
   return app;
 }
