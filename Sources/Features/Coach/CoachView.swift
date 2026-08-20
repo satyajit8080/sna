@@ -427,7 +427,11 @@ struct CoachView: View {
             }
         }
         .padding(.horizontal, Brand.Metric.pagePadding)
-        .padding(.vertical, 14)
+        .padding(.top, 14)
+        // The tab bar sits over the bottom of this view, so the composer needs
+        // clearance of its own — the scaffold's inset does not apply inside a
+        // VStack that fills the screen.
+        .padding(.bottom, 22)
         .background(Brand.background)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {

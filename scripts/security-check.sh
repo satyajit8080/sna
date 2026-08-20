@@ -69,5 +69,17 @@ else
 fi
 
 echo ""
+# 14. The release workflow must not declare BPCOACH_API_BASE_URL.
+#
+# A `vars:` entry beats an environment-variable group, so a placeholder there
+# silently overrides the URL configured in the CodeMagic UI and ships a build
+# with no backend. That happened, and it cost several days to find.
+python3 -c "
+import sys, yaml
+release = yaml.safe_load(open('codemagic.yaml'))['workflows']['release']['environment']
+sys.exit(1 if 'BPCOACH_API_BASE_URL' in (release.get('vars') or {}) else 0)
+" 2>/dev/null
+chk "release workflow does not shadow the backend URL" $?
+
 [ "$FAIL" -eq 0 ] && echo "SWEEP: PASS" || echo "SWEEP: FAIL"
 exit $FAIL

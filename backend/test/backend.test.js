@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { loadConfig } from "../dist/config.js";
 import { validateCoachRequest, LIMITS } from "../dist/schema.js";
+import { lookupBarcode } from "../dist/services/barcode.js";
 import {
   screenResponse, renderContext, SCREENED_REPLACEMENT, SYSTEM_PROMPT,
 } from "../dist/services/prompt.js";
@@ -497,5 +498,85 @@ describe("attachments", () => {
 
   test("no attachment section appears when there are none", () => {
     assert.ok(!renderContext(baseBody).includes("ATTACHMENTS"));
+  });
+});
+
+describe("barcode lookup", () => {
+  const offResponse = (product) => ({
+    ok: true,
+    json: async () => (product ? { status: 1, product } : { status: 0 }),
+  });
+
+  test("maps a product with sodium recorded directly", async () => {
+    const item = await lookupBarcode("3017620422003", async () =>
+      offResponse({
+        code: "3017620422003",
+        product_name: "Test Spread",
+        brands: "TestBrand",
+        serving_size: "15 g",
+        nutriments: { sodium_100g: 0.107, "energy-kcal_100g": 539 },
+      })
+    );
+    assert.equal(item.sodiumMilligramsPer100g, 107);
+    assert.equal(item.energyKilocaloriesPer100g, 539);
+    assert.equal(item.defaultServingGrams, 15);
+    assert.match(item.source, /Open Food Facts/);
+  });
+
+  /** Many entries record salt rather than sodium; deriving it beats nothing. */
+  test("derives sodium from salt when sodium is absent", async () => {
+    const item = await lookupBarcode("1234567890", async () =>
+      offResponse({
+        code: "1234567890",
+        product_name: "Salty Snack",
+        nutriments: { salt_100g: 1.5 },
+      })
+    );
+    assert.equal(item.sodiumMilligramsPer100g, 600); // 1.5g salt ≈ 600mg sodium
+  });
+
+  /** A blood pressure app has no use for a product with no sodium figure. */
+  test("returns null when no sodium figure exists", async () => {
+    const item = await lookupBarcode("1234567890", async () =>
+      offResponse({ code: "1", product_name: "Mystery", nutriments: {} })
+    );
+    assert.equal(item, null);
+  });
+
+  test("returns null for an unknown product", async () => {
+    assert.equal(await lookupBarcode("1234567890", async () => offResponse(null)), null);
+  });
+
+  test("returns null for a product with no name", async () => {
+    const item = await lookupBarcode("1234567890", async () =>
+      offResponse({ code: "1", nutriments: { sodium_100g: 0.5 } })
+    );
+    assert.equal(item, null);
+  });
+
+  /** Rejecting non-digits keeps arbitrary strings out of the upstream URL. */
+  test("rejects anything that is not a barcode without calling out", async () => {
+    let called = false;
+    const spy = async () => { called = true; return offResponse(null); };
+    for (const code of ["abc", "12", "'; DROP TABLE--", "", "1".repeat(20)]) {
+      assert.equal(await lookupBarcode(code, spy), null);
+    }
+    assert.equal(called, false, "an invalid barcode reached the network");
+  });
+
+  test("an upstream error returns null rather than throwing", async () => {
+    const item = await lookupBarcode("1234567890", async () => ({ ok: false }));
+    assert.equal(item, null);
+  });
+
+  test("serving sizes without grams leave the figure null", async () => {
+    const item = await lookupBarcode("1234567890", async () =>
+      offResponse({
+        code: "1", product_name: "Biscuit",
+        serving_size: "1 biscuit",
+        nutriments: { sodium_100g: 0.3 },
+      })
+    );
+    assert.equal(item.defaultServingGrams, null);
   });
 });

@@ -62,8 +62,10 @@ struct RootView: View {
                 case .more: NavigationStack { MoreView() }
                 }
             }
-            // Room for the bar, so content is never hidden behind it.
-            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 70) }
+            // Room for the bar. It is 70pt tall but ignores the bottom safe
+            // area, so on a device with a home indicator it occupies more than
+            // that — hence the extra allowance rather than a bare 70.
+            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 96) }
 
             BrandTabBar(selection: $router.tab, onAdd: { isPresentingAddMenu = true })
         }

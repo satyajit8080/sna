@@ -30,6 +30,10 @@ protocol FoodDataProvider: Sendable {
     var isAvailable: Bool { get }
 
     func search(_ query: String, limit: Int) async throws -> [FoodItem]
+    /// Looks a barcode up directly. Separate from `search` because barcode
+    /// lookup uses a different, global database — searching for the digits as
+    /// text finds nothing.
+    func lookup(barcode: String) async throws -> FoodItem?
     func item(withID id: String) async throws -> FoodItem?
 }
 
@@ -42,6 +46,7 @@ struct UnconfiguredFoodDataProvider: FoodDataProvider {
     let isAvailable = false
 
     func search(_ query: String, limit: Int) async throws -> [FoodItem] { [] }
+    func lookup(barcode: String) async throws -> FoodItem? { nil }
     func item(withID id: String) async throws -> FoodItem? { nil }
 }
 

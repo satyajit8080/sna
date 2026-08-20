@@ -164,15 +164,16 @@ struct BarcodeScanView: View {
                 return
             }
             do {
-                // Barcodes are searched as text; USDA indexes GTINs on branded
-                // items. A miss is reported as a miss.
-                let matches = try await app.foodProvider.search(code, limit: 1)
-                if let first = matches.first {
-                    state = .result(first)
+                // A dedicated lookup, not a text search: barcode data comes from
+                // Open Food Facts, which is global, rather than USDA, which only
+                // covers products sold in the United States.
+                if let item = try await app.foodProvider.lookup(barcode: code) {
+                    state = .result(item)
                 } else {
                     state = .failed("""
-                    Barcode \(code) is not in the food database. Not every product is \
-                    listed — you can enter the sodium from the label instead.
+                    Barcode \(code) is not in the food database. It is community-maintained, \
+                    so newer or local products are often missing — you can enter the sodium \
+                    from the label instead.
                     """)
                 }
             } catch {

@@ -65,6 +65,31 @@ struct BackendFoodProvider: FoodDataProvider {
         return decoded.items.map(Self.map)
     }
 
+    /// Barcode lookup goes to its own endpoint, backed by Open Food Facts.
+    ///
+    /// USDA is US-only, so searching a foreign barcode as text returns nothing —
+    /// which is what a user scanning an imported packet was seeing.
+    func lookup(barcode: String) async throws -> FoodItem? {
+        let digits = barcode.filter(\.isNumber)
+        guard digits.count >= 6, digits.count <= 14 else { return nil }
+
+        let url = baseURL.appendingPathComponent("v1/food/barcode/\(digits)")
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { return nil }
+
+        // 404 means the product genuinely is not listed, which is common and not
+        // an error. Any other non-200 is treated the same way as in `search`:
+        // return nothing so manual entry still works.
+        guard http.statusCode == 200 else { return nil }
+
+        struct Envelope: Decodable { let item: FoodSearchResponse.Item }
+        let decoded = try JSONDecoder().decode(Envelope.self, from: data)
+        return Self.map(decoded.item)
+    }
+
     func item(withID id: String) async throws -> FoodItem? {
         let url = baseURL.appendingPathComponent("v1/food/\(id)")
         let (data, response) = try await session.data(from: url)
