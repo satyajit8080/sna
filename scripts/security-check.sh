@@ -74,11 +74,24 @@ echo ""
 # A `vars:` entry beats an environment-variable group, so a placeholder there
 # silently overrides the URL configured in the CodeMagic UI and ships a build
 # with no backend. That happened, and it cost several days to find.
-python3 -c "
-import sys, yaml
-release = yaml.safe_load(open('codemagic.yaml'))['workflows']['release']['environment']
-sys.exit(1 if 'BPCOACH_API_BASE_URL' in (release.get('vars') or {}) else 0)
-" 2>/dev/null
+#
+# Implemented with awk rather than a YAML parser: PyYAML is not installed on the
+# CI runners, and a check that crashes there reports a false failure — which is
+# worse than no check, because it blocks builds for the wrong reason.
+DECLARED_IN_RELEASE=$(awk '
+  # Track which workflow we are inside. Workflow keys sit at exactly 2 spaces.
+  /^  [a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+    workflow = $1
+    sub(/:$/, "", workflow)
+  }
+  # A declaration is an assignment; a reference is "$BPCOACH_API_BASE_URL".
+  workflow == "release" && /^[[:space:]]+BPCOACH_API_BASE_URL:[[:space:]]*["'"'"']?[^$]/ {
+    found = 1
+  }
+  END { print found + 0 }
+' codemagic.yaml)
+
+[ "$DECLARED_IN_RELEASE" = "0" ]
 chk "release workflow does not shadow the backend URL" $?
 
 [ "$FAIL" -eq 0 ] && echo "SWEEP: PASS" || echo "SWEEP: FAIL"
