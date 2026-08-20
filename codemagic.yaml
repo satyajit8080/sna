@@ -25,10 +25,12 @@ workflows:
         # (e.g. "2.42.0") once you have read the real version from stage A6.
         # CodeMagic rejects empty values, so this is a sentinel rather than "".
         XCODEGEN_VERSION: "latest"
-        # Public base URL of the Railway backend — not a secret. Override in the
-        # CodeMagic UI. Left empty here on purpose: an unset value produces a
-        # valid build where the coach and food search report themselves
-        # unavailable, which is a legitimate configuration.
+        # The CI workflow builds and tests against the simulator and never
+        # ships, so it has no backend on purpose. The sentinel is safe *here*
+        # because this workflow imports no group that supplies a real URL.
+        #
+        # The release workflow must never declare this: `vars:` beats `groups:`,
+        # so a placeholder there would override the configured value.
         BPCOACH_API_BASE_URL: "unset"
 
     triggering:
@@ -391,9 +393,14 @@ workflows:
         PROJECT_NAME: BPCoach
         SCHEME_NAME: BPCoach
         BUNDLE_ID: app.snapcal.ios
-        BPCOACH_API_BASE_URL: "unset"
+        # BPCOACH_API_BASE_URL is deliberately NOT declared here.
+        #
+        # A `vars:` entry takes precedence over the environment-variable groups,
+        # so declaring a placeholder here silently overrode the real value set in
+        # the CodeMagic UI — producing builds with no backend while the settings
+        # page showed the correct URL. It comes from the `appstore` group only.
       groups:
-        - appstore   # optional: holds APP_STORE_APPLE_ID if you use it
+        - appstore   # holds BPCOACH_API_BASE_URL and CERTIFICATE_PRIVATE_KEY
 
     triggering:
       events:
@@ -419,6 +426,9 @@ workflows:
       - name: R2 · Resolve backend URL
         script: |
           set -e
+          # This value must come from the `appstore` group. If a `vars:` entry
+          # ever reintroduces a placeholder, it wins over the group and the
+          # build ships with no backend — which is exactly what happened before.
           echo "=============================================="
           echo "BPCOACH_API_BASE_URL as the workflow sees it:"
           echo "  raw value : '${BPCOACH_API_BASE_URL:-<not set>}'"
