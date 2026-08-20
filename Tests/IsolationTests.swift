@@ -694,3 +694,85 @@ struct ReviewPromptTests {
         #expect(url?.absoluteString.contains("action=write-review") == true)
     }
 }
+
+/// Sign-in validation.
+///
+/// Validation runs on the device so bad input never reaches a server, but the
+/// account itself lives server-side — there is deliberately no local password
+/// store, and these tests pin that the client only checks shape.
+@Suite("Authentication")
+@MainActor
+struct AuthTests {
+
+    @Test("Well-formed credentials pass")
+    func acceptsValid() throws {
+        try AuthService.validate(email: "user@example.com", password: "correct1horse")
+        try AuthService.validate(email: "a.b+tag@sub.example.co.uk", password: "passw0rd")
+    }
+
+    @Test("Malformed addresses are rejected")
+    func rejectsBadEmail() {
+        for email in ["", "user", "user@", "@example.com", "user@example", "a@b@c.com"] {
+            #expect(throws: AuthService.AuthError.self) {
+                try AuthService.validate(email: email, password: "passw0rd")
+            }
+        }
+    }
+
+    /// Length alone is not enough; a digit is required.
+    @Test("Weak passwords are rejected")
+    func rejectsWeakPassword() {
+        for password in ["", "short1", "nodigitshere", "1234567"] {
+            #expect(throws: AuthService.AuthError.self) {
+                try AuthService.validate(email: "user@example.com", password: password)
+            }
+        }
+    }
+
+    @Test("Cancelling produces no error message to show")
+    func cancellationIsSilent() {
+        #expect(AuthService.AuthError.cancelled.errorDescription == nil)
+    }
+
+    @Test("Unconfigured providers name themselves")
+    func unconfiguredIsClear() {
+        let error = AuthService.AuthError.notConfigured("Google")
+        #expect(error.errorDescription?.contains("Google") == true)
+    }
+
+    /// Google stays unavailable until a real client ID is set, rather than
+    /// failing at the last step of an OAuth flow.
+    @Test("Google is unconfigured by default")
+    func googleUnconfigured() {
+        #expect(!GoogleAuthConfig.isConfigured)
+    }
+
+    @Test("Email sign-in is unconfigured while the backend stores no users")
+    func emailUnconfigured() {
+        #expect(!EmailAuthConfig.isConfigured)
+    }
+
+    /// The property that matters most: signing out must not touch health data.
+    @Test("Signing out clears the account only")
+    func signOutClearsAccountOnly() {
+        final class MemoryStore: AccountStore, @unchecked Sendable {
+            var stored: AuthService.Account?
+            func load() -> AuthService.Account? { stored }
+            func save(_ account: AuthService.Account) { stored = account }
+            func clear() { stored = nil }
+        }
+
+        let store = MemoryStore()
+        store.stored = .init(
+            id: "abc", provider: .apple, email: "a@b.com",
+            displayName: "Test", signedInAt: .now
+        )
+
+        let service = AuthService(store: store)
+        #expect(service.isSignedIn)
+
+        service.signOut()
+        #expect(!service.isSignedIn)
+        #expect(store.stored == nil)
+    }
+}

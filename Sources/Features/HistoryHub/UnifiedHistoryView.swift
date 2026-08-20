@@ -26,7 +26,7 @@ struct UnifiedHistoryView: View {
     @State private var customEnd = Date.now
     @State private var filters: Set<HistoryKind> = Set(HistoryKind.allCases)
     @State private var search = ""
-    @State private var editingReading: BPReading?
+    @State private var viewingReading: BPReading?
     @State private var viewingDocument: MedicalDocument?
     @State private var editingAppointment: Appointment?
 
@@ -79,7 +79,7 @@ struct UnifiedHistoryView: View {
             }
         }
         .navigationBarHidden(true)
-        .sheet(item: $editingReading) { EditBPView(reading: $0) }
+        .navigationDestination(item: $viewingReading) { ReadingDetailView(reading: $0) }
         .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }
         .navigationDestination(item: $viewingDocument) { DocumentDetailView(document: $0) }
     }
@@ -229,7 +229,7 @@ struct UnifiedHistoryView: View {
     /// and are drawn without a chevron so that is visible up front.
     private func open(_ entry: HistoryEntry) {
         switch entry.payload {
-        case .bloodPressure(let reading): editingReading = reading
+        case .bloodPressure(let reading): viewingReading = reading
         case .document(let document): viewingDocument = document
         case .appointment(let appointment): editingAppointment = appointment
         case .symptom, .activity, .lifestyle, .medicationDose: break

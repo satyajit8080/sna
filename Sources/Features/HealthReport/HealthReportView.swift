@@ -119,11 +119,25 @@ struct HealthReportView: View {
                 }
 
                 Button {
-                    export()
+                    exportPDF()
                 } label: {
-                    Label("Share report", systemImage: "square.and.arrow.up")
+                    Label("Share as PDF", systemImage: "doc.richtext")
                 }
                 .disabled(included.isEmpty)
+
+                Button {
+                    exportText()
+                } label: {
+                    Label("Share as text", systemImage: "doc.plaintext")
+                }
+                .disabled(included.isEmpty)
+
+                Button {
+                    exportCSV()
+                } label: {
+                    Label("Export readings as CSV", systemImage: "tablecells")
+                }
+                .disabled(readings.isEmpty)
             } footer: {
                 if let error {
                     Text(error.errorDescription ?? "").foregroundStyle(Theme.statusModerate)
@@ -131,6 +145,8 @@ struct HealthReportView: View {
             }
         }
         .navigationTitle("Health report")
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
         .sheet(item: Binding(
             get: { exportURL.map(ShareItem.init) },
             set: { _ in exportURL = nil }
@@ -295,12 +311,153 @@ struct HealthReportView: View {
         return lines.joined(separator: "\n")
     }
 
-    private func export() {
+    private func exportText() {
         do {
             exportURL = try DataExporter.write(reportText, filename: "health-summary.txt")
         } catch {
             self.error = .exportFailed(error.localizedDescription)
         }
+    }
+
+    /// CSV for a clinician who wants the raw numbers in a spreadsheet.
+    private func exportCSV() {
+        do {
+            let csv = DataExporter.readingsCSV(readings, guideline: guidelines.active)
+            exportURL = try DataExporter.write(csv, filename: "bp-readings.csv")
+        } catch {
+            self.error = .exportFailed(error.localizedDescription)
+        }
+    }
+
+    private func exportPDF() {
+        do {
+            exportURL = try PDFReportBuilder.write(pdfDocument, filename: "health-summary.pdf")
+        } catch {
+            self.error = .exportFailed(error.localizedDescription)
+        }
+    }
+
+    /// The same content as the text report, laid out for printing.
+    ///
+    /// Built from the same `included` set, so what the user ticked is exactly
+    /// what leaves the device in either format.
+    private var pdfDocument: PDFReportBuilder.Document {
+        var sections: [PDFReportBuilder.Section] = []
+        let profileID = app.activeProfile.id
+
+        if included.contains(.averages) {
+            var rows: [(String, String)] = []
+            for window in [7, 30, 90] where window <= days {
+                if let average = BPStatistics.homeAverage(readings, days: window) {
+                    rows.append((
+                        "\(window)-day average",
+                        "\(average.systolic)/\(average.diastolic) mmHg   (\(average.count) readings)"
+                    ))
+                }
+            }
+            if !rows.isEmpty {
+                sections.append(.init(
+                    title: "Blood pressure averages",
+                    rows: rows,
+                    note: "Home readings only. Clinic readings are excluded so the two can be compared separately."
+                ))
+            }
+        }
+
+        if included.contains(.patterns) {
+            var rows: [(String, String)] = []
+            if let c = BPStatistics.morningVsEvening(readings) {
+                rows.append(("Morning", "\(c.first.systolic)/\(c.first.diastolic)   (\(c.first.count))"))
+                rows.append(("Evening", "\(c.second.systolic)/\(c.second.diastolic)   (\(c.second.count))"))
+            }
+            if let c = BPStatistics.homeVsClinic(readings) {
+                rows.append(("Home", "\(c.first.systolic)/\(c.first.diastolic)"))
+                rows.append(("Clinic", "\(c.second.systolic)/\(c.second.diastolic)"))
+            }
+            if let v = BPStatistics.variability(readings) {
+                rows.append(("Systolic variability (SD)", String(format: "%.1f", v.systolicSD)))
+            }
+            if !rows.isEmpty {
+                sections.append(.init(title: "Patterns", rows: rows))
+            }
+        }
+
+        if included.contains(.medication) {
+            let mine = allMedications.filter { $0.profileID == profileID && !$0.isArchived }
+            let rows = mine.map { medication -> (String, String) in
+                let doses = allDoses.filter {
+                    $0.medicationID == medication.id && $0.profileID == profileID
+                }
+                let adherence = MedicationEngine.adherence(for: doses)
+                let taken = adherence.percentage.map { "\(Int($0))% taken" } ?? "no dose history"
+                return ("\(medication.name) \(medication.dose), \(medication.frequency.label)", taken)
+            }
+            if !rows.isEmpty {
+                sections.append(.init(
+                    title: "Medication",
+                    rows: rows,
+                    note: "Adherence is calculated from doses the user marked in the app."
+                ))
+            }
+        }
+
+        if included.contains(.symptoms) {
+            let recent = allSymptoms.filter {
+                $0.profileID == profileID
+                    && $0.recordedAt > Date.now.addingTimeInterval(-Double(days) * 86_400)
+            }
+            let rows = Dictionary(grouping: recent, by: \.kind)
+                .sorted { $0.value.count > $1.value.count }
+                .map { ($0.key.label, "\($0.value.count)x") }
+            if !rows.isEmpty {
+                sections.append(.init(title: "Symptoms logged", rows: rows))
+            }
+        }
+
+        if included.contains(.weight) {
+            let weights = allLifestyle.filter { $0.profileID == profileID && $0.kind == .weight }
+            if let latest = weights.first {
+                var rows = [("Current", String(format: "%.1f kg", latest.value))]
+                if let earliest = weights.last, weights.count > 1 {
+                    rows.append((
+                        "Change over period",
+                        String(format: "%+.1f kg", latest.value - earliest.value)
+                    ))
+                }
+                sections.append(.init(title: "Weight", rows: rows))
+            }
+        }
+
+        if included.contains(.readings) {
+            let rows = readings.prefix(120).map { reading -> (String, String) in
+                let when = reading.recordedAt.formatted(date: .abbreviated, time: .shortened)
+                let pulse = reading.pulse.map { ", pulse \($0)" } ?? ""
+                return (
+                    "\(when)  [\(reading.source.label)]",
+                    "\(reading.systolic)/\(reading.diastolic)\(pulse)  \(guidelines.category(for: reading).label)"
+                )
+            }
+            if !rows.isEmpty {
+                sections.append(.init(
+                    title: "Readings",
+                    rows: Array(rows),
+                    note: readings.count > 120
+                        ? "Showing the most recent 120 of \(readings.count) readings. Export the CSV for the full set."
+                        : nil
+                ))
+            }
+        }
+
+        return .init(
+            title: "Health Summary",
+            subtitle: "\(app.activeProfile.name) · last \(days) days · categories from \(guidelines.active.displayName)",
+            generatedAt: .now,
+            sections: sections,
+            disclaimer: """
+            Recorded with BP Coach. This summary describes measurements the patient recorded \
+            and contains no diagnosis or interpretation.
+            """
+        )
     }
 }
 
@@ -318,5 +475,7 @@ struct ReportPreviewView: View {
         .background(Theme.background)
         .navigationTitle("Preview")
         .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
     }
 }

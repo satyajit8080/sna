@@ -75,6 +75,8 @@ struct SodiumListView: View {
         }
         .background(Theme.background)
         .navigationTitle("Sodium")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { isAdding = true } label: { Image(systemName: "plus") }
@@ -202,6 +204,8 @@ struct AddSodiumView: View {
                 }
             }
             .navigationTitle("Add food")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

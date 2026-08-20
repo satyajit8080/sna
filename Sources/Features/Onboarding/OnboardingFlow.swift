@@ -14,8 +14,9 @@ struct OnboardingFlow: View {
     @State private var step = 0
     @State private var selectedGuideline: BPGuidelineID = .accAha2017
     @State private var healthError: String?
+    @State private var ownerName = ""
 
-    private let stepCount = 5
+    private let stepCount = 6
 
     var body: some View {
         ZStack {
@@ -30,8 +31,9 @@ struct OnboardingFlow: View {
                     welcome.tag(0)
                     guidelineChoice.tag(1)
                     guidelineExplainer.tag(2)
-                    healthPermission.tag(3)
-                    notificationPermission.tag(4)
+                    whoIsThisFor.tag(3)
+                    healthPermission.tag(4)
+                    notificationPermission.tag(5)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.snappy, value: step)
@@ -199,7 +201,73 @@ struct OnboardingFlow: View {
         return text
     }
 
-    // MARK: - 4 · Apple Health
+    // MARK: - 4 · Who is this for?
+
+    /// Names the owner profile.
+    ///
+    /// Asked here rather than at the very start because a name means nothing
+    /// until the person knows what the app does. It also sets up the one thing
+    /// that genuinely differs per profile: only the device owner can use Apple
+    /// Health, and saying so now avoids a confusing refusal later.
+    private var whoIsThisFor: some View {
+        OnboardingScreen(
+            logoSymbol: "person.crop.circle.fill",
+            header: {
+                OnboardingTitle(
+                    accented: "Who ",
+                    plain: "is this for?",
+                    subtitle: "You can add other people later"
+                )
+            },
+            content: {
+                VStack(spacing: 15) {
+                    TextField(
+                        "",
+                        text: $ownerName,
+                        prompt: Text("Your name")
+                            .foregroundStyle(OnboardingTheme.textSecondary)
+                    )
+                    .font(.system(size: 16))
+                    .foregroundStyle(OnboardingTheme.textPrimary)
+                    .textInputAutocapitalization(.words)
+                    .submitLabel(.done)
+                    .padding(.horizontal, 18)
+                    .frame(height: 50)
+                    .background(OnboardingTheme.background)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(OnboardingTheme.cardStroke, lineWidth: 1)
+                    }
+
+                    OnboardingFeatureRow(symbol: "heart.fill") {
+                        Text("This profile is the one that can read Apple Health, because Health belongs to whoever owns the phone.")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OnboardingTheme.textSecondary)
+                            .lineSpacing(2)
+                    }
+
+                    OnboardingFeatureRow(symbol: "person.2.fill") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tracking someone else too?")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OnboardingTheme.textSecondary)
+                            Text("Add family profiles in More at any time.")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(OnboardingTheme.accent)
+                        }
+                    }
+                }
+            },
+            primary: ("Continue", {
+                let trimmed = ownerName.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { app.renameOwner(to: trimmed) }
+                step = 4
+            }),
+            secondary: ("Skip", { step = 4 })
+        )
+    }
+
+    // MARK: - 5 · Apple Health
 
     private var healthPermission: some View {
         OnboardingScreen(
@@ -225,7 +293,7 @@ struct OnboardingFlow: View {
                             Text("None of this leaves your device.")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(OnboardingTheme.textSecondary)
-                            Text("No server. No account.")
+                            Text("No account needed.")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(OnboardingTheme.accent)
                         }
@@ -244,7 +312,7 @@ struct OnboardingFlow: View {
                 Task {
                     do {
                         try await app.health.requestReadAuthorization(for: app.activeProfile)
-                        step = 4
+                        step = 5
                     } catch {
                         // Onboarding must never dead-end. Show what happened and
                         // let the user continue without Health.
@@ -252,11 +320,11 @@ struct OnboardingFlow: View {
                     }
                 }
             }),
-            secondary: ("Not now", { step = 4 })
+            secondary: ("Not now", { step = 5 })
         )
     }
 
-    // MARK: - 5 · Reminders
+    // MARK: - 6 · Reminders
 
     private var notificationPermission: some View {
         OnboardingScreen(

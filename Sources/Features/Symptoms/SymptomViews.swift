@@ -77,6 +77,8 @@ struct AddSymptomView: View {
             }
             .navigationTitle("Log symptoms")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

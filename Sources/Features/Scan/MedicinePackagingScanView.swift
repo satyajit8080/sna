@@ -115,11 +115,8 @@ struct MedicinePackagingScanView: View {
     }
 
     private var processing: some View {
-        VStack(spacing: Theme.Spacing.md) {
-            ProgressView()
-            Text("Reading the packaging…").font(.subheadline).foregroundStyle(Theme.textSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        LoadingView(message: "Reading the packaging…")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func failure(_ message: String) -> some View {

@@ -284,6 +284,8 @@ struct ConversationHistoryView: View {
             }
             .navigationTitle("Conversations")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
             }
@@ -315,6 +317,8 @@ struct AttachReportView: View {
             }
             .navigationTitle("Attach a report")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }

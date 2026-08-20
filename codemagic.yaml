@@ -419,10 +419,29 @@ workflows:
       - name: R2 · Resolve backend URL
         script: |
           set -e
+          echo "=============================================="
+          echo "BPCOACH_API_BASE_URL as the workflow sees it:"
+          echo "  raw value : '${BPCOACH_API_BASE_URL:-<not set>}'"
+          echo "  length    : ${#BPCOACH_API_BASE_URL}"
+          echo "=============================================="
+
           if [ "$BPCOACH_API_BASE_URL" = "unset" ] || [ -z "$BPCOACH_API_BASE_URL" ]; then
-            echo "WARNING: shipping to TestFlight with no backend URL."
-            echo "The coach and food search will report themselves unavailable."
-            echo "API_BASE_URL=" >> $CM_ENV
+            # A warning was not enough: builds shipped without a backend for days
+            # and nobody noticed until the coach was tested by hand. Releases now
+            # stop here.
+            echo ""
+            echo "BLOCKED: this release has no backend URL."
+            echo "The AI coach and barcode lookup would both be dead in the app."
+            echo ""
+            echo "Set it in CodeMagic -> app -> Environment variables:"
+            echo "  name   : BPCOACH_API_BASE_URL"
+            echo "  value  : https://<your-app>.up.railway.app"
+            echo "  group  : appstore      <- must match the workflow's group"
+            echo "  secure : unticked      <- so it is visible in this log"
+            echo ""
+            echo "Variables the workflow can currently see:"
+            env | cut -d= -f1 | grep -iE 'BPCOACH|CERT|BUNDLE' | sort || true
+            exit 1
           else
             CLEANED=$(echo "$BPCOACH_API_BASE_URL" | sed 's:/*$::')
             case "$CLEANED" in
@@ -432,6 +451,44 @@ workflows:
             echo "Backend URL: $CLEANED"
             echo "API_BASE_URL=$CLEANED" >> $CM_ENV
           fi
+
+      - name: R2b · Run the test suite (gate)
+        script: |
+          set -e
+          # A release that ships with failing tests is worse than one that does
+          # not ship. The CI workflow runs these too, but nothing forced the
+          # release path through them — so a red suite could reach TestFlight.
+          DESTINATION=$(xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
+            -scheme "$SCHEME_NAME" -showdestinations 2>/dev/null \
+            | grep -i 'platform:iOS Simulator' | grep -i 'iPhone' \
+            | head -1 | sed -E 's/.*id:([^,}]+).*/\1/' | tr -d ' ')
+
+          if [ -z "$DESTINATION" ]; then
+            echo "BLOCKED: no iPhone simulator available to test against."
+            exit 1
+          fi
+          echo "Testing on simulator $DESTINATION"
+
+          set +e
+          xcodebuild test \
+            -project "${PROJECT_NAME}.xcodeproj" \
+            -scheme "$SCHEME_NAME" \
+            -destination "id=$DESTINATION" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee /tmp/test.log | xcpretty --test --color || true
+          set -e
+
+          # Report the real counts rather than trusting the exit status, which
+          # xcpretty swallows.
+          FAILURES=$(grep -cE "^\s+✗|error: .*XCTAssert|Test Case .* failed" /tmp/test.log || true)
+          if grep -q "TEST FAILED\|** TEST FAILED **" /tmp/test.log; then
+            echo "BLOCKED: the test suite failed."
+            grep -E "error:|✗|failed" /tmp/test.log | grep -v "CoreData" | head -30
+            exit 1
+          fi
+
+          grep -E "Executed .* tests" /tmp/test.log | tail -2 || echo "Tests completed."
+          echo "Test gate passed."
 
       - name: R3 · Set the build number
         script: |

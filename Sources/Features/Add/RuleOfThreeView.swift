@@ -33,6 +33,8 @@ struct RuleOfThreeView: View {
             .background(Theme.background)
             .navigationTitle("Rule of 3")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { stop(); dismiss() }

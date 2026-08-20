@@ -43,13 +43,22 @@ struct AppointmentPrepView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        exportCSV()
+                    Menu {
+                        Button {
+                            exportPDF()
+                        } label: {
+                            Label("Share as PDF", systemImage: "doc.richtext")
+                        }
+                        Button {
+                            exportCSV()
+                        } label: {
+                            Label("Export readings as CSV", systemImage: "tablecells")
+                        }
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .disabled(readings.isEmpty)
-                    .accessibilityLabel("Export readings")
+                    .accessibilityLabel("Share this summary")
                 }
             }
             .sheet(item: Binding(
@@ -215,6 +224,74 @@ struct AppointmentPrepView: View {
             list.append("Is my current medication still the right choice?")
         }
         return list
+    }
+
+    /// The same summary as a printable document, for handing over in person.
+    private func exportPDF() {
+        var sections: [PDFReportBuilder.Section] = []
+
+        var averages: [(String, String)] = []
+        for window in [7, 30, 90] {
+            if let a = BPStatistics.homeAverage(readings, days: window) {
+                averages.append((
+                    "\(window)-day average",
+                    "\(a.systolic)/\(a.diastolic) mmHg   (\(a.count) readings)"
+                ))
+            }
+        }
+        if !averages.isEmpty {
+            sections.append(.init(
+                title: "Blood pressure averages",
+                rows: averages,
+                note: "Home readings only. Clinic readings are kept separate."
+            ))
+        }
+
+        if let c = BPStatistics.morningVsEvening(readings) {
+            sections.append(.init(title: "Morning vs evening", rows: [
+                ("Morning", "\(c.first.systolic)/\(c.first.diastolic)   (\(c.first.count))"),
+                ("Evening", "\(c.second.systolic)/\(c.second.diastolic)   (\(c.second.count))"),
+            ]))
+        }
+
+        let mine = allMedications.filter { $0.profileID == app.activeProfile.id && !$0.isArchived }
+        if !mine.isEmpty {
+            let rows = mine.map { medication -> (String, String) in
+                let own = allDoses.filter { $0.medicationID == medication.id }
+                let percent = MedicationEngine.adherence(for: own).percentage
+                return (
+                    "\(medication.name) \(medication.dose)",
+                    percent.map { "\(Int($0))% taken" } ?? "no dose history"
+                )
+            }
+            sections.append(.init(title: "Medication", rows: rows))
+        }
+
+        let questionRows = questions.map { ("", $0) }
+        if !questionRows.isEmpty {
+            sections.append(.init(
+                title: "Questions to ask",
+                rows: questionRows,
+                note: "General prompts, not advice about this patient's case."
+            ))
+        }
+
+        let document = PDFReportBuilder.Document(
+            title: "Appointment Summary",
+            subtitle: "\(appointment.doctorName) · \(appointment.scheduledFor.formatted(date: .long, time: .shortened))",
+            generatedAt: .now,
+            sections: sections,
+            disclaimer: """
+            Recorded with BP Coach. Describes measurements the patient recorded and contains \
+            no diagnosis or interpretation.
+            """
+        )
+
+        do {
+            exportURL = try PDFReportBuilder.write(document, filename: "appointment-summary.pdf")
+        } catch {
+            self.error = .exportFailed(error.localizedDescription)
+        }
     }
 
     private func exportCSV() {

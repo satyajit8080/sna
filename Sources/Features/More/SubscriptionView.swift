@@ -60,67 +60,108 @@ final class SubscriptionStore {
 struct SubscriptionView: View {
     @State private var store = SubscriptionStore()
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        List {
-            Section {
-                switch store.status {
-                case .noProductsConfigured:
-                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                        Label("Everything is free", systemImage: "checkmark.seal.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Theme.statusNormal)
+        BrandScreen {
+            BrandHeader(
+                title: "Subscription",
+                subtitle: "Your plan and purchases",
+                showsBack: true,
+                onBack: { dismiss() }
+            )
+
+            switch store.status {
+            case .noProductsConfigured:
+                BrandCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            BrandIconTile(symbol: "checkmark.seal.fill", tint: Brand.accent, size: 49)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Everything is free")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundStyle(Brand.textPrimary)
+                                Text("No plan, no account")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Brand.accent)
+                            }
+                            Spacer(minLength: 0)
+                        }
                         Text("""
-                        BP Coach has no paid plan. Every feature — readings, trends, \
-                        medication tracking, reports and export — is included and works \
-                        without an account.
+                        Every feature — readings, trends, medication tracking, reports and \
+                        export — is included and works without an account.
                         """)
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.vertical, Theme.Spacing.xs)
+                }
 
-                case .loading:
-                    HStack { ProgressView(); Text("Checking…") }
+            case .loading:
+                BrandCard {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Brand.accent)
+                        Text("Checking…")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Brand.textSecondary)
+                    }
+                }
 
-                case .notSubscribed:
-                    LabeledContent("Current plan", value: "Free")
+            case .notSubscribed:
+                BrandFormSection("Current plan") {
+                    BrandValueRow(title: "Plan", value: "Free", symbol: "person.fill")
+                }
 
-                case .subscribed(let name, let renewsOn):
-                    LabeledContent("Current plan", value: name)
+            case .subscribed(let name, let renewsOn):
+                BrandFormSection("Current plan") {
+                    BrandValueRow(
+                        title: "Plan", value: name,
+                        symbol: "star.fill", valueTint: Brand.accent
+                    )
                     if let renewsOn {
-                        LabeledContent(
-                            "Renews",
-                            value: renewsOn.formatted(date: .abbreviated, time: .omitted)
+                        BrandRowDivider()
+                        BrandValueRow(
+                            title: "Renews",
+                            value: renewsOn.formatted(date: .abbreviated, time: .omitted),
+                            symbol: "calendar"
                         )
                     }
-
-                case .failed(let message):
-                    Text(message).foregroundStyle(Theme.statusModerate)
                 }
-            } header: {
-                Text("Subscription")
+
+            case .failed(let message):
+                BrandCard(padding: 16) {
+                    Text(message)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.restingHeartRate)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if !SubscriptionStore.productIDs.isEmpty {
-                Section {
-                    Button("Restore purchases") {
-                        Task { await store.restore() }
-                    }
-                    Button("Manage subscription") {
+                BrandFormSection(
+                    "Manage",
+                    footer: "Subscriptions are managed by Apple in your App Store account."
+                ) {
+                    BrandActionRow(
+                        title: "Restore purchases",
+                        symbol: "arrow.clockwise"
+                    ) { Task { await store.restore() } }
+                    BrandRowDivider()
+                    BrandActionRow(
+                        title: "Manage subscription",
+                        detail: "Opens the App Store",
+                        symbol: "creditcard.fill",
+                        tint: Brand.weight
+                    ) {
                         // Apple requires subscription management to go through
                         // the system, not a bespoke in-app screen.
                         if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
                             openURL(url)
                         }
                     }
-                } footer: {
-                    Text("Subscriptions are managed by Apple in your App Store account.")
                 }
             }
         }
-        .navigationTitle("Subscription")
         .task { await store.refresh() }
     }
 }

@@ -62,6 +62,8 @@ struct DataManagementView: View {
             }
         }
         .navigationTitle("Export & delete")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
         .sheet(item: Binding(
             get: { exportURL.map(ShareItem.init) },
             set: { _ in exportURL = nil }
@@ -119,13 +121,23 @@ struct ShareSheet: UIViewControllerRepresentable {
 }
 
 struct ProfileSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
     @State private var isAdding = false
     @State private var newName = ""
     @State private var newKind: ProfileKind = .spouse
 
     var body: some View {
-        List {
+        VStack(alignment: .leading, spacing: 0) {
+            BrandHeader(title: "Profile & Account", subtitle: "Who this app is tracking", showsBack: true, onBack: { dismiss() })
+                .padding(.horizontal, Brand.Metric.pagePadding)
+                .padding(.bottom, 8)
+
+            AccountStatusView()
+                .padding(.horizontal, Brand.Metric.pagePadding)
+                .padding(.bottom, 12)
+
+            List {
             Section {
                 ForEach(app.profiles) { profile in
                     HStack {
@@ -164,6 +176,11 @@ struct ProfileSettingsView: View {
             }
         }
         .navigationTitle("Profiles")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
+        }
+        .background(Brand.background)
+        .navigationBarHidden(true)
         .alert("Add profile", isPresented: $isAdding) {
             TextField("Name", text: $newName)
             Button("Add") {

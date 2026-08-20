@@ -20,7 +20,6 @@ struct HomeView: View {
     @Query(sort: \ActivityEntry.startedAt, order: .reverse) private var allActivity: [ActivityEntry]
 
     @State private var isPresentingAdd = false
-    @State private var editing: BPReading?
 
     private var readings: [BPReading] {
         allReadings.filter { $0.profileID == app.activeProfile.id }
@@ -46,7 +45,6 @@ struct HomeView: View {
         }
         .navigationBarHidden(true)
         .sheet(isPresented: $isPresentingAdd) { AddBPView() }
-        .sheet(item: $editing) { EditBPView(reading: $0) }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
         .task { await app.health.refreshSnapshot(for: app.activeProfile) }
         .reviewPrompt(app.reviewPrompt, readings: readings, isCalmMoment: isCalmMoment)
@@ -149,8 +147,8 @@ struct HomeView: View {
                     // History sits beside Edit, as in the design. It is the main
                     // way in now that History has no tab of its own.
                     HStack(spacing: 9) {
-                        Button { editing = reading } label: {
-                            Text("Edit")
+                        NavigationLink { ReadingDetailView(reading: reading) } label: {
+                            Text("Details")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Brand.onAccent)
                                 .padding(.horizontal, 12)

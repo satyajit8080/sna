@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 import Testing
 
 @testable import BPCoach
@@ -143,5 +144,105 @@ struct GroupingExportTests {
         let csv = DataExporter.readingsCSV([reading(135, 85)], guideline: ESCESH2023Guideline())
         #expect(csv.contains("ESC/ESH 2023"))
         #expect(csv.contains("High normal"))
+    }
+}
+
+/// PDF report generation.
+///
+/// The PDF is what a patient hands to a clinician, so it must contain the
+/// numbers they recorded and nothing the app invented.
+@Suite("PDF report")
+@MainActor
+struct PDFReportTests {
+
+    private func document(sections: [PDFReportBuilder.Section]) -> PDFReportBuilder.Document {
+        .init(
+            title: "Health Summary",
+            subtitle: "Test · last 90 days",
+            generatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+            sections: sections,
+            disclaimer: "Contains no diagnosis or interpretation."
+        )
+    }
+
+    @Test("Renders a non-empty PDF")
+    func rendersPDF() {
+        let data = PDFReportBuilder.render(document(sections: [
+            .init(title: "Averages", rows: [("7-day", "128/82 mmHg")]),
+        ]))
+        #expect(data.count > 1_000)
+    }
+
+    /// A PDF always starts with the %PDF- magic bytes. Anything else is not a
+    /// file a clinician's software will open.
+    @Test("Output is a real PDF file")
+    func hasPDFHeader() {
+        let data = PDFReportBuilder.render(document(sections: [
+            .init(title: "Averages", rows: [("7-day", "128/82")]),
+        ]))
+        let header = String(decoding: data.prefix(5), as: UTF8.self)
+        #expect(header == "%PDF-")
+    }
+
+    @Test("An empty report still produces a valid document")
+    func emptyStillValid() {
+        let data = PDFReportBuilder.render(document(sections: []))
+        #expect(data.count > 500)
+        #expect(String(decoding: data.prefix(5), as: UTF8.self) == "%PDF-")
+    }
+
+    /// Long reports must paginate rather than draw off the bottom of page one.
+    @Test("Many rows produce more than one page")
+    func paginates() {
+        let rows = (0..<200).map { ("Reading \($0)", "120/80 mmHg  Normal") }
+        let data = PDFReportBuilder.render(document(sections: [
+            .init(title: "Readings", rows: rows),
+        ]))
+
+        guard let pdf = PDFDocument(data: data) else {
+            Issue.record("Rendered data was not a readable PDF")
+            return
+        }
+        #expect(pdf.pageCount > 1)
+    }
+
+    @Test("The disclaimer appears in the rendered text")
+    func disclaimerPresent() {
+        let data = PDFReportBuilder.render(document(sections: [
+            .init(title: "Averages", rows: [("7-day", "128/82")]),
+        ]))
+        guard let pdf = PDFDocument(data: data),
+              let text = pdf.page(at: 0)?.string else {
+            Issue.record("Could not read the rendered PDF")
+            return
+        }
+        #expect(text.contains("no diagnosis"))
+    }
+
+    @Test("Section content reaches the page")
+    func contentPresent() {
+        let data = PDFReportBuilder.render(document(sections: [
+            .init(title: "Averages", rows: [("7-day average", "128/82 mmHg")]),
+        ]))
+        guard let pdf = PDFDocument(data: data),
+              let text = pdf.page(at: 0)?.string else {
+            Issue.record("Could not read the rendered PDF")
+            return
+        }
+        #expect(text.contains("128/82"))
+        #expect(text.lowercased().contains("average"))
+    }
+
+    @Test("Writing produces a readable file on disk")
+    func writesFile() throws {
+        let url = try PDFReportBuilder.write(
+            document(sections: [.init(title: "A", rows: [("x", "y")])]),
+            filename: "test-report.pdf"
+        )
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(url.pathExtension == "pdf")
+        #expect(PDFDocument(url: url) != nil)
     }
 }

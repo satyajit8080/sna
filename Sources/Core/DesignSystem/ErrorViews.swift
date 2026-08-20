@@ -58,10 +58,10 @@ struct LoadingView: View {
 
     var body: some View {
         VStack(spacing: Theme.Spacing.md) {
-            ProgressView()
+            ProgressView().tint(Brand.accent)
             Text(message)
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 14))
+                .foregroundStyle(Brand.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.Spacing.xl)

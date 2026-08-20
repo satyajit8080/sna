@@ -53,6 +53,10 @@ targets:
         # SDK or later. Xcode only synthesises this when it generates the
         # Info.plist itself; this project supplies its own, so it is set here.
         CFBundleIconName: AppIcon
+        # Set to a real OAuth client ID to enable Google sign-in. Left as a
+        # sentinel so the button reports itself unavailable rather than failing
+        # at the last step.
+        GoogleClientID: unset
         # Injected at build time. Empty in the repo: no environment is baked in,
         # and an empty value makes the app fall back to unconfigured stubs.
         BPCoachAPIBaseURL: $(BPCOACH_API_BASE_URL)
@@ -85,6 +89,9 @@ targets:
       path: Sources/BPCoach.entitlements
       properties:
         com.apple.developer.healthkit: true
+        # Required for Sign in with Apple. Must also be enabled on the App ID.
+        com.apple.developer.applesignin:
+          - Default
 
   BPCoachTests:
     type: bundle.unit-test

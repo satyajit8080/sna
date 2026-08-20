@@ -7,25 +7,31 @@ import UIKit
 /// Every colour here is defined for both light and dark. Status colours are
 /// deliberately distinguishable without relying on hue alone: severity also
 /// changes the badge's weight and its accompanying text.
+/// The original token set.
+///
+/// Its colours now resolve to the `Brand` palette so screens that have not yet
+/// been redesigned still render dark and on-brand. Layout and typography in
+/// those screens is unchanged; only the colours follow. Each will be rebuilt
+/// against the Figma in turn.
 enum Theme {
 
     // MARK: - Brand
 
-    static let accent = Color(light: 0x0F766E, dark: 0x2DD4BF)
-    static let accentSoft = Color(light: 0xCCFBF1, dark: 0x134E4A)
+    static let accent = Brand.accent
+    static let accentSoft = Brand.accent.opacity(0.15)
 
     // MARK: - Surfaces
 
-    static let background = Color(light: 0xF7F8FA, dark: 0x0B0F14)
-    static let surface = Color(light: 0xFFFFFF, dark: 0x151B23)
-    static let surfaceRaised = Color(light: 0xFFFFFF, dark: 0x1D252F)
-    static let border = Color(light: 0xE3E7EC, dark: 0x2A3441)
+    static let background = Brand.background
+    static let surface = Brand.background
+    static let surfaceRaised = Brand.background
+    static let border = Brand.cardStroke
 
     // MARK: - Text
 
-    static let textPrimary = Color(light: 0x0D1218, dark: 0xF2F5F8)
-    static let textSecondary = Color(light: 0x5A6472, dark: 0x9AA6B4)
-    static let textTertiary = Color(light: 0x8B95A3, dark: 0x6B7480)
+    static let textPrimary = Brand.textPrimary
+    static let textSecondary = Brand.textSecondary
+    static let textTertiary = Brand.textSecondary
 
     // MARK: - Status
     // Mapped from BPCategory.Severity, never from a screen mockup.
@@ -38,9 +44,9 @@ enum Theme {
 
     // MARK: - Metrics
 
-    static let systolicColor = Color(light: 0x1D4ED8, dark: 0x60A5FA)
-    static let diastolicColor = Color(light: 0x7C3AED, dark: 0xA78BFA)
-    static let pulseColor = Color(light: 0xBE185D, dark: 0xF472B6)
+    static let systolicColor = Brand.restingHeartRate
+    static let diastolicColor = Brand.weight
+    static let pulseColor = Brand.sleep
 
     // MARK: - Layout
 

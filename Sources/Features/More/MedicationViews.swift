@@ -392,6 +392,8 @@ struct MedicationEditorView: View {
                 }
             }
             .navigationTitle(isEditing ? "Edit medication" : "Add medication")
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

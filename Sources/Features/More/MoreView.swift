@@ -42,10 +42,16 @@ struct MoreView: View {
                 row("Health Report", "square.and.arrow.up.on.square.fill", Brand.accent) {
                     HealthReportView()
                 }
-                row("Export & Delete", "lock.fill", Brand.weight) { PrivacyView() }
+                row("Export & Delete", "square.and.arrow.up.fill", Brand.weight) {
+                    DataManagementView()
+                }
             }
 
             group("App") {
+                row("Profile & Account", "person.crop.circle.fill", Brand.accent) {
+                    ProfileSettingsView()
+                }
+                row("Privacy & Data", "lock.fill", Brand.weight) { PrivacyView() }
                 row("Settings", "gearshape.fill", Brand.textSecondary) { AppSettingsView() }
                 row("Notifications", "bell.fill", Brand.medication) { NotificationSettingsView() }
                 row("Subscription", "star.fill", Brand.steps) { SubscriptionView() }

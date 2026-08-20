@@ -51,7 +51,11 @@ struct TermsView: View {
                     "Your data",
                     """
                     Readings, medications, documents and everything else you record stay on \
-                    this device. There is no account and no sync.
+                    this device. There is no sync.
+
+                    You can sign in with Apple, Google or an email address, but it is \
+                    optional and nothing is withheld if you do not. An account stores only \
+                    an identifier — never your health data — kept in this device's Keychain.
 
                     If you use the coach, a short summary of recent readings is sent to answer \
                     your question — never your full history, and never a document image. \

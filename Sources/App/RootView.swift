@@ -65,7 +65,7 @@ struct RootView: View {
             // Room for the bar, so content is never hidden behind it.
             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 70) }
 
-            BrandTabBar(selection: $router.tab) { isPresentingAddMenu = true }
+            BrandTabBar(selection: $router.tab, onAdd: { isPresentingAddMenu = true })
         }
         .sheet(isPresented: $isPresentingAddMenu) { AddMenuView() }
         .sheet(isPresented: $router.isPresentingAddBP) { AddBPView() }
@@ -79,77 +79,103 @@ struct RootView: View {
 
 /// The tab bar from the Figma design.
 ///
-/// SwiftUI's `TabView` cannot produce this: the Add button sits above the bar,
-/// overlapping it, and opens a sheet instead of selecting a tab. So the bar is
-/// drawn directly and the selected screen is switched by hand.
+/// Order is Home · Scan · [Ai Coach] · Add · More, with the coach raised into a
+/// circle above the bar. `TabView` cannot do this — the raised button overlaps
+/// the bar — so the bar is drawn directly and the screen switched by hand.
+///
+/// Add is a normal bar item that opens a sheet rather than selecting a tab,
+/// which is why it is not part of `AppTab`.
 struct BrandTabBar: View {
     @Binding var selection: AppTab
     let onAdd: () -> Void
 
-    private let items: [(tab: AppTab, title: String, symbol: String)] = [
-        (.home, "Home", "house.fill"),
-        (.scan, "Scan", "viewfinder"),
-        (.coach, "Ai Coach", "bubble.left.and.text.bubble.right.fill"),
-        (.more, "More", "square.grid.2x2.fill"),
-    ]
-
     var body: some View {
         ZStack(alignment: .top) {
             HStack(spacing: 0) {
-                item(items[0])
-                item(items[1])
-                // Space for the raised button, which overlaps the bar.
-                Color.clear.frame(maxWidth: .infinity)
-                item(items[2])
-                item(items[3])
+                item(.home, "Home", "house.fill")
+                item(.scan, "Scan", "viewfinder")
+
+                // The coach's label sits in the bar; its icon is the raised
+                // circle above, so only the label is drawn here.
+                VStack(spacing: 7) {
+                    Color.clear.frame(height: 21)
+                    Text("Ai Coach")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(selection == .coach ? Brand.accent : Brand.tabInactive)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 14)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selection = .coach
+                    Haptics.selection()
+                }
+                .accessibilityHidden(true)
+
+                addItem
+                item(.more, "More", "square.grid.2x2.fill")
             }
             .frame(height: 70)
             .background(Brand.background)
             .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(Brand.cardStroke)
-                    .frame(height: 1)
+                Rectangle().fill(Brand.cardStroke).frame(height: 1)
             }
 
-            addButton
-                .offset(y: -29)
+            coachButton.offset(y: -29)
         }
         .ignoresSafeArea(edges: .bottom)
     }
 
-    private func item(_ entry: (tab: AppTab, title: String, symbol: String)) -> some View {
+    private func item(_ tab: AppTab, _ title: String, _ symbol: String) -> some View {
         Button {
-            selection = entry.tab
+            selection = tab
             Haptics.selection()
         } label: {
             VStack(spacing: 7) {
-                Image(systemName: entry.symbol)
-                    .font(.system(size: 19))
-                Text(entry.title)
-                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: symbol).font(.system(size: 19))
+                Text(title).font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(selection == entry.tab ? Brand.accent : Brand.tabInactive)
+            .foregroundStyle(selection == tab ? Brand.accent : Brand.tabInactive)
             .frame(maxWidth: .infinity)
             .padding(.bottom, 14)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(entry.title)
-        .accessibilityAddTraits(selection == entry.tab ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selection == tab ? [.isButton, .isSelected] : .isButton)
     }
 
-    private var addButton: some View {
+    /// Opens the Add sheet. Never a selected tab.
+    private var addItem: some View {
         Button(action: onAdd) {
+            VStack(spacing: 7) {
+                Image(systemName: "plus.circle").font(.system(size: 19))
+                Text("Add").font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(Brand.tabInactive)
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 14)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add a record")
+    }
+
+    private var coachButton: some View {
+        Button {
+            selection = .coach
+            Haptics.selection()
+        } label: {
             Circle()
                 .fill(Brand.accent)
                 .frame(width: 59, height: 59)
                 .overlay {
-                    Image(systemName: "plus")
-                        .font(.system(size: 24, weight: .semibold))
+                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                        .font(.system(size: 23))
                         .foregroundStyle(Brand.onAccent)
                 }
-                .shadow(color: Brand.accent.opacity(0.25), radius: 12, y: 8)
+                .shadow(color: Brand.accent.opacity(0.3), radius: 12, y: 8)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Add a record")
+        .accessibilityLabel("Ai Coach")
+        .accessibilityAddTraits(selection == .coach ? [.isButton, .isSelected] : .isButton)
     }
 }

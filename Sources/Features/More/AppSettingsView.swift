@@ -41,9 +41,11 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        // The design is dark-only, so dark is the default rather than following
+        // the device. A user who prefers light can still choose it.
         self.appearance = Appearance(
             rawValue: defaults.string(forKey: "settings.appearance") ?? ""
-        ) ?? .system
+        ) ?? .dark
 
         if let stored = defaults.string(forKey: "settings.weightUnit"),
            let unit = WeightUnit(rawValue: stored) {
@@ -122,6 +124,16 @@ struct AppSettingsView: View {
                 Text("BP Coach follows your iPhone's language. Change it in iOS Settings.")
             }
 
+            Section("Targets") {
+                NavigationLink { SodiumTargetView() } label: {
+                    LabeledContent {
+                        Text("\(SodiumSettings.dailyTarget) mg")
+                    } label: {
+                        Label("Daily sodium target", systemImage: "drop.fill")
+                    }
+                }
+            }
+
             Section("Blood pressure guideline") {
                 NavigationLink { GuidelineSettingsView() } label: {
                     LabeledContent {
@@ -133,5 +145,7 @@ struct AppSettingsView: View {
             }
         }
         .navigationTitle("App Settings")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
     }
 }

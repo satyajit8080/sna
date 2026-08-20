@@ -2,59 +2,6 @@ import SwiftData
 import SwiftUI
 import UIKit
 
-struct SettingsView: View {
-    @Environment(GuidelineEngine.self) private var guidelines
-    @State private var selected: BPGuidelineID = .accAha2017
-
-    var body: some View {
-        List {
-            Section {
-                NavigationLink { ProfileSettingsView() } label: {
-                    Label("Profiles", systemImage: "person.2.fill")
-                }
-                NavigationLink { GuidelineSettingsView() } label: {
-                    LabeledContent {
-                        Text(guidelines.active.displayName)
-                    } label: {
-                        Label("BP guideline", systemImage: "list.clipboard.fill")
-                    }
-                }
-            }
-
-            Section {
-                NavigationLink { NotificationSettingsView() } label: {
-                    Label("Notifications", systemImage: "bell.fill")
-                }
-                NavigationLink { SodiumTargetView() } label: {
-                    Label("Sodium target", systemImage: "drop.fill")
-                }
-                NavigationLink { HealthDataView() } label: {
-                    Label("Apple Health", systemImage: "heart.fill")
-                }
-                NavigationLink { CoachSettingsView() } label: {
-                    Label("AI coach", systemImage: "sparkles")
-                }
-            }
-
-            Section {
-                NavigationLink { PrivacyView() } label: {
-                    Label("Privacy", systemImage: "lock.fill")
-                }
-                NavigationLink { DataManagementView() } label: {
-                    Label("Export & delete data", systemImage: "square.and.arrow.up")
-                }
-            }
-
-            Section {
-                NavigationLink { AboutView() } label: {
-                    Label("About", systemImage: "info.circle.fill")
-                }
-            }
-        }
-        .navigationTitle("Settings")
-    }
-}
-
 struct GuidelineSettingsView: View {
     @Environment(GuidelineEngine.self) private var guidelines
     @State private var selected: BPGuidelineID = .accAha2017
@@ -102,83 +49,154 @@ struct GuidelineSettingsView: View {
             }
         }
         .navigationTitle("BP guideline")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
         .onAppear { selected = guidelines.active.id }
     }
 }
 
 struct NotificationSettingsView: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
     @State private var authorizationDenied = false
     @State private var quiet = NotificationEngine.QuietHours.current()
     @State private var pendingCount = 0
+    @State private var enabled: [NotificationEngine.Category: Bool] = [:]
 
     var body: some View {
-        List {
+        BrandScreen {
+            BrandHeader(
+                title: "Notifications",
+                subtitle: "Choose what BP Coach reminds you about",
+                showsBack: true,
+                onBack: { dismiss() }
+            )
+
             if authorizationDenied {
-                Section {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                        ErrorBanner(error: .notificationsDenied)
-                        Button("Open iOS Settings") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                openURL(url)
+                BrandCard(padding: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Notifications are off", systemImage: "bell.slash.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Brand.restingHeartRate)
+                        Text("BP Coach cannot send reminders until you allow notifications in iOS Settings.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Open iOS Settings") { openSettings() }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Brand.accent)
+                    }
+                }
+            }
+
+            BrandFormSection(
+                "Categories",
+                footer: "Everything is scheduled on this device. BP Coach sends no push notifications."
+            ) {
+                ForEach(Array(NotificationEngine.Category.allCases.enumerated()), id: \.offset) { index, category in
+                    if index > 0 { BrandRowDivider() }
+                    BrandToggleRow(
+                        title: category.label,
+                        detail: category.explanation,
+                        symbol: symbol(for: category),
+                        tint: tint(for: category),
+                        isOn: Binding(
+                            get: { enabled[category] ?? true },
+                            set: { newValue in
+                                enabled[category] = newValue
+                                NotificationEngine.shared.setEnabled(newValue, for: category)
                             }
-                        }
-                        .font(.subheadline)
-                    }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
-                    .listRowBackground(Color.clear)
+                        )
+                    )
                 }
             }
 
-            Section {
-                ForEach(NotificationEngine.Category.allCases, id: \.self) { category in
-                    NotificationToggle(category: category)
-                }
-            } header: {
-                Text("Categories")
-            } footer: {
-                Text("Everything is scheduled on this device. BP Coach sends no push notifications.")
-            }
+            BrandFormSection(
+                "Quiet hours",
+                footer: """
+                Reminders due during quiet hours move to \(hourLabel(quiet.endHour)) rather than \
+                being dropped — a medication reminder that never arrives is worse than a late one.
+                """
+            ) {
+                BrandToggleRow(
+                    title: "Quiet hours",
+                    symbol: "moon.fill",
+                    tint: Brand.sleep,
+                    isOn: $quiet.isEnabled
+                )
 
-            Section {
-                Toggle("Quiet hours", isOn: $quiet.isEnabled)
                 if quiet.isEnabled {
-                    Picker("From", selection: $quiet.startHour) {
-                        ForEach(0..<24, id: \.self) { Text(hourLabel($0)).tag($0) }
-                    }
-                    Picker("Until", selection: $quiet.endHour) {
-                        ForEach(0..<24, id: \.self) { Text(hourLabel($0)).tag($0) }
-                    }
+                    BrandRowDivider()
+                    hourPicker("From", selection: $quiet.startHour)
+                    BrandRowDivider()
+                    hourPicker("Until", selection: $quiet.endHour)
                 }
-            } header: {
-                Text("Quiet hours")
-            } footer: {
-                Text("""
-                Reminders due during quiet hours move to \(hourLabel(quiet.endHour)) rather \
-                than being dropped — a medication reminder that never arrives is worse than \
-                a late one.
-                """)
             }
 
-            Section {
-                LabeledContent("Scheduled reminders", value: "\(pendingCount)")
-                Button("Open iOS notification settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        openURL(url)
-                    }
-                }
-            } footer: {
-                Text("Sounds, banners and the lock screen are controlled by iOS.")
+            BrandFormSection("System") {
+                BrandValueRow(
+                    title: "Scheduled reminders",
+                    value: "\(pendingCount)",
+                    symbol: "calendar.badge.clock"
+                )
+                BrandRowDivider()
+                BrandActionRow(
+                    title: "Open iOS notification settings",
+                    detail: "Sounds, banners and the lock screen are controlled by iOS",
+                    symbol: "gearshape.fill",
+                    tint: Brand.textSecondary
+                ) { openSettings() }
             }
         }
-        .navigationTitle("Notifications")
         .onChange(of: quiet.isEnabled) { _, _ in quiet.save() }
         .onChange(of: quiet.startHour) { _, _ in quiet.save() }
         .onChange(of: quiet.endHour) { _, _ in quiet.save() }
         .task {
             authorizationDenied = await !NotificationEngine.shared.isAuthorized()
             pendingCount = await NotificationEngine.shared.pendingCount()
+            for category in NotificationEngine.Category.allCases {
+                enabled[category] = NotificationEngine.shared.isEnabled(category)
+            }
         }
+    }
+
+    private func hourPicker(_ title: String, selection: Binding<Int>) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundStyle(Brand.textPrimary)
+            Spacer()
+            Picker(title, selection: selection) {
+                ForEach(0..<24, id: \.self) { Text(hourLabel($0)).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .tint(Brand.accent)
+        }
+        .padding(16)
+    }
+
+    private func symbol(for category: NotificationEngine.Category) -> String {
+        switch category {
+        case .medication: "pills.fill"
+        case .measurement: "heart.text.square.fill"
+        case .appointment: "calendar"
+        case .drift: "chart.line.uptrend.xyaxis"
+        case .reportPrep: "doc.text.fill"
+        }
+    }
+
+    private func tint(for category: NotificationEngine.Category) -> Color {
+        switch category {
+        case .medication: Brand.medication
+        case .measurement: Brand.accent
+        case .appointment: Brand.sleep
+        case .drift: Brand.restingHeartRate
+        case .reportPrep: Brand.steps
+        }
+    }
+
+    private func openSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
     }
 
     private func hourLabel(_ hour: Int) -> String {
@@ -186,27 +204,6 @@ struct NotificationSettingsView: View {
         components.hour = hour
         let date = Calendar.current.date(from: components) ?? .now
         return date.formatted(date: .omitted, time: .shortened)
-    }
-}
-
-struct NotificationToggle: View {
-    let category: NotificationEngine.Category
-    @State private var isOn = true
-
-    var body: some View {
-        Toggle(isOn: $isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(category.label)
-                Text(category.explanation)
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .onAppear { isOn = NotificationEngine.shared.isEnabled(category) }
-        .onChange(of: isOn) { _, new in
-            NotificationEngine.shared.setEnabled(new, for: category)
-            if new { Task { await NotificationEngine.shared.requestAuthorization() } }
-        }
     }
 }
 
@@ -248,40 +245,9 @@ struct SodiumTargetView: View {
             }
         }
         .navigationTitle("Sodium target")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
         .onChange(of: target) { _, new in SodiumSettings.dailyTarget = new }
-    }
-}
-
-struct CoachSettingsView: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        List {
-            Section {
-                LabeledContent("Status", value: app.coach.isConfigured ? "Configured" : "Not configured")
-                LabeledContent("Endpoint", value: BackendConfig.baseURL?.host() ?? "none")
-            } footer: {
-                Text("""
-                No AI provider is connected. When one is added it will sit behind the same \
-                service protocol, receive only the capped summary shown in the Coach tab, \
-                and never be consulted about urgency.
-                """)
-            }
-
-            Section("Limits enforced in code") {
-                ForEach(CoachGuardrails.prohibited, id: \.self) { rule in
-                    Label(rule.capitalized, systemImage: "xmark.circle")
-                        .font(.subheadline)
-                }
-            }
-
-            Section {
-                LabeledContent("Reading cap", value: "\(AIContextEngine.readingLimit)")
-            } footer: {
-                Text("The most readings that can ever be included in a single request.")
-            }
-        }
-        .navigationTitle("AI coach")
     }
 }
 
@@ -290,6 +256,14 @@ struct AboutView: View {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
         return "\(short) (\(build))"
+    }
+
+    private var coachStatus: String {
+        BackendConfig.baseURL == nil ? "Not configured" : "Configured"
+    }
+
+    private var coachTint: Color {
+        BackendConfig.baseURL == nil ? Theme.statusElevated : Theme.statusNormal
     }
 
     var body: some View {
@@ -313,6 +287,31 @@ struct AboutView: View {
                 LabeledContent("Version", value: version)
             }
 
+            // Diagnostics, in About because it is the one screen that is always
+            // reachable and never redesigned away. Without this the only way to
+            // tell whether a build has a backend URL is to read a CI log.
+            Section {
+                LabeledContent("AI coach") {
+                    Text(coachStatus).foregroundStyle(coachTint)
+                }
+                LabeledContent("Endpoint") {
+                    Text(BackendConfig.baseURL?.host() ?? "none")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(
+                            BackendConfig.baseURL == nil ? Theme.statusElevated : Theme.textSecondary
+                        )
+                }
+            } header: {
+                Text("Connection")
+            } footer: {
+                Text(BackendConfig.baseURL == nil
+                     ? """
+                       This build has no backend address, so the coach cannot answer. \
+                       Everything else works.
+                       """
+                     : "The coach and barcode lookup both use this address.")
+            }
+
             Section {
                 Text("""
                 BP Coach is not a medical device and does not diagnose, treat or prevent any \
@@ -329,5 +328,7 @@ struct AboutView: View {
             }
         }
         .navigationTitle("About")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
     }
 }

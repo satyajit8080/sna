@@ -72,6 +72,8 @@ struct AddBPView: View {
             }
             .navigationTitle("Add reading")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -115,6 +117,8 @@ struct AddBPView: View {
             }
             .navigationTitle("Quick check")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
         }
         .interactiveDismissDisabled()
     }

@@ -145,10 +145,11 @@ struct DocumentScanView: View {
     // MARK: - Processing
 
     private var processing: some View {
-        VStack(spacing: Theme.Spacing.md) {
-            ProgressView()
+        Group {
             if case .processing(let message) = state {
-                Text(message).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                LoadingView(message: message)
+            } else {
+                LoadingView(message: "Working…")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

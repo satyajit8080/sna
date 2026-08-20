@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct HealthDataView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var app
     @Environment(\.modelContext) private var context
     @Query private var allReadings: [BPReading]
@@ -11,7 +12,12 @@ struct HealthDataView: View {
     @State private var importResult: String?
 
     var body: some View {
-        List {
+        VStack(alignment: .leading, spacing: 0) {
+            BrandHeader(title: "Apple Health", subtitle: "Read your Health data, on your device", showsBack: true, onBack: { dismiss() })
+                .padding(.horizontal, Brand.Metric.pagePadding)
+                .padding(.bottom, 8)
+
+            List {
             if let error {
                 Section {
                     ErrorBanner(error: error) { self.error = nil }
@@ -93,6 +99,11 @@ struct HealthDataView: View {
             }
         }
         .navigationTitle("Apple Health")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
+        }
+        .background(Brand.background)
+        .navigationBarHidden(true)
         .task { await app.health.refreshSnapshot(for: app.activeProfile) }
     }
 
@@ -125,11 +136,17 @@ struct HealthDataView: View {
 }
 
 struct PrivacyView: View {
+    @Environment(\.dismiss) private var dismiss
     var body: some View {
-        List {
+        VStack(alignment: .leading, spacing: 0) {
+            BrandHeader(title: "Privacy & Data", subtitle: "What is stored, and how to remove it", showsBack: true, onBack: { dismiss() })
+                .padding(.horizontal, Brand.Metric.pagePadding)
+                .padding(.bottom, 8)
+
+            List {
             Section {
                 Label("Your readings stay on this device", systemImage: "iphone")
-                Label("No account required", systemImage: "person.crop.circle.badge.xmark")
+                Label("No account required", systemImage: "person.crop.circle.badge.checkmark")
                 Label("No analytics or tracking", systemImage: "eye.slash")
                 Label("No ads", systemImage: "rectangle.slash")
                 Label("No server", systemImage: "externaldrive.badge.xmark")
@@ -154,5 +171,10 @@ struct PrivacyView: View {
             }
         }
         .navigationTitle("Privacy")
+        .scrollContentBackground(.hidden)
+        .background(Brand.background)
+        }
+        .background(Brand.background)
+        .navigationBarHidden(true)
     }
 }

@@ -322,6 +322,9 @@ struct AppointmentRow: View {
 }
 
 /// One editor for add and edit, so the two paths cannot drift apart.
+/// Add or edit an appointment, in the brand style.
+///
+/// One editor for both paths so they cannot drift apart.
 struct AppointmentEditorView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.modelContext) private var context
@@ -346,65 +349,108 @@ struct AppointmentEditorView: View {
     ]
 
     private var isEditing: Bool { appointment != nil }
+    private var canSave: Bool { !doctorName.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Appointment") {
-                    TextField("Doctor", text: $doctorName)
-                        .textInputAutocapitalization(.words)
-                    TextField("Specialty (optional)", text: $specialty)
-                        .textInputAutocapitalization(.words)
-                    DatePicker("When", selection: $scheduledFor)
-                    TextField("Location (optional)", text: $location)
+            BrandScreen {
+                BrandHeader(
+                    title: isEditing ? "Edit Appointment" : "Add Appointment",
+                    showsBack: true,
+                    onBack: { dismiss() }
+                )
+
+                BrandFormSection("Appointment") {
+                    BrandTextField(
+                        title: "Doctor",
+                        placeholder: "Dr Sharma",
+                        text: $doctorName,
+                        symbol: "person.fill",
+                        autocapitalization: .words
+                    )
+                    BrandRowDivider()
+                    BrandTextField(
+                        title: "Specialty",
+                        placeholder: "Cardiology (optional)",
+                        text: $specialty,
+                        symbol: "stethoscope",
+                        autocapitalization: .words
+                    )
+                    BrandRowDivider()
+                    BrandDateRow(title: "When", date: $scheduledFor)
+                    BrandRowDivider()
+                    BrandTextField(
+                        title: "Location",
+                        placeholder: "Clinic or address (optional)",
+                        text: $location,
+                        symbol: "mappin.and.ellipse"
+                    )
                 }
 
-                Section {
-                    Toggle("Remind me", isOn: $remindersEnabled)
+                BrandFormSection(
+                    "Reminders",
+                    footer: remindersEnabled
+                        ? "Reminders that have already passed are skipped rather than firing straight away."
+                        : nil
+                ) {
+                    BrandToggleRow(
+                        title: "Remind me",
+                        symbol: "bell.fill",
+                        isOn: $remindersEnabled
+                    )
+
                     if remindersEnabled {
                         ForEach(offsetOptions, id: \.1) { option in
-                            Button {
+                            BrandRowDivider()
+                            BrandActionRow(
+                                title: option.0,
+                                showsChevron: false
+                            ) {
                                 toggle(option.1)
-                            } label: {
-                                HStack {
-                                    Text(option.0).foregroundStyle(Theme.textPrimary)
-                                    Spacer()
-                                    if selectedOffsets.contains(option.1) {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(Theme.accent)
-                                    }
+                                Haptics.selection()
+                            }
+                            .overlay(alignment: .trailing) {
+                                if selectedOffsets.contains(option.1) {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(Brand.accent)
+                                        .padding(.trailing, 18)
                                 }
                             }
                         }
                     }
-                } header: {
-                    Text("Reminders")
-                } footer: {
-                    if remindersEnabled {
-                        Text("Reminders that have already passed are skipped rather than firing straight away.")
-                    }
                 }
 
-                Section("Notes") {
-                    TextField("Questions to ask, symptoms to mention…", text: $notes, axis: .vertical)
-                        .lineLimit(1...6)
+                BrandFormSection("Notes") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Questions to ask, symptoms to mention")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                        TextField(
+                            "",
+                            text: $notes,
+                            prompt: Text("Optional")
+                                .foregroundStyle(Brand.textSecondary.opacity(0.6)),
+                            axis: .vertical
+                        )
+                        .font(.system(size: 15))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(3...8)
+                    }
+                    .padding(16)
                 }
+
+                BrandPrimaryButton(
+                    title: isEditing ? "Save Changes" : "Add Appointment",
+                    isEnabled: canSave
+                ) { save() }
 
                 if isEditing {
-                    Section {
-                        Button("Delete appointment", role: .destructive) {
-                            isConfirmingDelete = true
-                        }
+                    Button("Delete appointment", role: .destructive) {
+                        isConfirmingDelete = true
                     }
-                }
-            }
-            .navigationTitle(isEditing ? "Edit appointment" : "Add appointment")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
-                        .disabled(doctorName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .font(.system(size: 14))
+                    .frame(maxWidth: .infinity)
                 }
             }
             .onAppear(perform: load)

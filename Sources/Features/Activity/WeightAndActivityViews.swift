@@ -50,6 +50,8 @@ struct AddWeightView: View {
             }
             .navigationTitle("Add weight")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
@@ -94,8 +96,10 @@ struct AddWeightView: View {
     }
 }
 
+/// Weight, implemented from the Figma design.
 struct WeightHistoryView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \LifestyleEntry.recordedAt, order: .reverse) private var allEntries: [LifestyleEntry]
     @State private var isAdding = false
 
@@ -104,95 +108,127 @@ struct WeightHistoryView: View {
     }
 
     var body: some View {
-        Group {
-            if weights.isEmpty {
-                EmptyStateView(
-                    symbol: "scalemass",
-                    title: "No weight recorded",
-                    message: "Weight changes and blood pressure often move together, so it is worth tracking.",
-                    actionTitle: "Add weight",
-                    action: { isAdding = true }
-                )
-            } else {
-                ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        currentCard
-                        if weights.count >= 2 { trendCard }
-                        historyList
-                    }
-                    .padding(Theme.Spacing.lg)
-                }
+        BrandScreen {
+            BrandHeader(
+                title: "Weight",
+                showsBack: true,
+                onBack: { dismiss() },
+                trailing: [("plus", { isAdding = true })]
+            )
+
+            currentCard
+
+            if weights.count >= 2 {
+                Text("Trend")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                trendCard
             }
-        }
-        .background(Theme.background)
-        .navigationTitle("Weight")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { isAdding = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Add weight")
+
+            if !weights.isEmpty {
+                Text("History")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                historyList
             }
+
+            BrandPrimaryButton(title: "Add Weight") { isAdding = true }
         }
         .sheet(isPresented: $isAdding) { AddWeightView() }
     }
 
     private var currentCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                SectionHeader(title: "Current")
-                if let latest = weights.first {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(String(format: "%.1f", latest.value))
-                            .font(Theme.number(36, weight: .bold))
-                        Text("kg").foregroundStyle(Theme.textSecondary)
-                        Spacer()
+        BrandCard {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Current Weight")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.textSecondary)
+
+                    if let latest = weights.first {
+                        Text(app.settings.displayWeight(latest.value))
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(Brand.textPrimary)
+
+                        Text(latest.recordedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+
                         if weights.count >= 2 {
                             let delta = latest.value - weights[1].value
-                            Label(
-                                String(format: "%+.1f", delta),
-                                systemImage: delta > 0 ? "arrow.up" : "arrow.down"
-                            )
-                            .font(.subheadline)
-                            .foregroundStyle(delta > 0 ? Theme.statusElevated : Theme.statusNormal)
+                            HStack(spacing: 6) {
+                                Image(systemName: delta > 0 ? "arrow.up" : "arrow.down")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(String(format: "%.1f kg since last time", abs(delta)))
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+                            // Neither direction is inherently good: what matters
+                            // depends on the person's situation, so both use the
+                            // neutral accent rather than red or green.
+                            .foregroundStyle(Brand.accent)
+                            .padding(.top, 2)
                         }
+                    } else {
+                        Text("—")
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(Brand.textSecondary)
+                        Text("Weight and blood pressure often move together, so it is worth tracking.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(latest.recordedAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(Theme.textTertiary)
                 }
+
+                Spacer(minLength: 0)
+                BrandIconTile(symbol: "scalemass.fill", tint: Brand.weight, size: 55)
             }
         }
     }
 
     private var trendCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                SectionHeader(title: "Trend")
-                Chart(weights.reversed()) { entry in
-                    LineMark(
-                        x: .value("Date", entry.recordedAt),
-                        y: .value("kg", entry.value)
+        BrandCard(padding: 16) {
+            Chart(weights.reversed()) { entry in
+                LineMark(
+                    x: .value("Date", entry.recordedAt),
+                    y: .value("kg", entry.value)
+                )
+                .foregroundStyle(Brand.weight)
+                .interpolationMethod(.monotone)
+
+                AreaMark(
+                    x: .value("Date", entry.recordedAt),
+                    y: .value("kg", entry.value)
+                )
+                .foregroundStyle(
+                    .linearGradient(
+                        colors: [Brand.weight.opacity(0.25), Brand.weight.opacity(0)],
+                        startPoint: .top, endPoint: .bottom
                     )
-                    .foregroundStyle(Theme.accent)
-                    .interpolationMethod(.monotone)
-                }
-                .frame(height: 160)
-                .accessibilityLabel("Weight trend over time")
+                )
+                .interpolationMethod(.monotone)
             }
+            .chartYScale(domain: .automatic(includesZero: false))
+            .frame(height: 170)
+            .accessibilityLabel("Weight trend over time")
         }
     }
 
     private var historyList: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                SectionHeader(title: "History")
-                ForEach(weights.prefix(30)) { entry in
-                    HStack {
-                        Text(entry.recordedAt.formatted(date: .abbreviated, time: .omitted))
-                            .foregroundStyle(Theme.textSecondary)
-                        Spacer()
-                        Text(String(format: "%.1f kg", entry.value)).monospacedDigit()
+        VStack(spacing: 12) {
+            ForEach(weights.prefix(30)) { entry in
+                BrandCard(padding: 12) {
+                    HStack(spacing: 14) {
+                        BrandIconTile(symbol: "scalemass.fill", tint: Brand.weight, size: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(app.settings.displayWeight(entry.value))
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Text(entry.recordedAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .font(.subheadline)
                 }
             }
         }
@@ -248,6 +284,8 @@ struct AddActivityView: View {
             }
             .navigationTitle("Add activity")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Brand.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
@@ -274,6 +312,7 @@ struct AddActivityView: View {
 struct ActivityHistoryView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \ActivityEntry.startedAt, order: .reverse) private var allActivity: [ActivityEntry]
     @State private var isAdding = false
 
@@ -287,75 +326,107 @@ struct ActivityHistoryView: View {
     }
 
     var body: some View {
-        Group {
+        BrandScreen {
+            BrandHeader(
+                title: "Activity",
+                showsBack: true,
+                onBack: { dismiss() },
+                trailing: [("plus", { isAdding = true })]
+            )
+
+            BrandCard {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("This week")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(weekMinutes)")
+                                .font(.system(size: 30, weight: .bold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Text("min")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Brand.textSecondary)
+                        }
+                        // 150 minutes a week is the standard guidance, so it is
+                        // a target rather than an app invention.
+                        BrandProgressBar(
+                            fraction: Double(weekMinutes) / 150,
+                            tint: weekMinutes >= 150 ? Brand.accent : Brand.progress
+                        )
+                        .padding(.top, 4)
+                        Text("of 150 minutes — the usual weekly guidance")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Brand.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                    BrandIconTile(symbol: "figure.walk", tint: Brand.accent, size: 55)
+                }
+            }
+
+            BrandCard(padding: 16) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
+                    Text("""
+                    Steps and workouts from Apple Health appear on Home. Log here for \
+                    anything Health did not capture.
+                    """)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             if mine.isEmpty {
-                EmptyStateView(
-                    symbol: "figure.walk",
-                    title: "No activity logged",
-                    message: "Apple Health covers steps and workouts automatically. Log here for anything it missed.",
-                    actionTitle: "Add activity",
-                    action: { isAdding = true }
-                )
+                BrandCard {
+                    Text("Nothing logged yet.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
+                }
             } else {
-                ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        CardView {
-                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                                SectionHeader(title: "This week", subtitle: "Logged manually")
-                                StatTile(
-                                    title: "Active minutes",
-                                    value: "\(weekMinutes)",
-                                    caption: "150/week is the usual guidance",
-                                    tint: weekMinutes >= 150 ? Theme.statusNormal : Theme.textPrimary
-                                )
+                Text("Recent")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+
+                VStack(spacing: 12) {
+                    ForEach(mine.prefix(40)) { entry in
+                        BrandCard(padding: 12) {
+                            HStack(spacing: 14) {
+                                BrandIconTile(symbol: entry.kind.symbol, tint: Brand.accent, size: 44)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.kind.label)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(Brand.textPrimary)
+                                    Text(entry.startedAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Brand.textSecondary)
+                                }
+                                Spacer(minLength: 0)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text("\(entry.minutes) min")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(Brand.textPrimary)
+                                    if let km = entry.distanceKilometres {
+                                        Text(String(format: "%.1f km", km))
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Brand.textSecondary)
+                                    }
+                                }
                             }
                         }
-
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            SectionHeader(title: "Recent")
-                            ForEach(mine.prefix(40)) { entry in
-                                CardView(padding: Theme.Spacing.md) {
-                                    HStack {
-                                        Image(systemName: entry.kind.symbol)
-                                            .foregroundStyle(Theme.accent)
-                                            .frame(width: 24)
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(entry.kind.label).font(.subheadline.weight(.medium))
-                                            Text(entry.startedAt.formatted(date: .abbreviated, time: .shortened))
-                                                .font(.caption)
-                                                .foregroundStyle(Theme.textTertiary)
-                                        }
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 1) {
-                                            Text("\(entry.minutes) min").font(.subheadline)
-                                            if let km = entry.distanceKilometres {
-                                                Text(String(format: "%.1f km", km))
-                                                    .font(.caption)
-                                                    .foregroundStyle(Theme.textTertiary)
-                                            }
-                                        }
-                                    }
-                                }
-                                .swipeActions {
-                                    Button("Delete", role: .destructive) {
-                                        context.delete(entry)
-                                        try? context.save()
-                                    }
-                                }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) {
+                                context.delete(entry)
+                                try? context.save()
                             }
                         }
                     }
-                    .padding(Theme.Spacing.lg)
                 }
             }
-        }
-        .background(Theme.background)
-        .navigationTitle("Activity")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { isAdding = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Add activity")
-            }
+
+            BrandPrimaryButton(title: "Add Activity") { isAdding = true }
         }
         .sheet(isPresented: $isAdding) { AddActivityView() }
     }
