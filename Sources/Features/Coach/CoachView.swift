@@ -61,11 +61,14 @@ struct CoachView: View {
                 )
                 .padding(.horizontal, Brand.Metric.pagePadding)
 
-                // The composer is a safe-area inset rather than a sibling in
-                // this VStack. As a sibling it was pushed below the visible
-                // area by the scroll view and never appeared.
+                // The transcript is told explicitly to fill, and the composer
+                // follows it as a plain sibling. A `safeAreaInset` on the scroll
+                // view placed the composer inside the scroll view's own safe
+                // area, which put it below the visible region.
                 transcript
-                    .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                composer
             }
         }
         .navigationBarHidden(true)
@@ -430,11 +433,7 @@ struct CoachView: View {
             }
         }
         .padding(.horizontal, Brand.Metric.pagePadding)
-        .padding(.top, 14)
-        // The tab bar sits over the bottom of this view, so the composer needs
-        // clearance of its own — the scaffold's inset does not apply inside a
-        // VStack that fills the screen.
-        .padding(.bottom, 22)
+        .padding(.vertical, 14)
         .background(Brand.background)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {

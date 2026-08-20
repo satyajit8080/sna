@@ -56,28 +56,31 @@ struct RootView: View {
     /// and tapping a tab appeared to do nothing.
     @ViewBuilder
     private func mainInterface(_ router: Bindable<Router>) -> some View {
-        ZStack(alignment: .bottom) {
-            Brand.background.ignoresSafeArea()
-
-            // The selected screen is shown directly rather than through TabView,
-            // so the custom bar can float above it with the raised centre button.
-            //
-            // `.id` forces a fresh NavigationStack per tab. Without it SwiftUI
-            // reuses one stack across all four, and a screen pushed in one tab
-            // reappears in another.
-            Group {
-                switch router.wrappedValue.tab {
-                case .home: NavigationStack { HomeView() }
-                case .scan: NavigationStack { ScanHubView() }
-                case .coach: NavigationStack { CoachView() }
-                case .more: NavigationStack { MoreView() }
-                }
+        // The screen is shown directly rather than through TabView, so the
+        // custom bar can carry the raised centre button.
+        //
+        // The bar is an `overlay`, not a ZStack sibling: as a sibling it ignored
+        // the bottom safe area, which expanded the ZStack's bounds past the
+        // screen edge and shifted everything inside it — including pushing the
+        // Coach composer out of view.
+        //
+        // `.id` gives each tab its own NavigationStack. Without it SwiftUI reuses
+        // one across all four and a screen pushed in one tab reappears in another.
+        Group {
+            switch router.wrappedValue.tab {
+            case .home: NavigationStack { HomeView() }
+            case .scan: NavigationStack { ScanHubView() }
+            case .coach: NavigationStack { CoachView() }
+            case .more: NavigationStack { MoreView() }
             }
-            .id(router.wrappedValue.tab)
-            // Room for the bar. It is 70pt tall but ignores the bottom safe
-            // area, so on a device with a home indicator it occupies more.
-            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 96) }
-
+        }
+        .id(router.wrappedValue.tab)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Brand.background.ignoresSafeArea())
+        // Reserves room so content is never under the bar. `safeAreaInset` with
+        // the bar itself would also work, but a clear spacer keeps the bar's
+        // own hit testing independent of the content's layout.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             BrandTabBar(selection: router.tab, onAdd: { isPresentingAddMenu = true })
         }
         .sheet(isPresented: $isPresentingAddMenu) { AddMenuView() }
@@ -136,7 +139,10 @@ struct BrandTabBar: View {
 
             coachButton.offset(y: -29)
         }
-        .ignoresSafeArea(edges: .bottom)
+        // No `ignoresSafeArea` here. As a `safeAreaInset` the bar is already
+        // placed correctly, and ignoring the safe area made it overhang the
+        // screen edge and displace the content above it.
+        .background(Brand.background)
     }
 
     private func item(_ tab: AppTab, _ title: String, _ symbol: String) -> some View {
