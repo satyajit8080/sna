@@ -776,3 +776,82 @@ struct AuthTests {
         #expect(store.stored == nil)
     }
 }
+
+/// Nutrition label reading.
+///
+/// This replaces "food scanning by photo", which needed a vision model. Reading
+/// a printed panel is something the device does reliably, and the number comes
+/// from the label rather than a guess.
+@Suite("Nutrition label extraction")
+struct NutritionLabelTests {
+
+    @Test("Reads sodium stated in milligrams")
+    func readsMilligrams() {
+        let result = NutritionLabelExtraction.extract(from: [
+            "Nutrition Facts", "Serving size 240 ml", "Sodium 480mg", "Total Fat 2g",
+        ])
+        #expect(result?.sodiumMilligrams == 480)
+        #expect(result?.wasDerivedFromSalt == false)
+    }
+
+    @Test("Reads sodium stated in grams")
+    func readsGrams() {
+        let result = NutritionLabelExtraction.extract(from: ["Sodium 0.5 g"])
+        #expect(result?.sodiumMilligrams == 500)
+    }
+
+    /// Most of the world prints salt, not sodium.
+    @Test("Derives sodium from salt and says so")
+    func derivesFromSalt() {
+        let result = NutritionLabelExtraction.extract(from: [
+            "Nutrition per 100g", "Salt 1.2g",
+        ])
+        #expect(result?.sodiumMilligrams == 480)  // 1.2g × 400
+        #expect(result?.wasDerivedFromSalt == true)
+    }
+
+    /// A stated sodium figure is more accurate than a salt conversion, so it
+    /// must win when both appear.
+    @Test("Prefers a stated sodium figure over salt")
+    func prefersSodium() {
+        let result = NutritionLabelExtraction.extract(from: [
+            "Salt 1.2g", "Sodium 300mg",
+        ])
+        #expect(result?.sodiumMilligrams == 300)
+        #expect(result?.wasDerivedFromSalt == false)
+    }
+
+    /// Per-serving and per-100g are very different numbers; conflating them
+    /// would misreport intake badly.
+    @Test("Records whether the figure is per serving or per 100g")
+    func recordsBasis() {
+        let serving = NutritionLabelExtraction.extract(from: [
+            "Serving size 30 g", "Sodium 200mg",
+        ])
+        if case .perServing = serving?.basis {} else {
+            Issue.record("Expected a per-serving basis")
+        }
+
+        let hundred = NutritionLabelExtraction.extract(from: ["Sodium 200mg"])
+        #expect(hundred?.basis == .per100g)
+    }
+
+    @Test("Comma decimals are handled")
+    func handlesCommaDecimal() {
+        let result = NutritionLabelExtraction.extract(from: ["Sel 1,5 g", "Salt 1,5 g"])
+        #expect(result?.sodiumMilligrams == 600)
+    }
+
+    @Test("A label with no sodium or salt yields nothing")
+    func noMatch() {
+        #expect(NutritionLabelExtraction.extract(from: [
+            "Nutrition Facts", "Calories 250", "Protein 8g",
+        ]) == nil)
+    }
+
+    @Test("The source line is kept so the user can check it")
+    func keepsSourceLine() {
+        let result = NutritionLabelExtraction.extract(from: ["Sodium 480mg  20%"])
+        #expect(result?.sourceLine.contains("480") == true)
+    }
+}

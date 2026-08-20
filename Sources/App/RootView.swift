@@ -36,9 +36,11 @@ struct RootView: View {
     @State private var isPresentingAddMenu = false
 
     var body: some View {
-        Group {
+        @Bindable var router = router
+
+        return Group {
             if app.hasCompletedOnboarding {
-                mainInterface
+                mainInterface(Bindable(router))
             } else {
                 OnboardingFlow()
             }
@@ -46,36 +48,45 @@ struct RootView: View {
         .animation(.snappy, value: app.hasCompletedOnboarding)
     }
 
-    private var mainInterface: some View {
-        @Bindable var router = router
-
-        return ZStack(alignment: .bottom) {
+    /// The main interface.
+    ///
+    /// Built inline in `body` rather than in a computed property: declaring
+    /// `@Bindable` inside a computed `var` does not participate in the view's
+    /// dependency tracking, so tab changes did not reliably invalidate the body
+    /// and tapping a tab appeared to do nothing.
+    @ViewBuilder
+    private func mainInterface(_ router: Bindable<Router>) -> some View {
+        ZStack(alignment: .bottom) {
             Brand.background.ignoresSafeArea()
 
             // The selected screen is shown directly rather than through TabView,
-            // so the custom bar can float above it with the raised Add button.
+            // so the custom bar can float above it with the raised centre button.
+            //
+            // `.id` forces a fresh NavigationStack per tab. Without it SwiftUI
+            // reuses one stack across all four, and a screen pushed in one tab
+            // reappears in another.
             Group {
-                switch router.tab {
+                switch router.wrappedValue.tab {
                 case .home: NavigationStack { HomeView() }
                 case .scan: NavigationStack { ScanHubView() }
                 case .coach: NavigationStack { CoachView() }
                 case .more: NavigationStack { MoreView() }
                 }
             }
+            .id(router.wrappedValue.tab)
             // Room for the bar. It is 70pt tall but ignores the bottom safe
-            // area, so on a device with a home indicator it occupies more than
-            // that — hence the extra allowance rather than a bare 70.
+            // area, so on a device with a home indicator it occupies more.
             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 96) }
 
-            BrandTabBar(selection: $router.tab, onAdd: { isPresentingAddMenu = true })
+            BrandTabBar(selection: router.tab, onAdd: { isPresentingAddMenu = true })
         }
         .sheet(isPresented: $isPresentingAddMenu) { AddMenuView() }
-        .sheet(isPresented: $router.isPresentingAddBP) { AddBPView() }
-        .sheet(isPresented: $router.isPresentingHistory) {
+        .sheet(isPresented: router.isPresentingAddBP) { AddBPView() }
+        .sheet(isPresented: router.isPresentingHistory) {
             NavigationStack { UnifiedHistoryView() }
         }
-        .onOpenURL { router.handle($0) }
-        .environment(router)
+        .onOpenURL { router.wrappedValue.handle($0) }
+        .environment(router.wrappedValue)
     }
 }
 

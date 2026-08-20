@@ -186,3 +186,101 @@ enum PrescriptionExtraction {
         return String(line[matched])
     }
 }
+
+
+/// Reads sodium from a photographed nutrition label.
+///
+/// This is what "food scanning" can honestly be without a vision model: the
+/// label already states the sodium, and reading printed text is something the
+/// device does reliably. Estimating sodium from a photograph of a *meal* is
+/// guesswork; reading it off the packet is not.
+///
+/// Handles both conventions — sodium in milligrams, and salt in grams, which is
+/// what most of the world outside the US prints.
+enum NutritionLabelExtraction {
+
+    struct Result: Equatable {
+        /// Milligrams per serving where the label gives a serving, otherwise per
+        /// 100g. `basis` says which, because confusing the two is a large error.
+        let sodiumMilligrams: Double
+        let basis: Basis
+        /// The line it came from, so the user can check it.
+        let sourceLine: String
+        let wasDerivedFromSalt: Bool
+
+        enum Basis: Equatable {
+            case perServing(String)
+            case per100g
+
+            var label: String {
+                switch self {
+                case .perServing(let description): "per \(description)"
+                case .per100g: "per 100 g"
+                }
+            }
+        }
+    }
+
+    private static let sodiumPattern =
+        #"sodium[^0-9\n]{0,24}?(\d{1,5}(?:[.,]\d{1,2})?)\s*(mg|g)\b"#
+    private static let saltPattern =
+        #"salt[^0-9\n]{0,24}?(\d{1,4}(?:[.,]\d{1,2})?)\s*(g|mg)\b"#
+    private static let servingPattern =
+        #"serving size[^0-9\n]{0,20}?(\d{1,4}(?:[.,]\d{1,2})?\s*(?:g|ml|oz))"#
+
+    static func extract(from lines: [String]) -> Result? {
+        let joined = lines.joined(separator: "\n").lowercased()
+        let serving = firstMatch(servingPattern, in: joined, group: 1)
+        let basis: Result.Basis = serving.map { .perServing($0) } ?? .per100g
+
+        // Sodium stated directly is always preferred over a salt conversion.
+        if let line = lines.first(where: { matches(sodiumPattern, $0.lowercased()) }),
+           let value = firstMatch(sodiumPattern, line.lowercased(), group: 1),
+           let unit = firstMatch(sodiumPattern, line.lowercased(), group: 2),
+           let number = Double(value.replacingOccurrences(of: ",", with: ".")) {
+            return Result(
+                sodiumMilligrams: unit == "g" ? number * 1000 : number,
+                basis: basis,
+                sourceLine: line.trimmingCharacters(in: .whitespaces),
+                wasDerivedFromSalt: false
+            )
+        }
+
+        // Salt is roughly 40% sodium by mass. Flagged so the UI can say so.
+        if let line = lines.first(where: { matches(saltPattern, $0.lowercased()) }),
+           let value = firstMatch(saltPattern, line.lowercased(), group: 1),
+           let unit = firstMatch(saltPattern, line.lowercased(), group: 2),
+           let number = Double(value.replacingOccurrences(of: ",", with: ".")) {
+            let grams = unit == "mg" ? number / 1000 : number
+            return Result(
+                sodiumMilligrams: grams * 400,
+                basis: basis,
+                sourceLine: line.trimmingCharacters(in: .whitespaces),
+                wasDerivedFromSalt: true
+            )
+        }
+
+        return nil
+    }
+
+    private static func matches(_ pattern: String, _ text: String) -> Bool {
+        text.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private static func firstMatch(
+        _ pattern: String, in text: String, group: Int
+    ) -> String? {
+        firstMatch(pattern, text, group: group)
+    }
+
+    private static func firstMatch(
+        _ pattern: String, _ text: String, group: Int
+    ) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              group < match.numberOfRanges,
+              let matched = Range(match.range(at: group), in: text) else { return nil }
+        return String(text[matched]).trimmingCharacters(in: .whitespaces)
+    }
+}

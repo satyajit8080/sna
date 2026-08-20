@@ -31,12 +31,11 @@ struct ScanHubView: View {
 
             VStack(spacing: 12) {
                 BrandListRow(
-                    title: "Food Scan",
-                    subtitle: foodSubtitle,
-                    symbol: "fork.knife",
-                    tint: Brand.steps,
-                    isAvailable: false
-                ) {}
+                    title: "Food Label Scan",
+                    subtitle: "Photograph a nutrition panel and read the sodium from it.",
+                    symbol: "text.viewfinder",
+                    tint: Brand.steps
+                ) { route = .food }
 
                 BrandListRow(
                     title: "Medical Report Scan",
@@ -89,16 +88,9 @@ struct ScanHubView: View {
             case .prescription: PrescriptionScanView()
             case .medicinePackaging: MedicinePackagingScanView()
             case .barcode: BarcodeScanView()
-            case .food: EmptyView()
+            case .food: FoodLabelScanView()
             }
         }
-    }
-
-    /// Stated rather than shipped as a stub — estimating sodium from a photo
-    /// needs a vision provider this build has none for, and an invented figure
-    /// in a sodium tracker is worse than no feature.
-    private var foodSubtitle: String {
-        "Needs an image-analysis provider. Add food from the label instead — more accurate anyway."
     }
 
     private var barcodeSubtitle: String {

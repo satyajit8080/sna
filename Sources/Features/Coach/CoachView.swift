@@ -61,8 +61,11 @@ struct CoachView: View {
                 )
                 .padding(.horizontal, Brand.Metric.pagePadding)
 
+                // The composer is a safe-area inset rather than a sibling in
+                // this VStack. As a sibling it was pushed below the visible
+                // area by the scroll view and never appeared.
                 transcript
-                composer
+                    .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             }
         }
         .navigationBarHidden(true)
