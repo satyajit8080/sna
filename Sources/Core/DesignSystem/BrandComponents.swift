@@ -45,14 +45,16 @@ struct BrandHeader: View {
         .padding(.top, 8)
     }
 
+    /// Filled rather than outlined, as in the design — a subtle lift off the
+    /// page rather than a hairline ring.
     private func circleButton(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Circle()
-                .strokeBorder(Brand.cardStroke, lineWidth: 1)
+                .fill(Color.white.opacity(0.08))
                 .frame(width: 35, height: 35)
                 .overlay {
                     Image(systemName: symbol)
-                        .font(.system(size: 14))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(Brand.textPrimary)
                 }
         }

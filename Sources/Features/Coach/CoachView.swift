@@ -31,6 +31,7 @@ struct CoachView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var attachmentError: String?
     @FocusState private var isComposerFocused: Bool
+    @State private var isShowingOptions = false
 
     private var messages: [AIMessage] {
         (conversation?.messages ?? []).sorted { $0.createdAt < $1.createdAt }
@@ -56,11 +57,10 @@ struct CoachView: View {
                     subtitle: "Your personal BP coach",
                     trailing: [
                         ("clock.arrow.circlepath", { isShowingHistory = true }),
-                        ("square.and.pencil", { newConversation() }),
+                        ("ellipsis", { isShowingOptions = true }),
                     ]
                 )
                 .padding(.horizontal, Brand.Metric.pagePadding)
-
                 // The transcript is told explicitly to fill, and the composer
                 // follows it as a plain sibling. A `safeAreaInset` on the scroll
                 // view placed the composer inside the scroll view's own safe
@@ -74,6 +74,13 @@ struct CoachView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $isShowingHistory) {
             ConversationHistoryView(selected: $conversation)
+        }
+        .confirmationDialog("Conversation", isPresented: $isShowingOptions) {
+            Button("New conversation") { newConversation() }
+            if !messages.isEmpty {
+                Button("Copy transcript") { copyTranscript() }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $isShowingReports) {
             AttachReportView(documents: myDocuments) { attach(document: $0) }
@@ -292,12 +299,19 @@ struct CoachView: View {
         return count
     }
 
+    /// Wraps onto two rows rather than scrolling horizontally: the design shows
+    /// all three, and a horizontal scroll hides the last behind a gesture the
+    /// user has no reason to try.
     private var quickActionChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 chip("Share BP Log", "chart.xyaxis.line") { attachHealthData() }
                 chip("Send Photo", "photo") { isShowingCamera = true }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 10) {
                 chip("Voice Note", "mic.fill") { Task { await voice.start() } }
+                Spacer(minLength: 0)
             }
         }
     }
@@ -352,7 +366,10 @@ struct CoachView: View {
                     voice.cancel()
                 }
             } else {
-                HStack(spacing: Theme.Spacing.sm) {
+                HStack(spacing: 12) {
+                    // Outlined, not filled: the send button is the only filled
+                    // circle in the design, which is what makes it read as the
+                    // primary action.
                     Menu {
                         Button { isShowingCamera = true } label: {
                             Label("Camera", systemImage: "camera")
@@ -373,31 +390,47 @@ struct CoachView: View {
                         }
                     } label: {
                         Circle()
-                            .fill(Brand.accent)
+                            .strokeBorder(Brand.cardStroke, lineWidth: 1)
                             .frame(width: 45, height: 45)
                             .overlay {
                                 Image(systemName: "plus")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(Brand.onAccent)
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundStyle(Brand.accent)
                             }
                     }
                     .accessibilityLabel("Add an attachment")
 
+                    // Emoji and microphone sit inside the field, as in the
+                    // design, rather than beside it.
                     HStack(spacing: 10) {
                         TextField(
                             "",
                             text: $draft,
-                            prompt: Text("Ask anything...").foregroundStyle(Brand.textSecondary),
+                            prompt: Text("Ask anything...")
+                                .foregroundStyle(Brand.textSecondary),
                             axis: .vertical
                         )
-                            .foregroundStyle(Brand.textPrimary)
-                            .lineLimit(1...4)
-                            .focused($isComposerFocused)
-                            .submitLabel(.send)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(1...4)
+                        .focused($isComposerFocused)
+                        .submitLabel(.send)
+
+                        Button {
+                            // The system emoji keyboard is reached by focusing
+                            // the field; there is no API to open it directly, so
+                            // this focuses rather than pretending to do more.
+                            isComposerFocused = true
+                        } label: {
+                            Image(systemName: "face.smiling")
+                                .font(.system(size: 17))
+                                .foregroundStyle(Brand.textSecondary)
+                        }
+                        .accessibilityLabel("Emoji")
 
                         Button { Task { await voice.start() } } label: {
                             Image(systemName: "mic.fill")
-                                .font(.system(size: 15))
+                                .font(.system(size: 16))
                                 .foregroundStyle(Brand.textSecondary)
                         }
                         .accessibilityLabel("Dictate")
@@ -406,18 +439,19 @@ struct CoachView: View {
                     .frame(minHeight: 45)
                     .background(Brand.background)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
                             .strokeBorder(Brand.cardStroke, lineWidth: 1)
                     }
 
                     Button { send() } label: {
                         Circle()
-                            .fill(canSend ? Brand.accent : Brand.accent.opacity(0.3))
+                            .fill(canSend ? Brand.accent : Brand.accent.opacity(0.35))
                             .frame(width: 45, height: 45)
                             .overlay {
                                 Image(systemName: "paperplane.fill")
-                                    .font(.system(size: 16))
+                                    .font(.system(size: 17))
                                     .foregroundStyle(Brand.onAccent)
+                                    .offset(x: -1, y: 1)
                             }
                     }
                     .disabled(!canSend)
@@ -503,6 +537,15 @@ struct CoachView: View {
     }
 
     // MARK: - Sending
+
+    /// Copies the whole exchange, for pasting into a note or an email.
+    private func copyTranscript() {
+        let text = messages
+            .map { "\($0.isFromUser ? "You" : "Coach"): \($0.text)" }
+            .joined(separator: "\n\n")
+        UIPasteboard.general.string = text
+        Haptics.success()
+    }
 
     private func newConversation() {
         let fresh = AIConversation(profileID: app.activeProfile.id)

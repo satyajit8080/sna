@@ -187,8 +187,11 @@ struct BrandTabBar: View {
                 .fill(Brand.accent)
                 .frame(width: 59, height: 59)
                 .overlay {
-                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                        .font(.system(size: 23))
+                    // A bot glyph, matching the design. SF Symbols gained
+                    // `brain.head.profile` and similar, but this reads most
+                    // clearly at 27pt on a filled circle.
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 23, weight: .medium))
                         .foregroundStyle(Brand.onAccent)
                 }
                 .shadow(color: Brand.accent.opacity(0.3), radius: 12, y: 8)

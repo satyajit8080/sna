@@ -47,9 +47,20 @@ struct MessageBubble: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text(message.createdAt.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Brand.textSecondary)
+                HStack(spacing: 5) {
+                    Text(message.createdAt.formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Brand.textSecondary)
+
+                    // Only on the user's own messages, and it means "sent", not
+                    // "read" — there is no one at the other end to read it.
+                    if message.isFromUser {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Brand.accent)
+                            .accessibilityLabel("Sent")
+                    }
+                }
 
                 if !message.isFromUser {
                     HStack(spacing: Theme.Spacing.md) {
