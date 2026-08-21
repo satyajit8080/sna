@@ -109,6 +109,9 @@ struct RootView: View {
 /// Add is a normal bar item that opens a sheet rather than selecting a tab,
 /// which is why it is not part of `AppTab`.
 struct BrandTabBar: View {
+    /// How far the centre button rises above the bar.
+    static let raisedOverhang: CGFloat = 29
+
     @Binding var selection: AppTab
     let onAdd: () -> Void
 
@@ -144,12 +147,21 @@ struct BrandTabBar: View {
                 Rectangle().fill(Brand.cardStroke).frame(height: 1)
             }
 
-            coachButton.offset(y: -29)
+            coachButton.offset(y: -Self.raisedOverhang)
         }
-        // No `ignoresSafeArea` here. As a `safeAreaInset` the bar is already
-        // placed correctly, and ignoring the safe area made it overhang the
-        // screen edge and displace the content above it.
-        .background(Brand.background)
+        // The raised button sticks up above the bar, but an offset does not add
+        // to the measured height — so `safeAreaInset` reserved only the bar
+        // itself and the button covered whatever sat above it. Padding the top
+        // by the overhang makes the reported height honest.
+        .padding(.top, Self.raisedOverhang)
+        // Deliberately no background on the outer stack. The bar itself is
+        // already opaque; painting here too would fill the overhang strip and
+        // the raised button would sit on a block rather than floating over the
+        // content.
+        //
+        // No `ignoresSafeArea` either: as a `safeAreaInset` the bar is placed
+        // correctly, and ignoring the safe area made it overhang the screen edge
+        // and displace the content above it.
     }
 
     private func item(_ tab: AppTab, _ title: String, _ symbol: String) -> some View {
