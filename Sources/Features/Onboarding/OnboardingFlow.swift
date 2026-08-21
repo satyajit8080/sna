@@ -16,6 +16,16 @@ struct OnboardingFlow: View {
     @State private var healthError: String?
     @State private var ownerName = ""
 
+    /// The categories BP Coach asks Health for, named so the user knows exactly
+    /// what the permission sheet will cover.
+    private let healthCategories: [(String, String)] = [
+        ("Blood pressure", "heart.text.square.fill"),
+        ("Heart rate", "waveform.path.ecg"),
+        ("Steps and activity", "figure.walk"),
+        ("Sleep", "bed.double.fill"),
+        ("Weight", "scalemass.fill"),
+    ]
+
     private let stepCount = 6
 
     var body: some View {
@@ -281,16 +291,56 @@ struct OnboardingFlow: View {
             },
             content: {
                 VStack(spacing: 15) {
-                    OnboardingFeatureRow(symbol: "arrow.down.circle.fill") {
-                        Text("BP Coach can read blood pressure, heart rate, sleep, steps and weight from Health.")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OnboardingTheme.textSecondary)
-                            .lineSpacing(2)
+                    // Mirrors the Apple Health screen in the design: an
+                    // accent-bordered card with the headline and a large
+                    // circular glyph, then the detail rows beneath.
+                    BrandCard(strokeColor: OnboardingTheme.accent.opacity(0.5)) {
+                        HStack(alignment: .top, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Connect with Apple Health")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(OnboardingTheme.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("Sync your BP, weight, activity and more securely.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(OnboardingTheme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            Circle()
+                                .fill(OnboardingTheme.accent.opacity(0.1))
+                                .frame(width: 69, height: 69)
+                                .overlay {
+                                    Image(systemName: "heart.fill")
+                                        .font(.system(size: 30))
+                                        .foregroundStyle(Brand.restingHeartRate)
+                                }
+                                .accessibilityHidden(true)
+                        }
                     }
 
-                    OnboardingFeatureRow(symbol: "iphone") {
+                    Text("What BP Coach reads")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OnboardingTheme.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+
+                    // Named individually rather than as one sentence, matching
+                    // the design's row list — and it is a clearer answer to
+                    // "what exactly am I agreeing to?".
+                    ForEach(healthCategories, id: \.0) { category in
+                        OnboardingFeatureRow(symbol: category.1) {
+                            Text(category.0)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OnboardingTheme.textSecondary)
+                        }
+                    }
+
+                    OnboardingFeatureRow(symbol: "lock.fill") {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("None of this leaves your device.")
+                            Text("Read-only. None of this leaves your device.")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(OnboardingTheme.textSecondary)
                             Text("No account needed.")

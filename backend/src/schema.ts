@@ -15,7 +15,14 @@ export const LIMITS = {
   maxAttachments: 4,
   /** Per attachment. A long report would otherwise crowd out the readings. */
   maxAttachmentChars: 6_000,
+  // Coach requests are text and stay small. Food photos are not: a downscaled
+  // JPEG is roughly 150-400KB before base64, which inflates by a third. 256KB
+  // silently closed the connection mid-upload, which the app reported as "the
+  // network connection was lost".
   maxBodyBytes: 256 * 1024,
+  /// Applied only to the vision route, so a large body cannot be posted to the
+  /// text endpoints.
+  maxImageBodyBytes: 9 * 1024 * 1024,
 } as const;
 
 export interface CoachReading {

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../config.js";
+import { LIMITS } from "../schema.js";
 import { analyseFoodPhoto, type AnalysedFood } from "../services/vision.js";
 import { searchFoods } from "../services/food.js";
 
@@ -16,6 +17,12 @@ export async function registerVisionRoutes(app: FastifyInstance, config: Config)
    */
   app.post<{ Body: { imageBase64?: string; mediaType?: string } }>(
     "/v1/vision/food",
+    {
+      // Per-route, so the small global limit still protects the text endpoints.
+      // Without this Fastify closed the connection mid-upload and the app
+      // reported a lost network connection rather than a rejected request.
+      bodyLimit: LIMITS.maxImageBodyBytes,
+    },
     async (request, reply) => {
       const { imageBase64, mediaType } = request.body ?? {};
 

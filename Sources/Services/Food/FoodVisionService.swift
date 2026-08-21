@@ -83,7 +83,23 @@ struct FoodVisionService: Sendable {
             "mediaType": "image/jpeg",
         ])
 
-        let (responseData, response) = try await session.data(for: request)
+        let responseData: Data
+        let response: URLResponse
+        do {
+            (responseData, response) = try await session.data(for: request)
+        } catch {
+            // Distinguish a dropped upload from a refusal: the first is worth
+            // retrying, the second is not.
+            let code = (error as NSError).code
+            if code == NSURLErrorNetworkConnectionLost || code == NSURLErrorTimedOut {
+                throw VisionError.failed("""
+                The upload did not complete. Try again — a stronger connection or a \
+                smaller photo usually helps.
+                """)
+            }
+            throw VisionError.failed(error.localizedDescription)
+        }
+
         guard let http = response as? HTTPURLResponse else {
             throw VisionError.failed("Could not reach the server.")
         }
@@ -107,7 +123,11 @@ struct FoodVisionService: Sendable {
     }
 
     /// Downscales and compresses for upload.
-    static func prepare(_ image: UIImage, maxDimension: CGFloat = 1024) -> Data? {
+    ///
+    /// 768px rather than 1024: a vision model identifies food just as well at
+    /// that size, and the smaller payload matters more — a large upload on a
+    /// phone connection was timing out and surfacing as a lost connection.
+    static func prepare(_ image: UIImage, maxDimension: CGFloat = 768) -> Data? {
         let size = image.size
         let scale = min(1, maxDimension / max(size.width, size.height))
         let target = CGSize(width: size.width * scale, height: size.height * scale)
@@ -116,6 +136,6 @@ struct FoodVisionService: Sendable {
         let resized = renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: target))
         }
-        return resized.jpegData(compressionQuality: 0.7)
+        return resized.jpegData(compressionQuality: 0.6)
     }
 }

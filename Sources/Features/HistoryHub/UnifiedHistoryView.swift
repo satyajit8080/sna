@@ -69,6 +69,13 @@ struct UnifiedHistoryView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var section: Section = .readings
+    @State private var exportURL: ExportedFile?
+
+    /// Wraps the URL so it can drive a `sheet(item:)`.
+    struct ExportedFile: Identifiable {
+        let url: URL
+        var id: String { url.absoluteString }
+    }
 
     /// The four views of the same data, from the design.
     enum Section: String, CaseIterable, Identifiable {
@@ -81,8 +88,13 @@ struct UnifiedHistoryView: View {
         // Background as a modifier, not a ZStack child: as a child ignoring the
         // safe area it enlarges the container past the screen edge.
         VStack(spacing: 0) {
-            BrandHeader(title: "History", showsBack: true, onBack: { dismiss() })
-                .padding(.horizontal, Brand.Metric.pagePadding)
+            BrandHeader(
+                title: "History",
+                showsBack: true,
+                onBack: { dismiss() },
+                trailing: [("square.and.arrow.up", { exportPDF() })]
+            )
+            .padding(.horizontal, Brand.Metric.pagePadding)
 
             sectionTabs
             rangeChips
@@ -102,6 +114,7 @@ struct UnifiedHistoryView: View {
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
+        .sheet(item: $exportURL) { ShareSheet(items: [$0.url]) }
         .navigationDestination(item: $viewingReading) { ReadingDetailView(reading: $0) }
         .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }
         .navigationDestination(item: $viewingDocument) { DocumentDetailView(document: $0) }
@@ -183,6 +196,92 @@ struct UnifiedHistoryView: View {
     }
 
     // MARK: - Controls
+
+    // MARK: - Export
+
+    /// Exports exactly what is on screen: the selected range, the selected
+    /// filters, and any search term. Exporting something other than what the
+    /// user is looking at would be a quiet surprise.
+    private func exportPDF() {
+        var sections: [PDFReportBuilder.Section] = []
+
+        if !bpInRange.isEmpty {
+            var rows: [(String, String)] = []
+            for window in [7, 30, 90] where window <= (range.days ?? 90) {
+                if let average = BPStatistics.homeAverage(bpInRange, days: window) {
+                    rows.append((
+                        "\(window)-day average",
+                        "\(average.systolic)/\(average.diastolic) mmHg   (\(average.count) readings)"
+                    ))
+                }
+            }
+            if let highest = bpInRange.max(by: { $0.systolic < $1.systolic }) {
+                rows.append((
+                    "Highest",
+                    "\(highest.systolic)/\(highest.diastolic)   \(highest.recordedAt.formatted(date: .abbreviated, time: .omitted))"
+                ))
+            }
+            if let lowest = bpInRange.min(by: { $0.systolic < $1.systolic }) {
+                rows.append((
+                    "Lowest",
+                    "\(lowest.systolic)/\(lowest.diastolic)   \(lowest.recordedAt.formatted(date: .abbreviated, time: .omitted))"
+                ))
+            }
+            if !rows.isEmpty {
+                sections.append(.init(
+                    title: "Blood pressure",
+                    rows: rows,
+                    note: "Averages use home readings only; clinic readings are kept separate."
+                ))
+            }
+        }
+
+        if let comparison = BPStatistics.morningVsEvening(bpInRange) {
+            sections.append(.init(title: "Morning vs evening", rows: [
+                ("Morning", "\(comparison.first.systolic)/\(comparison.first.diastolic)   (\(comparison.first.count))"),
+                ("Evening", "\(comparison.second.systolic)/\(comparison.second.diastolic)   (\(comparison.second.count))"),
+            ]))
+        }
+
+        // Every entry on screen, whatever its type — this is the history export,
+        // not a blood pressure export.
+        let entries = filteredEntries
+        if !entries.isEmpty {
+            let rows = entries.prefix(200).map { entry in
+                (
+                    "\(entry.date.formatted(date: .abbreviated, time: .shortened))  \(entry.kind.label)",
+                    "\(entry.title)  ·  \(entry.detail)"
+                )
+            }
+            sections.append(.init(
+                title: "Entries",
+                rows: Array(rows),
+                note: entries.count > 200
+                    ? "Showing the most recent 200 of \(entries.count) entries."
+                    : nil
+            ))
+        }
+
+        let document = PDFReportBuilder.Document(
+            title: "History",
+            subtitle: "\(app.activeProfile.name) · \(range.label) · \(guidelines.active.displayName)",
+            generatedAt: .now,
+            sections: sections,
+            disclaimer: """
+            Recorded with BP Coach. Describes measurements the patient recorded and \
+            contains no diagnosis or interpretation.
+            """
+        )
+
+        do {
+            let url = try PDFReportBuilder.write(document, filename: "bp-coach-history.pdf")
+            exportURL = ExportedFile(url: url)
+            Haptics.success()
+        } catch {
+            // Nothing to save is not worth an alert; the button simply does
+            // nothing rather than showing a failure the user cannot act on.
+        }
+    }
 
     // MARK: - Trends
 
