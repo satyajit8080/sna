@@ -214,6 +214,49 @@ final class NotificationEngine {
         try? await center.add(request)
     }
 
+    /// Schedules tomorrow's check-in.
+    ///
+    /// One notification, at a fixed hour, and only when the rules in
+    /// `CheckInPrompts` produce something worth saying. Rescheduled whenever the
+    /// app is opened so it reflects the current state rather than yesterday's.
+    ///
+    /// The text is written in code, never generated: a notification arrives
+    /// unreviewed and cannot be recalled, so its wording has to be something a
+    /// person wrote and can be held to.
+    func scheduleDailyCheckIn(
+        _ context: CheckInPrompts.Context,
+        hour: Int = 19
+    ) async {
+        let identifier = "checkin.daily"
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+
+        guard isEnabled(.dailyCheckIn) else { return }
+        guard let prompt = CheckInPrompts.todaysPrompt(for: context) else { return }
+
+        var components = DateComponents()
+        components.hour = hour
+        components.minute = 0
+        components = adjustedForQuietHours(components)
+
+        let content = UNMutableNotificationContent()
+        content.title = prompt.title
+        content.body = prompt.body
+        content.sound = .default
+
+        // The question travels in the deep link so the existing routing handles
+        // it, rather than a second parallel mechanism.
+        let encoded = prompt.coachQuestion
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        content.userInfo = ["deepLink": "bpcoach://coach?question=\(encoded)"]
+
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
+        )
+        try? await center.add(request)
+    }
+
     /// Schedules every future reminder for an appointment.
     ///
     /// Reminders whose moment has already passed are skipped by the model —
