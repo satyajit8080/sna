@@ -182,6 +182,7 @@ struct NotificationSettingsView: View {
         case .appointment: "calendar"
         case .drift: "chart.line.uptrend.xyaxis"
         case .reportPrep: "doc.text.fill"
+        case .dailyCheckIn: "bubble.left.and.text.bubble.right.fill"
         }
     }
 
@@ -192,6 +193,7 @@ struct NotificationSettingsView: View {
         case .appointment: Brand.sleep
         case .drift: Brand.restingHeartRate
         case .reportPrep: Brand.steps
+        case .dailyCheckIn: Brand.accent
         }
     }
 

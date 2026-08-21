@@ -29,9 +29,9 @@ final class NotificationEngine {
             case .appointment: "Ahead of an appointment, so you can prepare."
             case .drift: "If your average has shifted over the past month."
             case .reportPrep: "Before an appointment, to build your doctor report."
-            }
             case .dailyCheckIn:
-                "One question a day about how you are doing. Skipped when there is nothing useful to ask."
+                "One question a day, chosen from your own data. Silent when there is nothing useful to ask."
+            }
         }
 
         /// Deep link target. Every notification resolves somewhere specific.
