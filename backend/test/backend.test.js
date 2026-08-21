@@ -714,3 +714,55 @@ describe("first day with no data", () => {
     }
   });
 });
+
+describe("potassium screening", () => {
+  /**
+   * Increasing dietary potassium is standard blood pressure advice and is
+   * genuinely dangerous for a subset of this app's users: reduced kidney
+   * function, ACE inhibitors, ARBs, potassium-sparing diuretics. The app cannot
+   * identify those people from what it stores, so an unqualified suggestion must
+   * never reach anyone.
+   */
+  test("instructions to increase potassium are blocked", () => {
+    for (const text of [
+      "Try to increase your potassium intake with bananas and spinach.",
+      "Adding more potassium-rich foods can help lower blood pressure.",
+      "You could get more potassium from leafy greens.",
+      "Eating potassium-rich foods is a good next step.",
+      "Consider boosting potassium in your diet.",
+    ]) {
+      assert.equal(screenResponse(text).safe, false, text);
+    }
+  });
+
+  /** Nearly all salt substitutes are potassium chloride. */
+  test("salt substitutes and supplements are blocked", () => {
+    for (const text of [
+      "Consider a salt substitute instead of table salt.",
+      "LoSalt is a good swap.",
+      "A potassium supplement could help.",
+      "Try potassium chloride in place of salt.",
+    ]) {
+      assert.equal(screenResponse(text).safe, false, text);
+    }
+  });
+
+  /** Explaining it, with the caveat, is exactly what should be allowed. */
+  test("explaining potassium with a doctor caveat is allowed", () => {
+    const text =
+      "Potassium affects blood pressure, but check with your doctor before " +
+      "changing your intake — it can be unsafe with some kidney conditions and medicines.";
+    assert.equal(screenResponse(text).safe, true);
+  });
+
+  test("ordinary sodium and diet advice is unaffected", () => {
+    for (const text of [
+      "Your sodium was 3100mg yesterday, about double your usual.",
+      "The DASH pattern emphasises vegetables, wholegrains and lean protein.",
+      "Aim for under 2300mg of sodium a day.",
+      "Most sodium comes from processed food rather than the salt cellar.",
+    ]) {
+      assert.equal(screenResponse(text).safe, true, text);
+    }
+  });
+});
