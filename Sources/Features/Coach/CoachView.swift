@@ -63,11 +63,16 @@ struct CoachView: View {
             )
             .padding(.horizontal, Brand.Metric.pagePadding)
 
-            // The transcript fills; the composer follows as a plain sibling.
+            // The composer is an overlay on the transcript, not a sibling.
+            //
+            // Four earlier attempts placed it as a VStack sibling or a safe-area
+            // inset, and each time it rendered below the visible region. An
+            // overlay is laid out inside its parent's bounds by definition, so
+            // it cannot be pushed off-screen whatever the surrounding safe-area
+            // arithmetic does.
             transcript
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            composer
+                .overlay(alignment: .bottom) { composer }
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
@@ -143,7 +148,10 @@ struct CoachView: View {
                     }
                 }
                 .padding(.horizontal, Brand.Metric.pagePadding)
-                .padding(.vertical, 16)
+                .padding(.top, 16)
+                // Clearance for the composer overlay, so the last message is
+                // never underneath it.
+                .padding(.bottom, 90)
             }
             // Without these the keyboard traps the user: the tab bar is covered
             // and there is no other way back.
@@ -467,7 +475,12 @@ struct CoachView: View {
         }
         .padding(.horizontal, Brand.Metric.pagePadding)
         .padding(.vertical, 14)
+        // Opaque, with a hairline above it: messages scroll underneath, so a
+        // transparent bar would let text show through the controls.
         .background(Brand.background)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Brand.cardStroke).frame(height: 1)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
