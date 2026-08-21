@@ -26,10 +26,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ZStack {
-            Brand.background.ignoresSafeArea()
-
-            ScrollView {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     greeting
                     latestReadingCard
@@ -41,8 +38,8 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, Brand.Metric.pagePadding)
                 .padding(.bottom, 32)
-            }
         }
+        .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
         .sheet(isPresented: $isPresentingAdd) { AddBPView() }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }

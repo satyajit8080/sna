@@ -49,28 +49,27 @@ struct CoachView: View {
     }
 
     var body: some View {
-        ZStack {
-            Brand.background.ignoresSafeArea()
-            VStack(spacing: 0) {
-                BrandHeader(
-                    title: "Ai Coach",
-                    subtitle: "Your personal BP coach",
-                    trailing: [
-                        ("clock.arrow.circlepath", { isShowingHistory = true }),
-                        ("ellipsis", { isShowingOptions = true }),
-                    ]
-                )
-                .padding(.horizontal, Brand.Metric.pagePadding)
-                // The transcript is told explicitly to fill, and the composer
-                // follows it as a plain sibling. A `safeAreaInset` on the scroll
-                // view placed the composer inside the scroll view's own safe
-                // area, which put it below the visible region.
-                transcript
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The background is applied as a modifier, not as a ZStack child. As a
+        // child that ignores the safe area it enlarged the container past the
+        // screen edge, which pushed the composer out of view entirely.
+        VStack(spacing: 0) {
+            BrandHeader(
+                title: "Ai Coach",
+                subtitle: "Your personal BP coach",
+                trailing: [
+                    ("clock.arrow.circlepath", { isShowingHistory = true }),
+                    ("ellipsis", { isShowingOptions = true }),
+                ]
+            )
+            .padding(.horizontal, Brand.Metric.pagePadding)
 
-                composer
-            }
+            // The transcript fills; the composer follows as a plain sibling.
+            transcript
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            composer
         }
+        .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
         .sheet(isPresented: $isShowingHistory) {
             ConversationHistoryView(selected: $conversation)

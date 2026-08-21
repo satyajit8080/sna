@@ -68,16 +68,16 @@ struct UnifiedHistoryView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack {
-            Brand.background.ignoresSafeArea()
-            VStack(spacing: 0) {
-                BrandHeader(title: "History", showsBack: true, onBack: { dismiss() })
-                    .padding(.horizontal, Brand.Metric.pagePadding)
-                searchField
-                controls
-                content
-            }
+        // Background as a modifier, not a ZStack child: as a child ignoring the
+        // safe area it enlarges the container past the screen edge.
+        VStack(spacing: 0) {
+            BrandHeader(title: "History", showsBack: true, onBack: { dismiss() })
+                .padding(.horizontal, Brand.Metric.pagePadding)
+            searchField
+            controls
+            content
         }
+        .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
         .navigationDestination(item: $viewingReading) { ReadingDetailView(reading: $0) }
         .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }

@@ -227,17 +227,18 @@ struct BrandScreen<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        ZStack {
-            Brand.background.ignoresSafeArea()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    content
-                }
-                .padding(.horizontal, Brand.Metric.pagePadding)
-                .padding(.bottom, 32)
+        // The background is a modifier rather than a ZStack child. As a child
+        // that ignores the safe area it enlarges the container past the screen
+        // edge, and anything filling it is pushed out of view.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                content
             }
-            .scrollDismissesKeyboard(.interactively)
+            .padding(.horizontal, Brand.Metric.pagePadding)
+            .padding(.bottom, 32)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
     }
 }
