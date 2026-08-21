@@ -50,12 +50,10 @@ struct RootView: View {
 
     /// The main interface.
     ///
-    /// Built inline in `body` rather than in a computed property: declaring
+    /// Taken as a parameter rather than read from a computed property: declaring
     /// `@Bindable` inside a computed `var` does not participate in the view's
     /// dependency tracking, so tab changes did not reliably invalidate the body
     /// and tapping a tab appeared to do nothing.
-    @ViewBuilder
-    /// The main interface.
     ///
     /// The tab bar is a VStack sibling, not an overlay or a safe-area inset.
     /// Both of those left the bar covering the coach composer: whether a bottom
