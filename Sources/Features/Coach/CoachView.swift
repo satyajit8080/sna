@@ -50,51 +50,27 @@ struct CoachView: View {
     }
 
     var body: some View {
-        // Constrained to exactly the space the parent offers.
-        //
-        // Five earlier attempts placed the composer with padding, safe-area
-        // insets, a VStack sibling and an overlay. Each depended on inherited
-        // safe-area values that were evidently not what I assumed, and each time
-        // the composer was laid out below the visible region.
-        //
-        // `geometry.size` reports the FULL frame — it does not subtract safe-area
-        // insets, which arrive separately in `geometry.safeAreaInsets`. Pinning
-        // the VStack to `size.height` therefore extended it underneath the tab
-        // bar and put the composer behind it. Subtracting the bottom inset is
-        // what makes the height honest.
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                BrandHeader(
-                    title: "Ai Coach",
-                    subtitle: "Your personal BP coach",
-                    trailing: [
-                        ("clock.arrow.circlepath", { isShowingHistory = true }),
-                        ("ellipsis", { isShowingOptions = true }),
-                    ]
-                )
-                .padding(.horizontal, Brand.Metric.pagePadding)
-
-                transcript
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                // Fixed height, not natural height. A VStack can squeeze a
-                // flexible child to zero; it cannot do that to a fixed one.
-                // 45pt controls plus 14pt padding top and bottom.
-                composer
-                    .frame(height: 73)
-                    // Lifts the composer clear of the tab bar rather than
-                    // sitting flush against it. If the parent's inset is already
-                    // doing its job this is simply breathing room; if it is not,
-                    // this is what keeps the controls reachable.
-                    .padding(.bottom, 10)
-            }
-            // The bottom inset is subtracted explicitly. If the parent reports a
-            // height that includes the strip behind the tab bar, this keeps the
-            // composer above it rather than underneath.
-            .frame(
-                width: geometry.size.width,
-                height: max(0, geometry.size.height - geometry.safeAreaInsets.bottom)
+        // A plain VStack. The tab bar now reserves a constant height in
+        // RootView, so the space this view is offered is already correct and
+        // there is no safe-area arithmetic left to get wrong.
+        VStack(spacing: 0) {
+            BrandHeader(
+                title: "Ai Coach",
+                subtitle: "Your personal BP coach",
+                trailing: [
+                    ("clock.arrow.circlepath", { isShowingHistory = true }),
+                    ("ellipsis", { isShowingOptions = true }),
+                ]
             )
+            .padding(.horizontal, Brand.Metric.pagePadding)
+
+            transcript
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Fixed height, not natural height: a VStack can squeeze a flexible
+            // child to nothing but cannot do that to a fixed one.
+            composer
+                .frame(height: 73)
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)

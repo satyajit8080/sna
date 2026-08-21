@@ -84,10 +84,17 @@ struct RootView: View {
         // out underneath it. Letting the frame size naturally keeps the reported
         // height honest.
         .background(Brand.background.ignoresSafeArea())
-        // Reserves room so content is never under the bar. `safeAreaInset` with
-        // the bar itself would also work, but a clear spacer keeps the bar's
-        // own hit testing independent of the content's layout.
+        // Space is reserved by a clear spacer of known height, and the bar is
+        // drawn separately as an overlay.
+        //
+        // Using the bar itself as the inset meant the reserved height was
+        // whatever SwiftUI measured it to be — which excluded the raised
+        // button's overhang and left the coach composer partly covered. A
+        // constant cannot be mismeasured.
         .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: BrandTabBar.reservedHeight)
+        }
+        .overlay(alignment: .bottom) {
             BrandTabBar(selection: router.tab, onAdd: { isPresentingAddMenu = true })
         }
         .sheet(isPresented: $isPresentingAddMenu) { AddMenuView() }
@@ -111,6 +118,10 @@ struct RootView: View {
 struct BrandTabBar: View {
     /// How far the centre button rises above the bar.
     static let raisedOverhang: CGFloat = 29
+    /// The bar's own height.
+    static let barHeight: CGFloat = 70
+    /// What content must leave clear: the bar plus the button's overhang.
+    static let reservedHeight: CGFloat = barHeight + raisedOverhang
 
     @Binding var selection: AppTab
     let onAdd: () -> Void
@@ -141,7 +152,7 @@ struct BrandTabBar: View {
                 addItem
                 item(.more, "More", "square.grid.2x2.fill")
             }
-            .frame(height: 70)
+            .frame(height: Self.barHeight)
             .background(Brand.background)
             .overlay(alignment: .top) {
                 Rectangle().fill(Brand.cardStroke).frame(height: 1)
@@ -159,9 +170,9 @@ struct BrandTabBar: View {
         // the raised button would sit on a block rather than floating over the
         // content.
         //
-        // No `ignoresSafeArea` either: as a `safeAreaInset` the bar is placed
-        // correctly, and ignoring the safe area made it overhang the screen edge
-        // and displace the content above it.
+        // The bar sits above the home indicator. Its own 70pt strip carries the
+        // background; extending it further would put a block behind the raised
+        // button, which should float over the content.
     }
 
     private func item(_ tab: AppTab, _ title: String, _ symbol: String) -> some View {
