@@ -55,48 +55,38 @@ struct RootView: View {
     /// dependency tracking, so tab changes did not reliably invalidate the body
     /// and tapping a tab appeared to do nothing.
     @ViewBuilder
+    /// The main interface.
+    ///
+    /// The tab bar is a VStack sibling, not an overlay or a safe-area inset.
+    /// Both of those left the bar covering the coach composer: whether a bottom
+    /// inset reaches a screen inside a NavigationStack turned out not to be
+    /// something worth relying on. A VStack cannot overlap its children — the
+    /// screen gets the height that is left, and that is the end of it.
+    ///
+    /// `.id` gives each tab its own NavigationStack. Without it SwiftUI reuses
+    /// one across all four and a screen pushed in one tab reappears in another.
+    @ViewBuilder
     private func mainInterface(_ router: Bindable<Router>) -> some View {
-        // The screen is shown directly rather than through TabView, so the
-        // custom bar can carry the raised centre button.
-        //
-        // The bar is an `overlay`, not a ZStack sibling: as a sibling it ignored
-        // the bottom safe area, which expanded the ZStack's bounds past the
-        // screen edge and shifted everything inside it — including pushing the
-        // Coach composer out of view.
-        //
-        // `.id` gives each tab its own NavigationStack. Without it SwiftUI reuses
-        // one across all four and a screen pushed in one tab reappears in another.
-        Group {
-            switch router.wrappedValue.tab {
-            case .home: NavigationStack { HomeView() }
-            case .scan: NavigationStack { ScanHubView() }
-            case .coach: NavigationStack { CoachView() }
-            case .more: NavigationStack { MoreView() }
+        VStack(spacing: 0) {
+            Group {
+                switch router.wrappedValue.tab {
+                case .home: NavigationStack { HomeView() }
+                case .scan: NavigationStack { ScanHubView() }
+                case .coach: NavigationStack { CoachView() }
+                case .more: NavigationStack { MoreView() }
+                }
             }
-        }
-        .id(router.wrappedValue.tab)
-        // No explicit `.frame(maxHeight: .infinity)` here.
-        //
-        // Applying one before `safeAreaInset` pins the frame to the full screen;
-        // the inset then adjusts only the safe area, not the frame. A
-        // GeometryReader inside therefore reports the full height including the
-        // strip behind the tab bar, and anything pinned to that height is laid
-        // out underneath it. Letting the frame size naturally keeps the reported
-        // height honest.
-        .background(Brand.background.ignoresSafeArea())
-        // Space is reserved by a clear spacer of known height, and the bar is
-        // drawn separately as an overlay.
-        //
-        // Using the bar itself as the inset meant the reserved height was
-        // whatever SwiftUI measured it to be — which excluded the raised
-        // button's overhang and left the coach composer partly covered. A
-        // constant cannot be mismeasured.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Color.clear.frame(height: BrandTabBar.reservedHeight)
-        }
-        .overlay(alignment: .bottom) {
+            .id(router.wrappedValue.tab)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The raised centre button overhangs the bar and would otherwise
+            // cover the top of whatever sits directly above it.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: BrandTabBar.raisedOverhang)
+            }
+
             BrandTabBar(selection: router.tab, onAdd: { isPresentingAddMenu = true })
         }
+        .background(Brand.background.ignoresSafeArea())
         .sheet(isPresented: $isPresentingAddMenu) { AddMenuView() }
         .sheet(isPresented: router.isPresentingAddBP) { AddBPView() }
         .sheet(isPresented: router.isPresentingHistory) {
@@ -160,19 +150,16 @@ struct BrandTabBar: View {
 
             coachButton.offset(y: -Self.raisedOverhang)
         }
-        // The raised button sticks up above the bar, but an offset does not add
-        // to the measured height — so `safeAreaInset` reserved only the bar
-        // itself and the button covered whatever sat above it. Padding the top
-        // by the overhang makes the reported height honest.
-        .padding(.top, Self.raisedOverhang)
-        // Deliberately no background on the outer stack. The bar itself is
-        // already opaque; painting here too would fill the overhang strip and
-        // the raised button would sit on a block rather than floating over the
-        // content.
+        // Room for the overhang is reserved by the caller, so the bar's own
+        // frame is just the bar. No background on this outer stack: the bar
+        // strip is already opaque, and painting here would put a block behind
+        // the raised button instead of letting it float over the content.
         //
-        // The bar sits above the home indicator. Its own 70pt strip carries the
-        // background; extending it further would put a block behind the raised
-        // button, which should float over the content.
+        // As the last child of a VStack the bar sits on the home indicator, so
+        // its background extends down into that area while its content does not.
+        .background(
+            Brand.background.ignoresSafeArea(edges: .bottom)
+        )
     }
 
     private func item(_ tab: AppTab, _ title: String, _ symbol: String) -> some View {
