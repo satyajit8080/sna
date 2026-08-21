@@ -35,6 +35,12 @@ struct HealthDataView: View {
         BrandScreen {
             BrandHeader(title: "Apple Health", showsBack: true, onBack: { dismiss() })
 
+            // The app already has a banner for this; `alert(item:)` would need
+            // AppError to be Identifiable, which it deliberately is not.
+            if let error {
+                ErrorBanner(error: error) { self.error = nil }
+            }
+
             connectCard
 
             Text("Connection Status")
@@ -65,9 +71,6 @@ struct HealthDataView: View {
             }
         }
         .task { await app.health.refreshSnapshot(for: app.activeProfile) }
-        .alert(item: $error) { error in
-            Alert(title: Text(error.title), message: error.message.map(Text.init))
-        }
     }
 
     // MARK: - Connect

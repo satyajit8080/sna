@@ -346,8 +346,8 @@ struct UnifiedHistoryView: View {
     private var metricsSection: some View {
         ScrollView {
             VStack(spacing: 12) {
-                ForEach(EntryKind.allCases.filter { $0 != .bloodPressure }) { kind in
-                    let count = entries.filter { $0.kind == kind }.count
+                ForEach(HistoryKind.allCases.filter { $0 != .bloodPressure }) { kind in
+                    let count = filteredEntries.filter { $0.kind == kind }.count
                     BrandCard(padding: 12) {
                         HStack(spacing: 14) {
                             BrandIconTile(symbol: kind.symbol, tint: kind.tint, size: 44)
@@ -385,7 +385,7 @@ struct UnifiedHistoryView: View {
 
     /// Blood pressure readings inside the selected window.
     private var bpInRange: [BPReading] {
-        entries.compactMap {
+        filteredEntries.compactMap {
             if case .bloodPressure(let reading) = $0.payload { return reading }
             return nil
         }
@@ -396,8 +396,16 @@ struct UnifiedHistoryView: View {
         VStack(spacing: Theme.Spacing.sm) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Theme.Spacing.sm) {
-                    ForEach(EntryKind.allCases) { kind in
-                        filterChip(kind)
+                    ForEach(HistoryKind.allCases) { kind in
+                        FilterChip(
+                            kind: kind,
+                            isOn: filters.contains(kind),
+                            count: count(for: kind)
+                        ) {
+                            if filters.contains(kind) { filters.remove(kind) }
+                            else { filters.insert(kind) }
+                            Haptics.selection()
+                        }
                     }
                 }
             }
