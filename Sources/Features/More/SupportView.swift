@@ -34,8 +34,9 @@ struct SupportView: View {
         ("Does my data leave my phone?",
          """
          Readings, medications and documents stay on your device. Scanned pages are read \
-         on-device. If you use the AI coach, a short summary of recent readings is sent \
-         to answer your question — never your full history, and never a document image.
+         on-device. If you use the AI coach, your first name and a short summary of \
+         recent readings are sent to answer your question — never your full history, \
+         and never a document image.
          """),
         ("Why won't the coach tell me if something is an emergency?",
          """

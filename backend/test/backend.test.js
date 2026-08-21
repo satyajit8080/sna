@@ -663,3 +663,54 @@ describe("food photo analysis", () => {
     assert.equal(parseDetectedFoods(JSON.stringify({ items: many })).length, 12);
   });
 });
+
+describe("first day with no data", () => {
+  const base = {
+    question: "Is my blood pressure normal?",
+    guidelineName: "ACC/AHA 2017",
+    readings: [], averages: [], medications: [], lifestyle: [], attachments: [],
+  };
+
+  /// Refusing to engage on day one is the worst thing the coach can do, so the
+  /// instruction must actively tell it not to.
+  test("an empty log tells the model to coach rather than refuse", () => {
+    const rendered = renderContext(base);
+    assert.match(rendered, /Do not simply refuse/);
+    assert.match(rendered, /Ask how they are doing/);
+    assert.match(rendered, /Add tab, Blood Pressure/);
+  });
+
+  test("a first name is addressed to the model", () => {
+    const rendered = renderContext({ ...base, firstName: "Satya" });
+    assert.match(rendered, /talking to Satya/);
+  });
+
+  test("no name means no name line", () => {
+    assert.doesNotMatch(renderContext(base), /talking to/);
+  });
+
+  /// One or two readings is not a trend, but it is not nothing either.
+  test("a sparse log asks for usefulness, not just a caveat", () => {
+    const rendered = renderContext({
+      ...base,
+      readings: [{ systolic: 128, diastolic: 82, recordedAt: "2026-08-01T09:00:00Z",
+                   timeOfDay: "morning", source: "manual", category: "Elevated" }],
+    });
+    assert.match(rendered, /not enough/);
+    assert.match(rendered, /be useful anyway/);
+  });
+
+  test("only a first name survives validation", () => {
+    const result = validateCoachRequest({ ...base, firstName: "  Satya Kumar Dhumal  " });
+    assert.equal(result.ok, true);
+    assert.equal(result.body.firstName, "Satya");
+  });
+
+  test("a blank name is dropped", () => {
+    for (const value of ["", "   ", null, 42]) {
+      const result = validateCoachRequest({ ...base, firstName: value });
+      assert.equal(result.ok, true);
+      assert.equal(result.body.firstName, undefined);
+    }
+  });
+});

@@ -57,9 +57,9 @@ struct TermsView: View {
                     optional and nothing is withheld if you do not. An account stores only \
                     an identifier — never your health data — kept in this device's Keychain.
 
-                    If you use the coach, a short summary of recent readings is sent to answer \
-                    your question — never your full history, and never a document image. \
-                    Nothing is stored on the server.
+                    If you use the coach, your first name and a short summary of recent \
+                    readings are sent to answer your question — never your full history, and \
+                    never a document image. Nothing is stored on the server.
 
                     Scanned pages are read on your device using Apple's Vision framework. The \
                     images are not uploaded.

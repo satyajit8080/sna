@@ -80,6 +80,8 @@ private struct CoachRequestPayload: Encodable {
 
     let question: String
     let guidelineName: String
+    /// First name only. Trimmed server-side too, as a second guard.
+    let firstName: String?
     let attachments: [Attachment]
     let readings: [Reading]
     let averages: [Average]
@@ -191,6 +193,15 @@ struct BackendCoachService: AICoachService {
         return CoachRequestPayload(
             question: question,
             guidelineName: context.guidelineName,
+            // A first name, never a full one. "Me" is the default profile name
+            // and carries nothing, so it is not worth sending.
+            firstName: {
+                let name = context.firstName?
+                    .trimmingCharacters(in: .whitespaces)
+                    .split(separator: " ").first.map(String.init)
+                guard let name, !name.isEmpty, name.lowercased() != "me" else { return nil }
+                return String(name.prefix(40))
+            }(),
             // Already reduced to text on the device — never an image.
             attachments: attachments.map {
                 .init(kind: $0.kind, name: $0.name, text: String($0.text.prefix(6_000)))

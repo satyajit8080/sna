@@ -42,6 +42,7 @@ struct CoachView: View {
     private var snapshot: BPContextSnapshot {
         app.contextEngine.makeSnapshot(
             profileID: app.activeProfile.id,
+            firstName: app.activeProfile.name,
             readings: allReadings,
             medications: allMedications,
             doses: allDoses,

@@ -9,6 +9,11 @@ import type { CoachRequestBody } from "../schema.js";
  * on-device, deterministically, and its wording is fixed.
  */
 export const SYSTEM_PROMPT = `You are the coach inside BP Coach, a personal blood pressure app.
+
+Use the person's first name when you have it — naturally, not in every sentence.
+You are a coach, not a database: when there is little or no data, help with what
+you do know and ask how they are getting on. Refusing to engage because their log
+is empty is the single worst thing you can do on someone's first day.
 You are talking to the person whose readings these are, not to a clinician.
 
 ## What you do
@@ -221,6 +226,11 @@ export const SCREENED_REPLACEMENT =
 export function renderContext(body: CoachRequestBody): string {
   const lines: string[] = [];
 
+  if (body.firstName) {
+    lines.push(`You are talking to ${body.firstName}.`);
+    lines.push("");
+  }
+
   lines.push(`Guideline in use: ${body.guidelineName}`);
   lines.push("");
 
@@ -299,10 +309,31 @@ export function renderContext(body: CoachRequestBody): string {
     lines.push("--- end of attachments ---");
   }
 
-  if (body.readings.length < 3) {
+  if (body.readings.length === 0) {
     lines.push("");
     lines.push(
-      "NOTE: there are fewer than three readings. Say plainly that this is not enough to draw conclusions from."
+      [
+        "NOTE: this person has recorded nothing yet. Do not simply refuse.",
+        "Be a coach on day one:",
+        "- Greet them by name if you have it.",
+        "- Answer what you can from general knowledge — how to measure well, what",
+        "  the categories mean, what affects readings. That is all genuinely useful",
+        "  without any of their data.",
+        "- Ask how they are doing, or what brought them to the app. One question,",
+        "  not an interrogation.",
+        "- Point them at the specific next step: Add tab, Blood Pressure.",
+        "Say only that you cannot describe THEIR pattern yet. Do not imply you",
+        "cannot help at all — you can.",
+      ].join("\n")
+    );
+  } else if (body.readings.length < 3) {
+    lines.push("");
+    lines.push(
+      [
+        "NOTE: fewer than three readings. Say plainly that this is not enough to",
+        "describe a trend, then be useful anyway: comment on what they did record,",
+        "answer the question generally, and say what would make the picture clearer.",
+      ].join("\n")
     );
   }
 

@@ -44,6 +44,14 @@ export interface CoachAttachment {
 
 export interface CoachRequestBody {
   question: string;
+  /**
+   * The person's first name, if they gave one.
+   *
+   * Sent so the coach can address them naturally. Trimmed to a first name and
+   * capped: there is no reason for a full name to leave the device, and the
+   * privacy copy in the app states that a first name is included.
+   */
+  firstName?: string;
   guidelineName: string;
   attachments?: CoachAttachment[];
   readings: CoachReading[];
@@ -131,6 +139,13 @@ export function validateCoachRequest(
       medications: (body.medications ?? []).slice(0, LIMITS.maxMedications),
       lifestyle: (body.lifestyle ?? []).slice(0, LIMITS.maxLifestyle),
       averages: body.averages ?? [],
+      // Trimmed to a first name and capped. There is no reason for a full name
+      // to leave the device, and the app's privacy copy says a first name is
+      // included so the coach can address the person naturally.
+      firstName:
+        typeof body.firstName === "string" && body.firstName.trim()
+          ? body.firstName.trim().split(/\s+/)[0].slice(0, 40)
+          : undefined,
     },
   };
 }
