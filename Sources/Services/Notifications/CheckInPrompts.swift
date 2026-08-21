@@ -36,6 +36,10 @@ enum CheckInPrompts {
         var lastSymptomDaysAgo: Int?
         var hasUpcomingAppointment: Bool = false
         var daysUntilAppointment: Int?
+        /// Days since an appointment that has already happened, if it was
+        /// recent. The day after a visit is when medication changes are worth
+        /// asking about — and when the person still remembers what was said.
+        var daysSinceAppointment: Int?
         /// True when the last reading sat above the user's own recent average by
         /// a meaningful margin. Never an interpretation — just the comparison.
         var latestAboveOwnAverage: Bool = false
@@ -92,6 +96,17 @@ enum CheckInPrompts {
                 title: "It has been \(days) days",
                 body: "A reading today would keep your trend meaningful.",
                 coachQuestion: "Does a gap in my readings affect what my trend shows?"
+            )
+        }
+
+        // Ranked above the pre-appointment reminder: a visit that already
+        // happened may have changed a prescription, and stale medication data
+        // is worse than a missed nudge.
+        if let days = context.daysSinceAppointment, days >= 0, days <= 2 {
+            return Prompt(
+                title: "How did your appointment go?",
+                body: "If anything changed with your medicines, update them under Add → Medicine Reminder.",
+                coachQuestion: "My doctor appointment was recent. What should I update in the app?"
             )
         }
 
@@ -202,6 +217,14 @@ enum CheckInPrompts {
             ).day
         }
 
+        // The most recent appointment that has already happened.
+        if let last = myAppointments.filter({ !$0.isUpcoming })
+            .max(by: { $0.scheduledFor < $1.scheduledFor }) {
+            context.daysSinceAppointment = calendar.dateComponents(
+                [.day], from: last.scheduledFor, to: .now
+            ).day
+        }
+
         return context
     }
 
@@ -217,6 +240,8 @@ enum CheckInPrompts {
                     hasMedications: true, hasAnyAppointment: true),
             Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
                     hasUpcomingAppointment: true, daysUntilAppointment: 2),
+            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
+                    daysSinceAppointment: 1),
             Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
                     latestAboveOwnAverage: true),
             Context(readingsToday: 0, readingCount: 10,

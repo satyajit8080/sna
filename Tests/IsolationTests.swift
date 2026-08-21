@@ -944,3 +944,67 @@ struct CheckInPromptTests {
         }
     }
 }
+
+/// Post-appointment check-in.
+@Suite("Post-appointment prompt")
+struct PostAppointmentPromptTests {
+
+    private func context() -> CheckInPrompts.Context {
+        var context = CheckInPrompts.Context()
+        context.readingCount = 20
+        context.readingsToday = 1
+        context.hasMedications = true
+        context.hasAnyAppointment = true
+        return context
+    }
+
+    @Test("The day after a visit, it asks what changed")
+    func asksAfterVisit() {
+        var subject = context()
+        subject.daysSinceAppointment = 1
+
+        guard let prompt = CheckInPrompts.todaysPrompt(for: subject) else {
+            Issue.record("Expected a prompt")
+            return
+        }
+        #expect(prompt.title.lowercased().contains("appointment"))
+        #expect(prompt.body.lowercased().contains("medicine"))
+    }
+
+    /// A visit last month is not news. Asking about it would be noise.
+    @Test("An old appointment does not trigger it")
+    func oldVisitIgnored() {
+        var subject = context()
+        subject.daysSinceAppointment = 30
+        let prompt = CheckInPrompts.todaysPrompt(for: subject)
+        #expect(prompt?.title.lowercased().contains("appointment") != true)
+    }
+
+    /// A stale prescription is worse than a missed nudge, so this outranks the
+    /// reminder about the next visit.
+    @Test("A recent visit outranks an upcoming one")
+    func recentVisitWins() {
+        var subject = context()
+        subject.daysSinceAppointment = 1
+        subject.hasUpcomingAppointment = true
+        subject.daysUntilAppointment = 2
+
+        #expect(CheckInPrompts.todaysPrompt(for: subject)?.title == "How did your appointment go?")
+    }
+
+    /// The notification asks; it must not imply anything about the visit itself.
+    @Test("It asks without judging what was decided")
+    func neutralWording() {
+        var subject = context()
+        subject.daysSinceAppointment = 0
+
+        guard let prompt = CheckInPrompts.todaysPrompt(for: subject) else {
+            Issue.record("Expected a prompt")
+            return
+        }
+        let text = (prompt.title + " " + prompt.body).lowercased()
+        for word in ["should", "correct", "wrong", "make sure", "right dose"] {
+            #expect(!text.contains(word), "Wording implied a judgement: \(word)")
+        }
+    }
+}

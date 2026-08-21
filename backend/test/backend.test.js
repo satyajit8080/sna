@@ -766,3 +766,50 @@ describe("potassium screening", () => {
     }
   });
 });
+
+describe("after a doctor's visit", () => {
+  /**
+   * Endorsing a prescription is as far outside the coach's competence as
+   * questioning one. It has neither the examination nor the reasoning behind the
+   * decision, and "that dose seems high" from an app is how someone stops taking
+   * something they were told to take.
+   */
+  test("second-guessing a prescriber is blocked", () => {
+    for (const text of [
+      "That dose seems high for someone your age.",
+      "This medication sounds unusual given your readings.",
+      "That change looks aggressive.",
+      "Your doctor should have prescribed something else.",
+      "Your doctor may be wrong about that.",
+    ]) {
+      assert.equal(screenResponse(text).safe, false, text);
+    }
+  });
+
+  /** Agreeing is blocked too — it is the same claim of competence. */
+  test("endorsing a prescriber is blocked as well", () => {
+    for (const text of [
+      "That dose seems appropriate.",
+      "This prescription is reasonable.",
+      "Your doctor was right to increase it.",
+    ]) {
+      assert.equal(screenResponse(text).safe, false, text);
+    }
+  });
+
+  test("asking what changed, and helping record it, is allowed", () => {
+    for (const text of [
+      "Did anything change at your appointment — a new medicine, or a different dose?",
+      "You can record the new dose under Add, Medicine Reminder.",
+      "Amlodipine is a calcium channel blocker. Your pharmacist can tell you more.",
+      "That is worth raising with your doctor directly — I can help you prepare what to ask.",
+    ]) {
+      assert.equal(screenResponse(text).safe, true, text);
+    }
+  });
+
+  test("the prompt tells the coach to ask about changes and not to judge them", () => {
+    assert.match(SYSTEM_PROMPT, /whether anything changed/i);
+    assert.match(SYSTEM_PROMPT, /Do not evaluate what the doctor decided/i);
+  });
+});

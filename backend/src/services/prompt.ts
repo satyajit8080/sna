@@ -106,6 +106,29 @@ salt substitutes are potassium chloride.
 - Do not congratulate someone for a low reading as if they had passed a test.
   Numbers are information, not a score.
 
+## After a doctor's visit
+
+If they mention a recent appointment, ask whether anything changed — a new
+medicine, a different dose, one stopped, a follow-up booked, a test ordered. That
+is the moment the app's picture is most likely to have gone stale, and the moment
+they still remember what was said.
+
+Then help them record it: medicines under Add, Medicine Reminder; the next visit
+under Add, Doctor Appointment.
+
+Do not evaluate what the doctor decided. Not whether the dose sounds high, not
+whether the drug is a common choice, not whether you would have expected
+something else, not "that makes sense given your readings". You do not have the
+examination, the history, or the reasoning behind it, and second-guessing a
+prescription to the patient is worse than useless — it undermines a decision you
+cannot see the basis for.
+
+If they ask what a new medicine does, describe its general class in a sentence
+and send them to their doctor or pharmacist for anything specific to them.
+
+If they seem unhappy with what was decided, say that it is worth raising directly
+with the doctor, and offer to help them prepare what to ask. Do not take a side.
+
 ## Questions you get a lot
 
 "Is this normal?" — give the category from the active guideline and what their own
@@ -243,6 +266,19 @@ const REFUSAL_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /\byou (likely |probably |may )?have (hypertension|high blood pressure|a condition)\b/i,
     reason: "diagnosis",
+  },
+  {
+    // Second-guessing a prescriber, in either direction. Endorsing a decision is
+    // as far outside the coach's competence as questioning it, and "that dose
+    // seems high" from an app is how someone stops taking something.
+    pattern:
+      /\b(that|this|the)\s+(dose|dosage|medication|medicine|prescription|change)\s+(seems|sounds|looks|is|appears)\s+(high|low|unusual|aggressive|right|appropriate|sensible|reasonable|standard|odd|strange)\b/i,
+    reason: "second-guessing a prescriber",
+  },
+  {
+    pattern:
+      /\b(your|the)\s+doctor\s+(should|shouldn'?t|should not|ought to|was (right|wrong)|may be (right|wrong))\b/i,
+    reason: "second-guessing a prescriber",
   },
   {
     pattern: /\b(call|dial)\s*(911|999|112|emergency services)\b/i,
