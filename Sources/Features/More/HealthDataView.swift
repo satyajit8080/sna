@@ -12,6 +12,15 @@ struct HealthDataView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
+    /// Passed to the import so it can skip samples already stored. Filtered to
+    /// the active profile: a duplicate check against another profile's readings
+    /// would silently drop this profile's data.
+    @Query(sort: \BPReading.recordedAt, order: .reverse) private var allReadings: [BPReading]
+
+    private var existingReadings: [BPReading] {
+        allReadings.filter { $0.profileID == app.activeProfile.id }
+    }
+
     @State private var isImporting = false
     @State private var importMessage: String?
     @State private var error: AppError?
@@ -305,10 +314,16 @@ struct HealthDataView: View {
         Task {
             defer { isImporting = false }
             do {
+                // The service needs the existing readings to deduplicate by
+                // HealthKit UUID, and an insert closure so it never touches the
+                // model context itself.
                 let count = try await app.health.importBloodPressure(
                     for: app.activeProfile,
-                    into: context
+                    since: Date.now.addingTimeInterval(-365 * 86_400),
+                    existing: existingReadings,
+                    insert: { context.insert($0) }
                 )
+                try? context.save()
                 importMessage = count == 0
                     ? "No new readings found in Health."
                     : "Imported \(count) reading\(count == 1 ? "" : "s")."
