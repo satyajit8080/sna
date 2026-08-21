@@ -11,6 +11,7 @@ import {
 import { requestCoaching } from "../dist/services/openrouter.js";
 import { UpstreamError } from "../dist/services/errors.js";
 import { buildApp } from "../dist/app.js";
+import { extractAction } from "../dist/services/actions.js";
 
 const baseBody = {
   question: "What moved my blood pressure this week?",
@@ -811,5 +812,101 @@ describe("after a doctor's visit", () => {
   test("the prompt tells the coach to ask about changes and not to judge them", () => {
     assert.match(SYSTEM_PROMPT, /whether anything changed/i);
     assert.match(SYSTEM_PROMPT, /Do not evaluate what the doctor decided/i);
+  });
+});
+
+describe("coach actions", () => {
+  const future = () => new Date(Date.now() + 20 * 86400000).toISOString();
+  const block = (obj) => "I'll set that up.\n\n```action\n" + JSON.stringify(obj) + "\n```";
+
+  test("a well-formed appointment is proposed", () => {
+    const { text, action } = extractAction(
+      block({ kind: "addAppointment", doctorName: "Dr Sharma", scheduledFor: future() })
+    );
+    assert.equal(action.kind, "addAppointment");
+    assert.equal(action.doctorName, "Dr Sharma");
+    assert.equal(text, "I'll set that up.");
+  });
+
+  /**
+   * The most important test here. A medication reminder built from a guessed
+   * dose tells someone to take the wrong amount at 8am, and they will trust the
+   * reminder over their memory of a chat.
+   */
+  test("a medication without a dose is rejected outright", () => {
+    const { action } = extractAction(
+      block({ kind: "addMedication", name: "Amlodipine", frequency: "onceDaily" })
+    );
+    assert.equal(action, null);
+  });
+
+  test("a complete medication is proposed", () => {
+    const { action } = extractAction(
+      block({ kind: "addMedication", name: "Amlodipine", dose: "5mg",
+              frequency: "onceDaily", reminderTimes: [480] })
+    );
+    assert.equal(action.dose, "5mg");
+    assert.deepEqual(action.reminderTimes, [480]);
+  });
+
+  test("an appointment in the past is rejected", () => {
+    const { action } = extractAction(
+      block({ kind: "addAppointment", doctorName: "Dr X", scheduledFor: "2020-01-01T10:00:00Z" })
+    );
+    assert.equal(action, null);
+  });
+
+  /** A date two years out is almost always a misread year. */
+  test("an implausibly distant appointment is rejected", () => {
+    const far = new Date(Date.now() + 900 * 86400000).toISOString();
+    const { action } = extractAction(
+      block({ kind: "addAppointment", doctorName: "Dr X", scheduledFor: far })
+    );
+    assert.equal(action, null);
+  });
+
+  test("an impossible reading is rejected", () => {
+    for (const r of [
+      { systolic: 80, diastolic: 120 },
+      { systolic: 400, diastolic: 90 },
+      { systolic: 40, diastolic: 20 },
+    ]) {
+      const { action } = extractAction(block({ kind: "addReading", ...r }));
+      assert.equal(action, null, JSON.stringify(r));
+    }
+  });
+
+  test("a future-dated reading is rejected", () => {
+    const { action } = extractAction(
+      block({ kind: "addReading", systolic: 120, diastolic: 80, recordedAt: future() })
+    );
+    assert.equal(action, null);
+  });
+
+  test("an unknown symptom is rejected", () => {
+    const { action } = extractAction(
+      block({ kind: "addSymptom", symptom: "spontaneous combustion", severity: "mild" })
+    );
+    assert.equal(action, null);
+  });
+
+  test("an unknown action kind is rejected", () => {
+    const { action } = extractAction(block({ kind: "deleteAllData" }));
+    assert.equal(action, null);
+  });
+
+  /** A reply with no action, or a broken one, must still deliver its text. */
+  test("the text reply survives a missing or broken action", () => {
+    assert.equal(extractAction("Just a reply.").action, null);
+    assert.equal(extractAction("Just a reply.").text, "Just a reply.");
+
+    const broken = extractAction("Here you go.\n```action\n{not json}\n```");
+    assert.equal(broken.action, null);
+    assert.equal(broken.text, "Here you go.");
+  });
+
+  test("the prompt forbids inventing a dose and claiming it is saved", () => {
+    assert.match(SYSTEM_PROMPT, /Never invent a detail/i);
+    assert.match(SYSTEM_PROMPT, /Nothing is saved until they confirm/i);
   });
 });

@@ -23,6 +23,9 @@ struct CoachResponse: Sendable {
     let basedOn: [String]
     /// True when the context was too thin to answer well.
     let hadInsufficientData: Bool
+    /// Something the coach offered to set up. Shown as a confirmation card; the
+    /// user decides whether it is written.
+    var action: CoachAction?
 }
 
 enum CoachError: LocalizedError, Equatable {

@@ -20,6 +20,7 @@ struct CoachView: View {
     @State private var draft = ""
     @State private var attachments: [CoachAttachment] = []
     @State private var isThinking = false
+    @State private var pendingAction: CoachAction?
     @State private var error: AppError?
     @State private var lastFailedQuestion: String?
 
@@ -140,6 +141,25 @@ struct CoachView: View {
                     ForEach(messages) { message in
                         MessageBubble(message: message)
                             .id(message.id)
+                    }
+
+                    if let pendingAction {
+                        CoachActionCard(
+                            action: pendingAction,
+                            onConfirm: {
+                                pendingAction.apply(
+                                    profileID: app.activeProfile.id,
+                                    context: context
+                                )
+                                // Cleared after a moment so the confirmed state
+                                // is visible rather than vanishing on tap.
+                                Task {
+                                    try? await Task.sleep(for: .seconds(2))
+                                    self.pendingAction = nil
+                                }
+                            },
+                            onDismiss: { self.pendingAction = nil }
+                        )
                     }
 
                     if isThinking {
@@ -638,6 +658,11 @@ struct CoachView: View {
                 target.messages.append(AIMessage(isFromUser: false, text: response.text))
                 try? context.save()
                 lastFailedQuestion = nil
+
+                // Held in view state rather than saved with the message: a
+                // proposal is a decision to make now, not part of the record.
+                // Reopening the conversation should not re-offer it.
+                pendingAction = response.action
             } catch let coachError as CoachError {
                 // Each failure needs its own message. Reporting a network error
                 // as "could not save" sends the user looking in the wrong place.

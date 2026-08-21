@@ -352,3 +352,102 @@ struct AttachReportView: View {
         }
     }
 }
+
+/// Confirmation card for something the coach offered to set up.
+///
+/// Shows every field that will be written, not a summary. The point of the
+/// confirmation is that a misheard dose or date can be caught, and it cannot be
+/// caught if it is not on screen.
+struct CoachActionCard: View {
+    let action: CoachAction
+    let onConfirm: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var state: State = .pending
+
+    enum State { case pending, confirmed, dismissed }
+
+    var body: some View {
+        BrandCard(padding: 16, strokeColor: strokeColor) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: state == .confirmed ? "checkmark.circle.fill" : action.symbol)
+                        .font(.system(size: 16))
+                        .foregroundStyle(state == .confirmed ? Brand.accent : Brand.textPrimary)
+                    Text(state == .confirmed ? "Added" : action.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Spacer(minLength: 0)
+                }
+
+                VStack(spacing: 8) {
+                    ForEach(action.fields, id: \.0) { label, value in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(label)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
+                                .frame(width: 88, alignment: .leading)
+                            Text(value)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Brand.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+
+                if let caution = action.caution, state == .pending {
+                    Text(caution)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.statusEstimate)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if state == .pending {
+                    HStack(spacing: 10) {
+                        Button {
+                            state = .confirmed
+                            onConfirm()
+                        } label: {
+                            Text("Confirm")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Brand.onAccent)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 38)
+                                .background(Brand.accent)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            state = .dismissed
+                            onDismiss()
+                        } label: {
+                            Text("Not now")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Brand.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 38)
+                                .overlay {
+                                    Capsule().strokeBorder(Brand.cardStroke, lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .opacity(state == .dismissed ? 0.5 : 1)
+        .animation(.snappy, value: state)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(action.title)
+    }
+
+    private var strokeColor: Color {
+        switch state {
+        case .confirmed: Brand.accent.opacity(0.5)
+        case .dismissed: Brand.cardStroke
+        case .pending: Brand.accent.opacity(0.35)
+        }
+    }
+}

@@ -1,5 +1,6 @@
 import type { Config } from "../config.js";
 import type { CoachRequestBody } from "../schema.js";
+import { extractAction, type ProposedAction } from "./actions.js";
 import { UpstreamError } from "./errors.js";
 import {
   SYSTEM_PROMPT,
@@ -11,6 +12,8 @@ import {
 
 export interface CoachResult {
   text: string;
+  /** A proposal the app will show for confirmation. Never applied server-side. */
+  action?: ProposedAction | null;
   screened: boolean;
   screenReason?: string;
   /** Which model actually served the request — OpenRouter may route or fall back. */
@@ -106,10 +109,14 @@ export async function requestCoaching(
     throw new UpstreamError("The AI service could not answer that.", 502, true);
   }
 
-  const text = (payload.choices?.[0]?.message?.content ?? "").trim();
-  if (!text) {
+  const raw = (payload.choices?.[0]?.message?.content ?? "").trim();
+  if (!raw) {
     throw new UpstreamError("The AI service returned an empty response", 502, true);
   }
+
+  // The action block is separated before screening so the JSON cannot trip a
+  // pattern, and so a screened reply carries no action with it.
+  const { text, action } = extractAction(raw);
 
   const screen = screenResponse(text);
   if (!screen.safe) {
@@ -120,5 +127,5 @@ export async function requestCoaching(
       modelUsed: payload.model,
     };
   }
-  return { text, screened: false, modelUsed: payload.model };
+  return { text, action, screened: false, modelUsed: payload.model };
 }

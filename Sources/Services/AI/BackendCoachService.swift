@@ -94,6 +94,9 @@ private struct CoachRequestPayload: Encodable {
 
 private struct CoachResponsePayload: Decodable {
     let text: String
+    /// A proposal, not a change. Nil when the coach did not offer one, and when
+    /// the reply was screened — a screened answer never carries an action.
+    let action: CoachAction?
     let readingsUsed: Int
     let guideline: String
 }
@@ -162,7 +165,8 @@ struct BackendCoachService: AICoachService {
         return CoachResponse(
             text: decoded.text,
             basedOn: ["\(decoded.readingsUsed) readings", decoded.guideline],
-            hadInsufficientData: context.isTooSparse
+            hadInsufficientData: context.isTooSparse,
+            action: decoded.action
         )
     }
 

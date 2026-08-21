@@ -35,6 +35,9 @@ export function registerCoachRoutes(app: FastifyInstance, config: Config): void 
 
     return reply.send({
       text: result.text,
+      // A proposal only. The app shows a confirmation card; nothing is written
+      // here, and nothing is written on the device until the user taps confirm.
+      action: result.action ?? null,
       readingsUsed: validation.body.readings.length,
       guideline: validation.body.guidelineName,
     });
