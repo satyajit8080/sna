@@ -57,10 +57,11 @@ struct CoachView: View {
         // safe-area values that were evidently not what I assumed, and each time
         // the composer was laid out below the visible region.
         //
-        // GeometryReader reports the real available size. Pinning the VStack to
-        // exactly that size means the composer's position is arithmetic, not
-        // inference: header height + transcript fills the rest + composer at its
-        // natural height, all inside a box that cannot exceed the screen.
+        // `geometry.size` reports the FULL frame — it does not subtract safe-area
+        // insets, which arrive separately in `geometry.safeAreaInsets`. Pinning
+        // the VStack to `size.height` therefore extended it underneath the tab
+        // bar and put the composer behind it. Subtracting the bottom inset is
+        // what makes the height honest.
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 BrandHeader(
@@ -81,8 +82,19 @@ struct CoachView: View {
                 // 45pt controls plus 14pt padding top and bottom.
                 composer
                     .frame(height: 73)
+                    // Lifts the composer clear of the tab bar rather than
+                    // sitting flush against it. If the parent's inset is already
+                    // doing its job this is simply breathing room; if it is not,
+                    // this is what keeps the controls reachable.
+                    .padding(.bottom, 10)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
+            // The bottom inset is subtracted explicitly. If the parent reports a
+            // height that includes the strip behind the tab bar, this keeps the
+            // composer above it rather than underneath.
+            .frame(
+                width: geometry.size.width,
+                height: max(0, geometry.size.height - geometry.safeAreaInsets.bottom)
+            )
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)

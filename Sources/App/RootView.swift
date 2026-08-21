@@ -75,7 +75,14 @@ struct RootView: View {
             }
         }
         .id(router.wrappedValue.tab)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // No explicit `.frame(maxHeight: .infinity)` here.
+        //
+        // Applying one before `safeAreaInset` pins the frame to the full screen;
+        // the inset then adjusts only the safe area, not the frame. A
+        // GeometryReader inside therefore reports the full height including the
+        // strip behind the tab bar, and anything pinned to that height is laid
+        // out underneath it. Letting the frame size naturally keeps the reported
+        // height honest.
         .background(Brand.background.ignoresSafeArea())
         // Reserves room so content is never under the bar. `safeAreaInset` with
         // the bar itself would also work, but a clear spacer keeps the bar's
