@@ -31,12 +31,13 @@ struct UnifiedHistoryView: View {
     @State private var editingAppointment: Appointment?
 
     enum DateRange: String, CaseIterable, Identifiable {
-        case week, month, quarter, year, custom
+        case week, twoWeeks, month, quarter, year, custom
         var id: String { rawValue }
 
         var label: String {
             switch self {
             case .week: "7d"
+            case .twoWeeks: "14d"
             case .month: "30d"
             case .quarter: "90d"
             case .year: "1y"
@@ -47,6 +48,7 @@ struct UnifiedHistoryView: View {
         var days: Int? {
             switch self {
             case .week: 7
+            case .twoWeeks: 14
             case .month: 30
             case .quarter: 90
             case .year: 365
@@ -66,6 +68,14 @@ struct UnifiedHistoryView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @State private var section: Section = .readings
+
+    /// The four views of the same data, from the design.
+    enum Section: String, CaseIterable, Identifiable {
+        case trends, readings, analysis, metrics
+        var id: String { rawValue }
+        var label: String { rawValue.capitalized }
+    }
 
     var body: some View {
         // Background as a modifier, not a ZStack child: as a child ignoring the
@@ -73,15 +83,83 @@ struct UnifiedHistoryView: View {
         VStack(spacing: 0) {
             BrandHeader(title: "History", showsBack: true, onBack: { dismiss() })
                 .padding(.horizontal, Brand.Metric.pagePadding)
-            searchField
-            controls
-            content
+
+            sectionTabs
+            rangeChips
+
+            switch section {
+            case .readings:
+                searchField
+                controls
+                content
+            case .trends:
+                trendsSection
+            case .analysis:
+                analysisSection
+            case .metrics:
+                metricsSection
+            }
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
         .navigationDestination(item: $viewingReading) { ReadingDetailView(reading: $0) }
         .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }
         .navigationDestination(item: $viewingDocument) { DocumentDetailView(document: $0) }
+    }
+
+    /// Trends · Readings · Analysis · Metrics.
+    private var sectionTabs: some View {
+        HStack(spacing: 0) {
+            ForEach(Section.allCases) { option in
+                Button {
+                    section = option
+                    Haptics.selection()
+                } label: {
+                    VStack(spacing: 8) {
+                        Text(option.label)
+                            .font(.system(size: 14, weight: section == option ? .semibold : .regular))
+                            .foregroundStyle(section == option ? Brand.accent : Brand.textSecondary)
+                        Rectangle()
+                            .fill(section == option ? Brand.accent : .clear)
+                            .frame(height: 2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .accessibilityAddTraits(section == option ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(.horizontal, Brand.Metric.pagePadding)
+        .padding(.top, 14)
+    }
+
+    /// 7d · 14d · 30d · 90d, matching the design. Custom stays available from
+    /// the Readings tab, where date-bounded searching actually helps.
+    private var rangeChips: some View {
+        HStack(spacing: 10) {
+            ForEach([DateRange.week, .twoWeeks, .month, .quarter], id: \.self) { option in
+                Button {
+                    range = option
+                    Haptics.selection()
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: 13, weight: range == option ? .semibold : .regular))
+                        .foregroundStyle(range == option ? Brand.onAccent : Brand.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(range == option ? Brand.accent : Brand.background)
+                        .overlay {
+                            Capsule().strokeBorder(
+                                range == option ? .clear : Brand.cardStroke, lineWidth: 1
+                            )
+                        }
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, Brand.Metric.pagePadding)
+        .padding(.vertical, 12)
     }
 
     private var searchField: some View {
@@ -106,56 +184,232 @@ struct UnifiedHistoryView: View {
 
     // MARK: - Controls
 
-    private var controls: some View {
-        VStack(spacing: Theme.Spacing.sm) {
-            HStack(spacing: 0) {
-                ForEach(DateRange.allCases) { option in
-                    Button {
-                        range = option
-                        Haptics.selection()
-                    } label: {
-                        Text(option.label)
-                            .font(.system(size: 13, weight: range == option ? .semibold : .regular))
-                            .foregroundStyle(range == option ? Brand.onAccent : Brand.textSecondary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 30)
-                            .background(range == option ? Brand.accent : .clear)
-                            .clipShape(Capsule())
+    // MARK: - Trends
+
+    private var trendsSection: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if bpInRange.count >= 2 {
+                    BrandCard(padding: 16) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Blood Pressure")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Text("\(range.label) · \(guidelines.active.displayName)")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Brand.textSecondary)
+                            BPTrendChart(readings: bpInRange, days: range.days ?? 30)
+                                .frame(height: 220)
+                        }
                     }
-                    .buttonStyle(.plain)
+
+                    extremesCard
+                } else {
+                    notEnoughData
                 }
             }
-            .padding(3)
-            .background(Brand.background)
-            .overlay {
-                Capsule().strokeBorder(Brand.cardStroke, lineWidth: 1)
-            }
-            .clipShape(Capsule())
+            .padding(.horizontal, Brand.Metric.pagePadding)
+            .padding(.bottom, 40)
+        }
+    }
 
-            if range == .custom {
-                HStack {
-                    DatePicker("From", selection: $customStart, displayedComponents: .date)
-                    DatePicker("To", selection: $customEnd, displayedComponents: .date)
+    /// Highest and lowest in the window, side by side as in the design.
+    private var extremesCard: some View {
+        let highest = bpInRange.max { $0.systolic < $1.systolic }
+        let lowest = bpInRange.min { $0.systolic < $1.systolic }
+
+        return HStack(spacing: 12) {
+            extremeCard("Highest", highest)
+            extremeCard("Lowest", lowest)
+        }
+    }
+
+    private func extremeCard(_ title: String, _ reading: BPReading?) -> some View {
+        BrandCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Brand.textSecondary)
+                Text(reading.map { "\($0.systolic)/\($0.diastolic)" } ?? "—")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                Text(reading?.recordedAt.formatted(date: .abbreviated, time: .omitted) ?? "No data")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Analysis
+
+    private var analysisSection: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if bpInRange.count >= 2 {
+                    if let comparison = BPStatistics.morningVsEvening(bpInRange) {
+                        comparisonCard(
+                            "Morning vs evening",
+                            ("Morning", comparison.first),
+                            ("Evening", comparison.second),
+                            note: "Readings are usually a little higher in the morning."
+                        )
+                    }
+
+                    if let comparison = BPStatistics.homeVsClinic(bpInRange) {
+                        comparisonCard(
+                            "Home vs clinic",
+                            ("Home", comparison.first),
+                            ("Clinic", comparison.second),
+                            note: "A large gap is worth mentioning to your doctor."
+                        )
+                    }
+
+                    if let variability = BPStatistics.variability(bpInRange) {
+                        BrandCard(padding: 16) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Variability")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(Brand.textPrimary)
+                                HStack {
+                                    Text("Systolic standard deviation")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Brand.textSecondary)
+                                    Spacer()
+                                    Text(String(format: "%.1f", variability.systolicSD))
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(Brand.textPrimary)
+                                }
+                                Text("""
+                                How much your readings move around. Describes spread only — \
+                                what it means for you is a question for your doctor.
+                                """)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Brand.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                } else {
+                    notEnoughData
                 }
-                .font(.caption)
-                .labelsHidden()
             }
+            .padding(.horizontal, Brand.Metric.pagePadding)
+            .padding(.bottom, 40)
+        }
+    }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Spacing.sm) {
-                    ForEach(HistoryKind.allCases) { kind in
-                        FilterChip(
-                            kind: kind,
-                            isOn: filters.contains(kind),
-                            count: count(for: kind)
-                        ) {
-                            if filters.contains(kind) { filters.remove(kind) }
-                            else { filters.insert(kind) }
-                            Haptics.selection()
+    private func comparisonCard(
+        _ title: String,
+        _ left: (String, BPStatistics.Average),
+        _ right: (String, BPStatistics.Average),
+        note: String
+    ) -> some View {
+        BrandCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+
+                // Written out rather than looped: a ForEach over tuples needs
+                // an Identifiable conformance that a tuple cannot have.
+                HStack(spacing: 0) {
+                    column(left.0, left.1)
+                    column(right.0, right.1)
+                }
+
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func column(_ title: String, _ average: BPStatistics.Average) -> some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textSecondary)
+            Text("\(average.systolic)/\(average.diastolic)")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Brand.textPrimary)
+            Text("\(average.count) reading\(average.count == 1 ? "" : "s")")
+                .font(.system(size: 11))
+                .foregroundStyle(Brand.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Metrics
+
+    private var metricsSection: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                ForEach(EntryKind.allCases.filter { $0 != .bloodPressure }) { kind in
+                    let count = entries.filter { $0.kind == kind }.count
+                    BrandCard(padding: 12) {
+                        HStack(spacing: 14) {
+                            BrandIconTile(symbol: kind.symbol, tint: kind.tint, size: 44)
+                            Text(kind.label)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Spacer()
+                            Text("\(count)")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(count == 0 ? Brand.textSecondary : Brand.accent)
                         }
                     }
                 }
-                .padding(.horizontal, 2)
+            }
+            .padding(.horizontal, Brand.Metric.pagePadding)
+            .padding(.bottom, 40)
+        }
+    }
+
+    /// Shown wherever a statistic needs more readings than exist. Says what is
+    /// missing rather than drawing an empty chart.
+    private var notEnoughData: some View {
+        BrandCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Not enough readings")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Brand.textPrimary)
+                Text("At least two readings in this window are needed to describe a trend.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Blood pressure readings inside the selected window.
+    private var bpInRange: [BPReading] {
+        entries.compactMap {
+            if case .bloodPressure(let reading) = $0.payload { return reading }
+            return nil
+        }
+    }
+
+    /// Type filters, plus the custom range pickers when that range is chosen.
+    private var controls: some View {
+        VStack(spacing: Theme.Spacing.sm) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Theme.Spacing.sm) {
+                    ForEach(EntryKind.allCases) { kind in
+                        filterChip(kind)
+                    }
+                }
+            }
+
+            if range == .custom {
+                HStack(spacing: Theme.Spacing.md) {
+                    DatePicker("From", selection: $customStart, displayedComponents: .date)
+                    DatePicker("To", selection: $customEnd, displayedComponents: .date)
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(Brand.textPrimary)
+                .tint(Brand.accent)
             }
         }
         .padding(.horizontal, Brand.Metric.pagePadding)
