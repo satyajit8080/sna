@@ -32,6 +32,7 @@ struct CoachView: View {
     @State private var attachmentError: String?
     @FocusState private var isComposerFocused: Bool
     @State private var isShowingOptions = false
+    @State private var isShowingPhotoPicker = false
 
     private var messages: [AIMessage] {
         (conversation?.messages ?? []).sorted { $0.createdAt < $1.createdAt }
@@ -75,7 +76,11 @@ struct CoachView: View {
                 transcript
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                // Fixed height, not natural height. A VStack can squeeze a
+                // flexible child to zero; it cannot do that to a fixed one.
+                // 45pt controls plus 14pt padding top and bottom.
                 composer
+                    .frame(height: 73)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
@@ -97,6 +102,11 @@ struct CoachView: View {
         .fullScreenCover(isPresented: $isShowingCamera) {
             CameraPicker { attach(image: $0, name: "Photo") }.ignoresSafeArea()
         }
+        .photosPicker(
+            isPresented: $isShowingPhotoPicker,
+            selection: $selectedPhoto,
+            matching: .images
+        )
         .sheet(isPresented: $isShowingFiles) {
             DocumentPicker(types: [.pdf, .image, .plainText]) { attach(fileAt: $0) }
         }
@@ -383,7 +393,7 @@ struct CoachView: View {
                         Button { isShowingCamera = true } label: {
                             Label("Camera", systemImage: "camera")
                         }
-                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        Button { isShowingPhotoPicker = true } label: {
                             Label("Photo", systemImage: "photo")
                         }
                         Button { isShowingFiles = true } label: {
@@ -416,14 +426,13 @@ struct CoachView: View {
                             "",
                             text: $draft,
                             prompt: Text("Ask anything...")
-                                .foregroundStyle(Brand.textSecondary),
-                            axis: .vertical
+                                .foregroundStyle(Brand.textSecondary)
                         )
                         .font(.system(size: 14))
                         .foregroundStyle(Brand.textPrimary)
-                        .lineLimit(1...4)
                         .focused($isComposerFocused)
                         .submitLabel(.send)
+                        .onSubmit { if canSend { send() } }
 
                         Button {
                             // The system emoji keyboard is reached by focusing
