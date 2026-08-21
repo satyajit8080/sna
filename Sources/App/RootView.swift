@@ -76,10 +76,10 @@ struct RootView: View {
             }
             .id(router.wrappedValue.tab)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // The raised centre button overhangs the bar and would otherwise
-            // cover the top of whatever sits directly above it.
+            // Clears the raised centre button, which overhangs the bar and
+            // would otherwise sit on top of whatever is directly above it.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: BrandTabBar.raisedOverhang)
+                Color.clear.frame(height: BrandTabBar.contentClearance)
             }
 
             BrandTabBar(selection: router.tab, onAdd: { isPresentingAddMenu = true })
@@ -108,8 +108,13 @@ struct BrandTabBar: View {
     static let raisedOverhang: CGFloat = 29
     /// The bar's own height.
     static let barHeight: CGFloat = 70
-    /// What content must leave clear: the bar plus the button's overhang.
-    static let reservedHeight: CGFloat = barHeight + raisedOverhang
+    /// What content must leave clear above the bar.
+    ///
+    /// The button is 59pt and rises `raisedOverhang` above the bar, so roughly
+    /// 30pt of it sits over the content. The extra 12 is breathing room — with
+    /// exactly the overhang the button touches the element above it, which
+    /// looked like a clipping bug.
+    static let contentClearance: CGFloat = raisedOverhang + 12
 
     @Binding var selection: AppTab
     let onAdd: () -> Void
