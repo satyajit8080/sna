@@ -49,30 +49,35 @@ struct CoachView: View {
     }
 
     var body: some View {
-        // The background is applied as a modifier, not as a ZStack child. As a
-        // child that ignores the safe area it enlarged the container past the
-        // screen edge, which pushed the composer out of view entirely.
-        VStack(spacing: 0) {
-            BrandHeader(
-                title: "Ai Coach",
-                subtitle: "Your personal BP coach",
-                trailing: [
-                    ("clock.arrow.circlepath", { isShowingHistory = true }),
-                    ("ellipsis", { isShowingOptions = true }),
-                ]
-            )
-            .padding(.horizontal, Brand.Metric.pagePadding)
+        // Constrained to exactly the space the parent offers.
+        //
+        // Five earlier attempts placed the composer with padding, safe-area
+        // insets, a VStack sibling and an overlay. Each depended on inherited
+        // safe-area values that were evidently not what I assumed, and each time
+        // the composer was laid out below the visible region.
+        //
+        // GeometryReader reports the real available size. Pinning the VStack to
+        // exactly that size means the composer's position is arithmetic, not
+        // inference: header height + transcript fills the rest + composer at its
+        // natural height, all inside a box that cannot exceed the screen.
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                BrandHeader(
+                    title: "Ai Coach",
+                    subtitle: "Your personal BP coach",
+                    trailing: [
+                        ("clock.arrow.circlepath", { isShowingHistory = true }),
+                        ("ellipsis", { isShowingOptions = true }),
+                    ]
+                )
+                .padding(.horizontal, Brand.Metric.pagePadding)
 
-            // The composer is an overlay on the transcript, not a sibling.
-            //
-            // Four earlier attempts placed it as a VStack sibling or a safe-area
-            // inset, and each time it rendered below the visible region. An
-            // overlay is laid out inside its parent's bounds by definition, so
-            // it cannot be pushed off-screen whatever the surrounding safe-area
-            // arithmetic does.
-            transcript
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(alignment: .bottom) { composer }
+                transcript
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                composer
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
@@ -148,10 +153,7 @@ struct CoachView: View {
                     }
                 }
                 .padding(.horizontal, Brand.Metric.pagePadding)
-                .padding(.top, 16)
-                // Clearance for the composer overlay, so the last message is
-                // never underneath it.
-                .padding(.bottom, 90)
+                .padding(.vertical, 16)
             }
             // Without these the keyboard traps the user: the tab bar is covered
             // and there is no other way back.
@@ -480,12 +482,6 @@ struct CoachView: View {
         .background(Brand.background)
         .overlay(alignment: .top) {
             Rectangle().fill(Brand.cardStroke).frame(height: 1)
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { isComposerFocused = false }
-            }
         }
     }
 
