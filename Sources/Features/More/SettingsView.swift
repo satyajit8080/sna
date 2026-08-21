@@ -62,6 +62,15 @@ struct NotificationSettingsView: View {
     @State private var quiet = NotificationEngine.QuietHours.current()
     @State private var pendingCount = 0
     @State private var enabled: [NotificationEngine.Category: Bool] = [:]
+    @State private var testResult: String?
+
+    @Environment(AppModel.self) private var app
+    @Query(sort: \BPReading.recordedAt, order: .reverse) private var allReadings: [BPReading]
+    @Query private var allMedications: [Medication]
+    @Query private var allAppointments: [Appointment]
+    @Query private var allDoses: [MedicationDose]
+    @Query private var allLifestyle: [LifestyleEntry]
+    @Query private var allSymptoms: [SymptomEntry]
 
     var body: some View {
         BrandScreen {
@@ -133,6 +142,23 @@ struct NotificationSettingsView: View {
                 }
             }
 
+            BrandFormSection(
+                "Daily check-in",
+                footer: """
+                Arrives once a day at 7pm, moved out of quiet hours. It is skipped \
+                entirely on days when there is nothing useful to ask — that is working \
+                as intended, not a fault.
+                """
+            ) {
+                BrandActionRow(
+                    title: "Send a test now",
+                    detail: testResult ?? "Arrives in about five seconds",
+                    symbol: "bell.badge.fill",
+                    tint: Brand.accent,
+                    showsChevron: false
+                ) { sendTest() }
+            }
+
             BrandFormSection("System") {
                 BrandValueRow(
                     title: "Scheduled reminders",
@@ -157,6 +183,36 @@ struct NotificationSettingsView: View {
             for category in NotificationEngine.Category.allCases {
                 enabled[category] = NotificationEngine.shared.isEnabled(category)
             }
+        }
+    }
+
+    /// Fires the real check-in, chosen by the real rules, so the test proves the
+    /// whole path rather than sending a canned message that would pass even if
+    /// the rules were broken.
+    private func sendTest() {
+        testResult = nil
+        Task {
+            let granted = await NotificationEngine.shared.requestAuthorization()
+            guard granted else {
+                testResult = "Notifications are turned off for BP Coach in iOS Settings."
+                return
+            }
+
+            let context = CheckInPrompts.context(
+                profileID: app.activeProfile.id,
+                readings: allReadings,
+                medications: allMedications,
+                doses: allDoses,
+                lifestyle: allLifestyle,
+                symptoms: allSymptoms,
+                appointments: allAppointments
+            )
+
+            let sent = await NotificationEngine.shared.sendTestCheckIn(context)
+            testResult = sent
+                ? "Sent — it should arrive in a few seconds."
+                : "Nothing to ask right now, so no notification was sent."
+            if sent { Haptics.success() }
         }
     }
 

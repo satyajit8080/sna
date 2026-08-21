@@ -23,6 +23,10 @@ enum CheckInPrompts {
 
     /// Everything known about the user's day, as plain facts.
     struct Context: Sendable {
+        /// Whether the user has ever set these up. Distinct from "none due
+        /// today": someone with no medicines at all needs to be told where to
+        /// add them, not reminded about doses that do not exist.
+        var hasAnyAppointment: Bool = false
         var readingsToday: Int = 0
         var daysSinceLastReading: Int?
         var readingCount: Int = 0
@@ -50,6 +54,27 @@ enum CheckInPrompts {
                 title: "Ready when you are",
                 body: "Your first reading gives BP Coach something to work with.",
                 coachQuestion: "How should I take my first reading?"
+            )
+        }
+
+        // Setup guidance comes before daily nudges. Reminding someone to take a
+        // reading is less useful than telling them the app can remind them about
+        // medicines they have not added yet — and each of these names the exact
+        // path, because "you can add medicines" without saying where is a
+        // half-finished instruction.
+        if !context.hasMedications, context.readingCount >= 3 {
+            return Prompt(
+                title: "Taking any medicines?",
+                body: "Add them under Add → Medicine Reminder and BP Coach will remind you each day.",
+                coachQuestion: "How do I add my medicines and set reminders?"
+            )
+        }
+
+        if !context.hasAnyAppointment, context.readingCount >= 5 {
+            return Prompt(
+                title: "Seeing your doctor soon?",
+                body: "Add it under Add → Doctor Appointment. BP Coach will remind you and prepare a summary.",
+                coachQuestion: "How do I add a doctor appointment and get a summary to take with me?"
             )
         }
 
@@ -116,17 +141,90 @@ enum CheckInPrompts {
         return nil
     }
 
+    /// Builds the context from stored records.
+    ///
+    /// Lives here rather than in a view so Home and the settings test cannot
+    /// drift apart — a test that builds its context differently from the real
+    /// scheduler would prove nothing.
+    @MainActor
+    static func context(
+        profileID: UUID,
+        readings: [BPReading],
+        medications: [Medication],
+        doses: [MedicationDose],
+        lifestyle: [LifestyleEntry],
+        symptoms: [SymptomEntry],
+        appointments: [Appointment]
+    ) -> Context {
+        let calendar = Calendar.current
+        let mine = readings.filter { $0.profileID == profileID }
+        let myAppointments = appointments.filter { $0.profileID == profileID }
+
+        var context = Context()
+        context.readingCount = mine.count
+        context.readingsToday = mine.filter { calendar.isDateInToday($0.recordedAt) }.count
+        context.hasMedications = medications.contains {
+            $0.profileID == profileID && !$0.isArchived
+        }
+        context.hasAnyAppointment = !myAppointments.isEmpty
+        context.dosesOutstandingToday = doses.filter {
+            $0.profileID == profileID
+                && calendar.isDateInToday($0.scheduledFor)
+                && $0.status == .scheduled
+        }.count
+        context.sodiumLoggedToday = lifestyle.contains {
+            $0.profileID == profileID && $0.kind == .sodium
+                && calendar.isDateInToday($0.recordedAt)
+        }
+
+        if let latest = mine.max(by: { $0.recordedAt < $1.recordedAt }) {
+            context.daysSinceLastReading = calendar.dateComponents(
+                [.day], from: latest.recordedAt, to: .now
+            ).day
+            if let average = BPStatistics.homeAverage(mine, days: 30), average.count >= 3 {
+                context.latestAboveOwnAverage = latest.systolic >= average.systolic + 8
+            }
+        }
+
+        if let recent = symptoms
+            .filter({ $0.profileID == profileID })
+            .max(by: { $0.recordedAt < $1.recordedAt }) {
+            context.lastSymptomDaysAgo = calendar.dateComponents(
+                [.day], from: recent.recordedAt, to: .now
+            ).day
+        }
+
+        if let next = myAppointments.filter(\.isUpcoming)
+            .min(by: { $0.scheduledFor < $1.scheduledFor }) {
+            context.hasUpcomingAppointment = true
+            context.daysUntilAppointment = calendar.dateComponents(
+                [.day], from: .now, to: next.scheduledFor
+            ).day
+        }
+
+        return context
+    }
+
     /// Every prompt, for tests and for the settings preview.
     static var allPossiblePrompts: [Prompt] {
         [
             Context(readingCount: 0),
-            Context(readingCount: 10, hasMedications: true, dosesOutstandingToday: 2),
-            Context(daysSinceLastReading: 5, readingCount: 10),
-            Context(readingCount: 10, hasUpcomingAppointment: true, daysUntilAppointment: 2),
-            Context(readingCount: 10, latestAboveOwnAverage: true),
-            Context(readingsToday: 0, readingCount: 10),
-            Context(readingsToday: 1, readingCount: 10),
-            Context(readingsToday: 1, readingCount: 10, sodiumLoggedToday: true,
+            Context(readingCount: 5),
+            Context(readingCount: 10, hasMedications: true),
+            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
+                    dosesOutstandingToday: 2),
+            Context(daysSinceLastReading: 5, readingCount: 10,
+                    hasMedications: true, hasAnyAppointment: true),
+            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
+                    hasUpcomingAppointment: true, daysUntilAppointment: 2),
+            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
+                    latestAboveOwnAverage: true),
+            Context(readingsToday: 0, readingCount: 10,
+                    hasMedications: true, hasAnyAppointment: true),
+            Context(readingsToday: 1, readingCount: 10,
+                    hasMedications: true, hasAnyAppointment: true),
+            Context(readingsToday: 1, readingCount: 10, hasMedications: true,
+                    hasAnyAppointment: true, sodiumLoggedToday: true,
                     lastSymptomDaysAgo: 20),
         ].compactMap(todaysPrompt)
     }

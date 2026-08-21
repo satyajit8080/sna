@@ -257,6 +257,36 @@ final class NotificationEngine {
         try? await center.add(request)
     }
 
+    /// Fires the check-in in a few seconds, for testing.
+    ///
+    /// Exists because a daily notification is otherwise unverifiable without
+    /// waiting until evening — which makes "is this working?" impossible to
+    /// answer, for the user and for anyone debugging it.
+    ///
+    /// Returns false when the rules produce nothing, so the caller can say so
+    /// rather than leaving the user waiting for a notification that was never
+    /// scheduled.
+    @discardableResult
+    func sendTestCheckIn(_ context: CheckInPrompts.Context) async -> Bool {
+        guard let prompt = CheckInPrompts.todaysPrompt(for: context) else { return false }
+
+        let content = UNMutableNotificationContent()
+        content.title = prompt.title
+        content.body = prompt.body
+        content.sound = .default
+        let encoded = prompt.coachQuestion
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        content.userInfo = ["deepLink": "bpcoach://coach?question=\(encoded)"]
+
+        let request = UNNotificationRequest(
+            identifier: "checkin.test.\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        )
+        try? await center.add(request)
+        return true
+    }
+
     /// Schedules every future reminder for an appointment.
     ///
     /// Reminders whose moment has already passed are skipped by the model —
