@@ -9,7 +9,7 @@ import UserNotifications
 final class NotificationEngine {
 
     enum Category: String, CaseIterable, Sendable {
-        case medication, measurement, appointment, drift, reportPrep
+        case medication, measurement, appointment, drift, reportPrep, dailyCheckIn
 
         var label: String {
             switch self {
@@ -18,6 +18,7 @@ final class NotificationEngine {
             case .appointment: "Appointment reminders"
             case .drift: "30-day trend alerts"
             case .reportPrep: "Doctor report preparation"
+            case .dailyCheckIn: "Daily check-in"
             }
         }
 
@@ -29,6 +30,8 @@ final class NotificationEngine {
             case .drift: "If your average has shifted over the past month."
             case .reportPrep: "Before an appointment, to build your doctor report."
             }
+            case .dailyCheckIn:
+                "One question a day about how you are doing. Skipped when there is nothing useful to ask."
         }
 
         /// Deep link target. Every notification resolves somewhere specific.

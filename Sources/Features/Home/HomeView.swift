@@ -18,6 +18,7 @@ struct HomeView: View {
     @Query private var allLifestyle: [LifestyleEntry]
     @Query private var allAppointments: [Appointment]
     @Query(sort: \ActivityEntry.startedAt, order: .reverse) private var allActivity: [ActivityEntry]
+    @Query private var allSymptoms: [SymptomEntry]
 
     @State private var isPresentingAdd = false
 
@@ -43,7 +44,10 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $isPresentingAdd) { AddBPView() }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
-        .task { await app.health.refreshSnapshot(for: app.activeProfile) }
+        .task {
+            await app.health.refreshSnapshot(for: app.activeProfile)
+            await app.refreshDailyCheckIn(context: checkInContext)
+        }
         .reviewPrompt(app.reviewPrompt, readings: readings, isCalmMoment: isCalmMoment)
     }
 
@@ -605,6 +609,62 @@ struct HomeView: View {
                     .foregroundStyle(Brand.accent)
             }
         }
+    }
+
+    /// Facts about today, for choosing the check-in question.
+    ///
+    /// Built from stored records only. Nothing here is interpreted — the rules
+    /// in `CheckInPrompts` decide what, if anything, is worth saying.
+    private var checkInContext: CheckInPrompts.Context {
+        let calendar = Calendar.current
+        let profileID = app.activeProfile.id
+
+        let doses = allDoses.filter {
+            $0.profileID == profileID && calendar.isDateInToday($0.scheduledFor)
+        }
+        let symptoms = allSymptoms
+            .filter { $0.profileID == profileID }
+            .max { $0.recordedAt < $1.recordedAt }
+        let nextAppointment = allAppointments
+            .filter { $0.profileID == profileID && $0.isUpcoming }
+            .min { $0.scheduledFor < $1.scheduledFor }
+
+        var context = CheckInPrompts.Context()
+        context.readingCount = readings.count
+        context.readingsToday = todayCount
+        context.hasMedications = allMedications.contains {
+            $0.profileID == profileID && !$0.isArchived
+        }
+        context.dosesOutstandingToday = doses.filter { $0.status == .scheduled }.count
+        context.sodiumLoggedToday = allLifestyle.contains {
+            $0.profileID == profileID && $0.kind == .sodium
+                && calendar.isDateInToday($0.recordedAt)
+        }
+
+        if let latest = readings.first {
+            context.daysSinceLastReading = calendar.dateComponents(
+                [.day], from: latest.recordedAt, to: .now
+            ).day
+            // A plain comparison against the user's own average, not a judgement.
+            if let average = BPStatistics.homeAverage(readings, days: 30), average.count >= 3 {
+                context.latestAboveOwnAverage = latest.systolic >= average.systolic + 8
+            }
+        }
+
+        if let symptoms {
+            context.lastSymptomDaysAgo = calendar.dateComponents(
+                [.day], from: symptoms.recordedAt, to: .now
+            ).day
+        }
+
+        if let nextAppointment {
+            context.hasUpcomingAppointment = true
+            context.daysUntilAppointment = calendar.dateComponents(
+                [.day], from: .now, to: nextAppointment.scheduledFor
+            ).day
+        }
+
+        return context
     }
 
     /// True when nothing on Home is asking for attention.

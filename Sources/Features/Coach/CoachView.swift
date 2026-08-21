@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct CoachView: View {
     @Environment(AppModel.self) private var app
+    @Environment(Router.self) private var router
     @Environment(\.modelContext) private var context
 
     @Query(sort: \BPReading.recordedAt, order: .reverse) private var allReadings: [BPReading]
@@ -76,6 +77,16 @@ struct CoachView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $isShowingHistory) {
             ConversationHistoryView(selected: $conversation)
+        }
+        .onAppear {
+            // A check-in notification carries its question. Asking it straight
+            // away means the tap leads somewhere rather than just opening a
+            // blank screen.
+            if let question = router.pendingCoachQuestion {
+                router.pendingCoachQuestion = nil
+                draft = question
+                send()
+            }
         }
         .confirmationDialog("Conversation", isPresented: $isShowingOptions) {
             Button("New conversation") { newConversation() }

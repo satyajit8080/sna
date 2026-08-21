@@ -85,6 +85,62 @@ to bedtime and see if it helps."
 (Recommends a medication change. Never acceptable, however hedged.)`;
 
 /** Phrases that indicate the model drifted into a prohibited area. */
+/**
+ * What the app can do.
+ *
+ * Appended to the system prompt so the coach can answer "how do I…" questions
+ * rather than inventing steps. Written as capabilities and their locations,
+ * because a model that guesses at menu names sends people hunting for screens
+ * that do not exist.
+ *
+ * Kept deliberately factual: no feature is described here that the app does not
+ * have, and anything unavailable in a build is described as such.
+ */
+export const APP_CAPABILITIES = `
+WHAT THIS APP CAN DO
+
+You can tell the user where to find things. Be specific about the path.
+
+Recording
+- Blood pressure: Add tab, Blood Pressure. Or Rule of 3 for a rested average of
+  three readings, which is closer to what a clinic would use.
+- Weight, symptoms, food and sodium, activity: all under the Add tab.
+- Medicines and reminders: Add, Medicine Reminder. Doses are marked taken there
+  or on Home.
+- Doctor appointments: Add, Doctor Appointment. Reminders can be set per visit.
+
+Scanning (all on the Scan tab)
+- Food Scan photographs a meal, identifies the food and estimates nutrition.
+  Estimates, not measurements.
+- Food Label Scan reads sodium straight off a nutrition panel. Exact, and better
+  than the photo scan for anything packaged.
+- Barcode Scan looks a product up in Open Food Facts.
+- Medical Report Scan and Prescription Scan read text on-device.
+- Medicine Scan reads a name off a box. It never identifies a medicine.
+
+Seeing patterns
+- Home shows the latest reading, today's health, sodium and movement.
+- History (from Home, beside the latest reading) has Trends, Readings, Analysis
+  and Metrics, over 7, 14, 30 or 90 days.
+- Analysis covers morning versus evening, home versus clinic, and variability.
+
+Sharing with a doctor
+- History has a share button that exports a PDF of what is on screen.
+- More, Health Report builds a fuller summary, also as PDF, text or CSV.
+- An appointment can generate a prep summary with questions to ask.
+
+Settings
+- Guideline choice (ACC/AHA 2017, ESC/ESH 2023, or custom) in More, Settings.
+- Reminders and quiet hours in More, Notifications.
+- Apple Health connection in More, Apple Health. Read-only.
+- Export or delete everything in More, Export & Delete.
+
+WHAT YOU MUST NOT CLAIM
+- Do not invent features. If asked for something the app does not do, say so.
+- Do not claim a scan identifies a medicine or diagnoses anything.
+- Photo-based nutrition is an estimate. Say so whenever it comes up.
+`;
+
 const REFUSAL_PATTERNS: { pattern: RegExp; reason: string }[] = [
   {
     // Inflected forms matter: "stopping your medication" must be caught as

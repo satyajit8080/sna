@@ -855,3 +855,92 @@ struct NutritionLabelTests {
         #expect(result?.sourceLine.contains("480") == true)
     }
 }
+
+/// Daily check-in prompts.
+///
+/// These are written in code and chosen by rules, never generated. A
+/// notification arrives unreviewed and cannot be recalled, so the content must
+/// be something a person wrote and can be held to.
+@Suite("Daily check-in")
+struct CheckInPromptTests {
+
+    @Test("A user with no readings is asked for their first")
+    func firstReading() {
+        let prompt = CheckInPrompts.todaysPrompt(for: .init(readingCount: 0))
+        #expect(prompt?.title.contains("Ready") == true)
+    }
+
+    /// An outstanding dose matters more than a general nudge, so it wins.
+    @Test("Outstanding doses take priority")
+    func dosesFirst() {
+        var context = CheckInPrompts.Context()
+        context.readingCount = 20
+        context.readingsToday = 0
+        context.dosesOutstandingToday = 2
+        let prompt = CheckInPrompts.todaysPrompt(for: context)
+        #expect(prompt?.title == "Medicine check")
+        #expect(prompt?.body.contains("2") == true)
+    }
+
+    @Test("A long gap is named explicitly")
+    func gapNamed() {
+        var context = CheckInPrompts.Context()
+        context.readingCount = 20
+        context.daysSinceLastReading = 5
+        #expect(CheckInPrompts.todaysPrompt(for: context)?.title.contains("5 days") == true)
+    }
+
+    /// The wording must compare, never interpret — urgency is the safety
+    /// engine's job and a notification cannot carry that responsibility.
+    @Test("A high reading is described as a comparison, not a verdict")
+    func highReadingIsNeutral() {
+        var context = CheckInPrompts.Context()
+        context.readingCount = 20
+        context.readingsToday = 1
+        context.latestAboveOwnAverage = true
+
+        guard let prompt = CheckInPrompts.todaysPrompt(for: context) else {
+            Issue.record("Expected a prompt")
+            return
+        }
+        let text = (prompt.title + prompt.body).lowercased()
+        for word in ["high blood pressure", "dangerous", "urgent", "emergency",
+                     "concerning", "hypertension", "risk"] {
+            #expect(!text.contains(word), "Notification implied a verdict: \(word)")
+        }
+        #expect(text.contains("average"))
+    }
+
+    /// Silence is a valid outcome. A notification sent only to be sent teaches
+    /// people to ignore the ones that matter.
+    @Test("Nothing worth saying produces no notification")
+    func staysSilent() {
+        var context = CheckInPrompts.Context()
+        context.readingCount = 20
+        context.readingsToday = 2
+        context.sodiumLoggedToday = true
+        context.lastSymptomDaysAgo = 1
+        #expect(CheckInPrompts.todaysPrompt(for: context) == nil)
+    }
+
+    @Test("Every prompt carries a question for the coach")
+    func allHaveQuestions() {
+        for prompt in CheckInPrompts.allPossiblePrompts {
+            #expect(!prompt.coachQuestion.isEmpty)
+            #expect(prompt.coachQuestion.hasSuffix("?") || prompt.coachQuestion.hasSuffix("."))
+        }
+    }
+
+    /// No prompt may diagnose, predict, or tell someone what to do medically.
+    @Test("No prompt makes a clinical claim")
+    func noClinicalClaims() {
+        let banned = ["you should", "your blood pressure is", "you have",
+                      "take your medication", "see a doctor", "call", "stop taking"]
+        for prompt in CheckInPrompts.allPossiblePrompts {
+            let text = (prompt.title + " " + prompt.body).lowercased()
+            for phrase in banned {
+                #expect(!text.contains(phrase), "\(prompt.title) contained: \(phrase)")
+            }
+        }
+    }
+}

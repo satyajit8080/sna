@@ -17,6 +17,8 @@ final class Router {
     var isPresentingAddBP = false
     /// History no longer has a tab, so a deep link presents it instead.
     var isPresentingHistory = false
+    /// Set when a notification asks the coach something specific.
+    var pendingCoachQuestion: String?
 
     func handle(_ url: URL) {
         switch url.host() {
@@ -24,9 +26,24 @@ final class Router {
         case "measurement", "bp": isPresentingAddBP = true
         case "drift", "history": isPresentingHistory = true
         case "scan": tab = .scan
-        case "coach": tab = .coach
+        case "coach":
+            tab = .coach
+            // Carried through so the coach can open with the question the
+            // notification was about.
+            if let question = url.queryValue(for: "question") { pendingCoachQuestion = question }
         default: tab = .home
         }
+    }
+}
+
+extension URL {
+    /// A query parameter, or nil. Used to carry a notification's question into
+    /// the coach.
+    func queryValue(for name: String) -> String? {
+        URLComponents(url: self, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name == name }?
+            .value
     }
 }
 

@@ -3,6 +3,7 @@ import type { CoachRequestBody } from "../schema.js";
 import { UpstreamError } from "./errors.js";
 import {
   SYSTEM_PROMPT,
+  APP_CAPABILITIES,
   renderContext,
   screenResponse,
   SCREENED_REPLACEMENT,
@@ -65,7 +66,7 @@ export async function requestCoaching(
         max_tokens: 700,
         temperature: 0.3,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: `${SYSTEM_PROMPT}\n${APP_CAPABILITIES}` },
           {
             role: "user",
             content: `Here is my data:\n\n${renderContext(body)}\n\nMy question: ${body.question}`,

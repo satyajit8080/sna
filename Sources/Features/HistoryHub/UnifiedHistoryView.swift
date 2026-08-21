@@ -69,13 +69,9 @@ struct UnifiedHistoryView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var section: Section = .readings
-    @State private var exportURL: ExportedFile?
-
-    /// Wraps the URL so it can drive a `sheet(item:)`.
-    struct ExportedFile: Identifiable {
-        let url: URL
-        var id: String { url.absoluteString }
-    }
+    /// Wrapped in `ShareItem` — which already exists for this — so it can drive
+    /// a `sheet(item:)`.
+    @State private var exportURL: ShareItem?
 
     /// The four views of the same data, from the design.
     enum Section: String, CaseIterable, Identifiable {
@@ -114,7 +110,7 @@ struct UnifiedHistoryView: View {
         }
         .background(Brand.background.ignoresSafeArea())
         .navigationBarHidden(true)
-        .sheet(item: $exportURL) { ShareSheet(items: [$0.url]) }
+        .sheet(item: $exportURL) { ShareSheet(url: $0.url) }
         .navigationDestination(item: $viewingReading) { ReadingDetailView(reading: $0) }
         .sheet(item: $editingAppointment) { AppointmentEditorView(appointment: $0) }
         .navigationDestination(item: $viewingDocument) { DocumentDetailView(document: $0) }
@@ -275,7 +271,7 @@ struct UnifiedHistoryView: View {
 
         do {
             let url = try PDFReportBuilder.write(document, filename: "bp-coach-history.pdf")
-            exportURL = ExportedFile(url: url)
+            exportURL = ShareItem(url: url)
             Haptics.success()
         } catch {
             // Nothing to save is not worth an alert; the button simply does
