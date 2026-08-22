@@ -1085,3 +1085,86 @@ struct CoachWelcomeTests {
         #expect(!CoachWelcome.hasBeenShown(for: second, defaults: defaults))
     }
 }
+
+/// Coach openers.
+///
+/// Ordered by what is missing rather than what is interesting: someone with no
+/// medicines recorded needs "add my medicine" before "why do my readings vary",
+/// because the first is what makes the rest of the app work for them.
+@Suite("Coach suggestions")
+struct CoachSuggestionTests {
+
+    private var sparse: BPContextSnapshot {
+        BPContextSnapshot(generatedAt: .now, guidelineName: "ACC/AHA 2017", firstName: nil)
+    }
+
+    private func at(_ hour: Int) -> Date {
+        Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: .now) ?? .now
+    }
+
+    @Test("Missing medicines and appointments are offered first")
+    func setupComesFirst() {
+        let items = SuggestedQuestion.forContext(
+            sparse, hasDocuments: false,
+            hasMedications: false, hasAppointment: false,
+            hasReadingToday: true, now: at(14)
+        )
+        #expect(items.first?.text.contains("medicine") == true)
+        #expect(items.first?.isAction == true)
+        #expect(items.contains { $0.text.contains("appointment") && $0.isAction })
+    }
+
+    /// Nothing missing means no setup prompts cluttering the list.
+    @Test("A fully set-up user gets questions, not setup prompts")
+    func noSetupWhenComplete() {
+        let items = SuggestedQuestion.forContext(
+            sparse, hasDocuments: false,
+            hasMedications: true, hasAppointment: true,
+            hasReadingToday: true, now: at(14)
+        )
+        #expect(!items.contains { $0.isAction })
+    }
+
+    @Test("A morning opener appears when nothing is recorded yet")
+    func morningOpener() {
+        let items = SuggestedQuestion.forContext(
+            sparse, hasDocuments: false,
+            hasMedications: true, hasAppointment: true,
+            hasReadingToday: false, now: at(8)
+        )
+        #expect(items.contains { $0.text.lowercased().contains("good morning") })
+    }
+
+    @Test("The evening opener differs from the morning one")
+    func eveningOpener() {
+        let items = SuggestedQuestion.forContext(
+            sparse, hasDocuments: false,
+            hasMedications: true, hasAppointment: true,
+            hasReadingToday: false, now: at(20)
+        )
+        #expect(items.contains { $0.text.contains("not measured today") })
+        #expect(!items.contains { $0.text.lowercased().contains("good morning") })
+    }
+
+    /// Someone who has already measured should not be nudged about it.
+    @Test("No time-of-day nudge once a reading exists")
+    func noNudgeAfterMeasuring() {
+        let items = SuggestedQuestion.forContext(
+            sparse, hasDocuments: false,
+            hasMedications: true, hasAppointment: true,
+            hasReadingToday: true, now: at(8)
+        )
+        #expect(!items.contains { $0.text.lowercased().contains("good morning") })
+    }
+
+    /// Five is the most that fits without the list becoming a menu.
+    @Test("The list stays short")
+    func staysShort() {
+        let items = SuggestedQuestion.forContext(
+            sparse, hasDocuments: true,
+            hasMedications: false, hasAppointment: false,
+            hasReadingToday: false, now: at(8)
+        )
+        #expect(items.count <= 5)
+    }
+}

@@ -47,6 +47,9 @@ struct BPContextSnapshot: Sendable {
     /// it is a first name rather than a full one, and the app's privacy copy
     /// says so — a coach that cannot use your name reads like a form.
     let firstName: String?
+    /// What the person usually does for exercise and when, so a reading taken
+    /// soon after can be recognised rather than treated as unexplained.
+    var activityRoutine: String?
 
     var recentReadings: [Reading] = []
     var averages: [Averages] = []
@@ -79,6 +82,7 @@ struct AIContextEngine {
     func makeSnapshot(
         profileID: UUID,
         firstName: String? = nil,
+        activityRoutine: String? = nil,
         readings: [BPReading],
         medications: [Medication],
         doses: [MedicationDose],
@@ -95,7 +99,8 @@ struct AIContextEngine {
         var snapshot = BPContextSnapshot(
             generatedAt: now,
             guidelineName: guideline.displayName,
-            firstName: firstName
+            firstName: firstName,
+            activityRoutine: activityRoutine
         )
 
         snapshot.recentReadings = ownReadings.prefix(Self.readingLimit).map { reading in

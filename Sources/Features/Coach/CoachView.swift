@@ -15,6 +15,8 @@ struct CoachView: View {
     @Query private var allLifestyle: [LifestyleEntry]
     @Query(sort: \MedicalDocument.importedAt, order: .reverse) private var allDocuments: [MedicalDocument]
     @Query(sort: \AIConversation.startedAt, order: .reverse) private var allConversations: [AIConversation]
+    @Query private var allAppointments: [Appointment]
+    @Query private var allRoutines: [ActivityRoutine]
 
     @State private var conversation: AIConversation?
     @State private var draft = ""
@@ -34,6 +36,9 @@ struct CoachView: View {
     @State private var attachmentError: String?
     @FocusState private var isComposerFocused: Bool
     @State private var isShowingOptions = false
+    /// Skipping is remembered for the session only — next launch it may be a
+    /// better moment, and one card is not worth persisting a refusal for.
+    @State private var hasSkippedRoutine = false
     @State private var isShowingPhotoPicker = false
 
     private var messages: [AIMessage] {
@@ -44,6 +49,9 @@ struct CoachView: View {
         app.contextEngine.makeSnapshot(
             profileID: app.activeProfile.id,
             firstName: app.activeProfile.name,
+            activityRoutine: allRoutines
+                .first { $0.profileID == app.activeProfile.id }?
+                .summary,
             readings: allReadings,
             medications: allMedications,
             doses: allDoses,
@@ -221,6 +229,15 @@ struct CoachView: View {
 
             quickActionChips
 
+            // Asked once, after there are a few readings to explain. Asking on
+            // day one is a question about a life the app knows nothing about yet.
+            if shouldAskRoutine {
+                ActivityRoutineCard(
+                    onSave: { kinds, time in saveRoutine(kinds: kinds, time: time) },
+                    onSkip: { hasSkippedRoutine = true }
+                )
+            }
+
             BrandCard(padding: 16) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Things you can ask me")
@@ -228,16 +245,29 @@ struct CoachView: View {
                         .foregroundStyle(Brand.accent)
 
                     ForEach(SuggestedQuestion.forContext(
-                        snapshot, hasDocuments: !myDocuments.isEmpty
+                        snapshot,
+                        hasDocuments: !myDocuments.isEmpty,
+                        hasMedications: hasMedications,
+                        hasAppointment: hasAppointment,
+                        hasReadingToday: hasReadingToday
                     )) { item in
-                        Button { draft = item.text } label: {
+                        Button {
+                            // Openers that set something up are sent straight
+                            // away: the point is the confirmation card, and
+                            // making the user tap send first adds nothing.
+                            draft = item.text
+                            if item.isAction { send() }
+                        } label: {
                             HStack(spacing: 10) {
-                                Circle()
-                                    .fill(Brand.accent)
-                                    .frame(width: 6, height: 6)
+                                Image(systemName: item.isAction ? "plus.circle.fill" : "circle.fill")
+                                    .font(.system(size: item.isAction ? 12 : 6))
+                                    .foregroundStyle(Brand.accent)
+                                    .frame(width: 12)
                                 Text(item.text)
                                     .font(.system(size: 13))
-                                    .foregroundStyle(Brand.textSecondary)
+                                    .foregroundStyle(
+                                        item.isAction ? Brand.textPrimary : Brand.textSecondary
+                                    )
                                     .multilineTextAlignment(.leading)
                                 Spacer(minLength: 0)
                             }
@@ -312,6 +342,41 @@ struct CoachView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
             }
+        }
+    }
+
+    /// Whether to ask about the exercise routine.
+    ///
+    /// Only once, and only after a few readings exist: the reason for asking is
+    /// to explain readings, so there needs to be something to explain.
+    private var shouldAskRoutine: Bool {
+        guard !hasSkippedRoutine else { return false }
+        let mine = allReadings.filter { $0.profileID == app.activeProfile.id }
+        guard mine.count >= 3 else { return false }
+        return !allRoutines.contains { $0.profileID == app.activeProfile.id }
+    }
+
+    private func saveRoutine(kinds: [ActivityKind], time: RoutineTime) {
+        let routine = ActivityRoutine(profileID: app.activeProfile.id)
+        routine.kinds = kinds
+        routine.time = time
+        context.insert(routine)
+        try? context.save()
+        Haptics.success()
+    }
+
+    private var hasMedications: Bool {
+        allMedications.contains { $0.profileID == app.activeProfile.id && !$0.isArchived }
+    }
+
+    private var hasAppointment: Bool {
+        allAppointments.contains { $0.profileID == app.activeProfile.id }
+    }
+
+    private var hasReadingToday: Bool {
+        allReadings.contains {
+            $0.profileID == app.activeProfile.id
+                && Calendar.current.isDateInToday($0.recordedAt)
         }
     }
 

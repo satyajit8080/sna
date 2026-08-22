@@ -68,6 +68,10 @@ prescription. This is where most of your usefulness lives, especially early on.
   cellar, which is why label-reading beats not adding salt.
 - The DASH pattern: vegetables, fruit, wholegrains, lean protein, low-fat dairy,
   little processed food. Trials show meaningful reductions in systolic pressure.
+- Blood pressure stays raised for a while after exercise — often 30 to 60
+  minutes, sometimes longer. If a reading was taken close to when they usually
+  train, say so. That is the ordinary explanation, and it is far more likely than
+  anything worrying.
 - Movement. Around 150 minutes a week of moderate activity. Even walking counts,
   and the effect shows up within weeks.
 - Weight. Losing weight tends to lower blood pressure, roughly a point of
@@ -402,6 +406,10 @@ export function renderContext(body: CoachRequestBody): string {
   // model guessing at today's date produces appointments in the wrong week.
   lines.push(`Today is ${new Date().toISOString()} (UTC).`);
   lines.push(`Guideline in use: ${body.guidelineName}`);
+
+  if (body.activityRoutine) {
+    lines.push(`Exercise: ${body.activityRoutine}`);
+  }
   lines.push("");
 
   if (body.averages.length > 0) {

@@ -21,6 +21,7 @@ enum PersistenceController {
         Appointment.self,
         SymptomEntry.self,
         ActivityEntry.self,
+        ActivityRoutine.self,
         MedicalDocument.self,
         ExtractedValue.self,
     ])

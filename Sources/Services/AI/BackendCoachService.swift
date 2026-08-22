@@ -82,6 +82,8 @@ private struct CoachRequestPayload: Encodable {
     let guidelineName: String
     /// First name only. Trimmed server-side too, as a second guard.
     let firstName: String?
+    /// Exercise routine, if given. Plain text, no identifiers.
+    let activityRoutine: String?
     let attachments: [Attachment]
     let readings: [Reading]
     let averages: [Average]
@@ -206,6 +208,7 @@ struct BackendCoachService: AICoachService {
                 guard let name, !name.isEmpty, name.lowercased() != "me" else { return nil }
                 return String(name.prefix(40))
             }(),
+            activityRoutine: context.activityRoutine,
             // Already reduced to text on the device — never an image.
             attachments: attachments.map {
                 .init(kind: $0.kind, name: $0.name, text: String($0.text.prefix(6_000)))

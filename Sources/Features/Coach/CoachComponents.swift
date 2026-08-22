@@ -132,38 +132,77 @@ struct CoachQuickActions: View {
 ///
 /// Suggestions adapt to what the person actually has: offering "explain my
 /// report" to someone with no documents is noise.
+/// A tappable opener for the coach.
+///
+/// Ordered by what is actually missing, not by what is interesting. Someone with
+/// no medicines recorded gets "Add my medicine" before "why do my readings vary"
+/// — the second is a better question, but the first is the one that makes the
+/// rest of the app work.
 struct SuggestedQuestion: Identifiable {
     let id = UUID()
     let text: String
+    /// Set on openers that will make the coach propose something, so the UI can
+    /// mark them apart from questions.
+    var isAction = false
 
     static func forContext(
         _ context: BPContextSnapshot,
-        hasDocuments: Bool
+        hasDocuments: Bool,
+        hasMedications: Bool = true,
+        hasAppointment: Bool = true,
+        hasReadingToday: Bool = true,
+        now: Date = .now
     ) -> [SuggestedQuestion] {
-        var items: [String] = []
+        var items: [SuggestedQuestion] = []
+
+        // Setup first. These are the ones that change what the app can do for
+        // them, and each is phrased as something the coach can act on.
+        if !hasMedications {
+            items.append(.init(
+                text: "Add my medicine and remind me daily",
+                isAction: true
+            ))
+        }
+        if !hasAppointment {
+            items.append(.init(
+                text: "Add my next doctor appointment",
+                isAction: true
+            ))
+        }
+
+        // Time-of-day opener. Mornings are when readings are most useful and
+        // most often forgotten, so it only appears when one is missing.
+        let hour = Calendar.current.component(.hour, from: now)
+        if !hasReadingToday {
+            if hour < 12 {
+                items.append(.init(text: "Good morning — what should I do today?"))
+            } else if hour >= 18 {
+                items.append(.init(text: "I have not measured today — does that matter?"))
+            }
+        }
 
         if context.isTooSparse {
-            items.append("How should I be taking my readings?")
-            items.append("What do the blood pressure categories mean?")
+            items.append(.init(text: "How should I be taking my readings?"))
+            items.append(.init(text: "What do the blood pressure categories mean?"))
         } else {
-            items.append("What moved my blood pressure recently?")
+            items.append(.init(text: "What moved my blood pressure recently?"))
             if context.morningVsEvening != nil {
-                items.append("Why are my mornings different from my evenings?")
+                items.append(.init(text: "Why are my mornings different from my evenings?"))
             }
             if let variability = context.variabilitySD, variability > 8 {
-                items.append("My readings vary a lot — what does that mean?")
+                items.append(.init(text: "My readings vary a lot — what does that mean?"))
             }
         }
 
         if !context.medications.isEmpty {
-            items.append("How has my medication adherence been?")
+            items.append(.init(text: "How has my medication adherence been?"))
         }
         if hasDocuments {
-            items.append("Explain the terms in my latest report")
+            items.append(.init(text: "Explain the terms in my latest report"))
         }
-        items.append("What should I ask my doctor next visit?")
+        items.append(.init(text: "What should I ask my doctor next visit?"))
 
-        return items.prefix(5).map { SuggestedQuestion(text: $0) }
+        return Array(items.prefix(5))
     }
 }
 
@@ -457,5 +496,144 @@ struct CoachActionCard: View {
         case .dismissed: Brand.cardStroke
         case .pending: Brand.accent.opacity(0.35)
         }
+    }
+}
+
+/// Asks the routine question by tapping rather than typing.
+///
+/// Two questions, fixed answers, one save. Typing "I go to the gym Tuesdays and
+/// Thursdays after work" gives the app a sentence it cannot use; tapping gives
+/// it something it can compare a reading's timestamp against.
+struct ActivityRoutineCard: View {
+    let onSave: ([ActivityKind], RoutineTime) -> Void
+    let onSkip: () -> Void
+
+    @State private var selected: Set<ActivityKind> = []
+    @State private var time: RoutineTime = .varies
+    @State private var isSaved = false
+
+    /// The common ones. `other` and `run` are omitted deliberately — a longer
+    /// list makes the question feel like a form.
+    private let options: [ActivityKind] = [.walk, .gym, .cycle, .swim, .yoga]
+
+    var body: some View {
+        BrandCard(padding: 16, strokeColor: Brand.accent.opacity(0.35)) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Image(systemName: isSaved ? "checkmark.circle.fill" : "figure.run")
+                        .font(.system(size: 16))
+                        .foregroundStyle(isSaved ? Brand.accent : Brand.textPrimary)
+                    Text(isSaved ? "Saved" : "What exercise do you usually do?")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                    Spacer(minLength: 0)
+                }
+
+                if !isSaved {
+                    Text("""
+                    Readings stay raised for a while after exercise. Knowing your \
+                    routine lets me tell a normal post-workout reading from a real change.
+                    """)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    wrappedChips
+
+                    Text("When, usually?")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                        .padding(.top, 2)
+
+                    HStack(spacing: 8) {
+                        ForEach(RoutineTime.allCases, id: \.self) { option in
+                            chip(
+                                option.label,
+                                isOn: time == option,
+                                isCompact: true
+                            ) { time = option }
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            isSaved = true
+                            onSave(Array(selected), time)
+                        } label: {
+                            Text(selected.isEmpty ? "Nothing regular" : "Save")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Brand.onAccent)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 38)
+                                .background(Brand.accent)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            onSkip()
+                        } label: {
+                            Text("Not now")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Brand.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 38)
+                                .overlay { Capsule().strokeBorder(Brand.cardStroke, lineWidth: 1) }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+        .animation(.snappy, value: isSaved)
+    }
+
+    /// Wrapped into rows rather than scrolled: every option should be visible
+    /// without a gesture nobody knows to try.
+    private var wrappedChips: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(options.prefix(3), id: \.self) { kind in
+                    chip(kind.label, isOn: selected.contains(kind)) { toggle(kind) }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                ForEach(options.suffix(2), id: \.self) { kind in
+                    chip(kind.label, isOn: selected.contains(kind)) { toggle(kind) }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func chip(
+        _ title: String,
+        isOn: Bool,
+        isCompact: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            action()
+            Haptics.selection()
+        } label: {
+            Text(title)
+                .font(.system(size: isCompact ? 12 : 13, weight: isOn ? .semibold : .regular))
+                .foregroundStyle(isOn ? Brand.onAccent : Brand.textSecondary)
+                .padding(.horizontal, isCompact ? 10 : 14)
+                .frame(height: 32)
+                .background(isOn ? Brand.accent : Brand.background)
+                .overlay {
+                    Capsule().strokeBorder(isOn ? .clear : Brand.cardStroke, lineWidth: 1)
+                }
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func toggle(_ kind: ActivityKind) {
+        if selected.contains(kind) { selected.remove(kind) } else { selected.insert(kind) }
     }
 }

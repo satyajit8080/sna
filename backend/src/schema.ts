@@ -52,6 +52,8 @@ export interface CoachRequestBody {
    * privacy copy in the app states that a first name is included.
    */
   firstName?: string;
+  /** Exercise routine as a sentence, e.g. "Usually does gym, walk, usually in the evening." */
+  activityRoutine?: string;
   guidelineName: string;
   attachments?: CoachAttachment[];
   readings: CoachReading[];
@@ -145,6 +147,10 @@ export function validateCoachRequest(
       firstName:
         typeof body.firstName === "string" && body.firstName.trim()
           ? body.firstName.trim().split(/\s+/)[0].slice(0, 40)
+          : undefined,
+      activityRoutine:
+        typeof body.activityRoutine === "string" && body.activityRoutine.trim()
+          ? body.activityRoutine.trim().slice(0, 200)
           : undefined,
     },
   };
