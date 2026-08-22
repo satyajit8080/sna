@@ -245,22 +245,16 @@ struct HomeView: View {
                     caption: "/10,000 steps",
                     fraction: snapshot.steps.map { Double($0) / 10_000 }
                 )
-                metricTile(
-                    title: "Resting HR", symbol: "heart.fill", tint: Brand.restingHeartRate,
-                    value: snapshot.restingHeartRate.map { "\($0)" },
-                    caption: "bpm",
-                    // 40–100 is the range most resting rates fall in.
-                    fraction: snapshot.restingHeartRate.map { Double($0 - 40) / 60 },
-                    // An iPhone cannot measure this. Saying so is more useful
-                    // than "No data", which reads like the app is broken.
-                    missingHint: "Needs Apple Watch"
-                )
+                pulseTile
                 metricTile(
                     title: "Sleep", symbol: "bed.double.fill", tint: Brand.sleep,
                     value: snapshot.sleepMinutes.map { "\($0 / 60)h \($0 % 60)m" },
                     caption: sleepQuality(snapshot.sleepMinutes),
                     fraction: snapshot.sleepMinutes.map { Double($0) / 480 },
-                    missingHint: "Needs Apple Watch"
+                    // Deliberately not "needs Apple Watch": most people with
+                    // hypertension do not own one, and plenty of phone apps and
+                    // other trackers write sleep to Health.
+                    missingHint: "From Health"
                 )
                 weightTile
             }
@@ -311,6 +305,39 @@ struct HomeView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title): \(value ?? "no data")")
+    }
+
+    /// Heart rate, from whichever source actually has it.
+    ///
+    /// Prefers Apple Health's resting heart rate, but falls back to the pulse
+    /// recorded alongside recent blood pressure readings — which is data almost
+    /// every user already has, because home cuffs report pulse.
+    ///
+    /// The label changes with the source. Resting heart rate and pulse-at-
+    /// measurement are not the same number, and showing one under the other's
+    /// name would be quietly wrong.
+    private var pulseTile: some View {
+        let restingHR = app.health.snapshot.restingHeartRate
+        let recentPulses = BPStatistics.within(readings, days: 7).compactMap(\.pulse)
+        let averagePulse = recentPulses.isEmpty
+            ? nil
+            : Int((Double(recentPulses.reduce(0, +)) / Double(recentPulses.count)).rounded())
+
+        let value = restingHR ?? averagePulse
+        let isResting = restingHR != nil
+
+        return metricTile(
+            title: isResting ? "Resting HR" : "Pulse",
+            symbol: "heart.fill",
+            tint: Brand.restingHeartRate,
+            value: value.map { "\($0)" },
+            caption: isResting
+                ? "bpm"
+                : "bpm · from \(recentPulses.count) reading\(recentPulses.count == 1 ? "" : "s")",
+            // 40–100 covers most resting rates.
+            fraction: value.map { Double($0 - 40) / 60 },
+            missingHint: "Add with a reading"
+        )
     }
 
     /// Weight shows change rather than progress — there is no target to fill.
