@@ -122,15 +122,19 @@ struct RootView: View {
 /// which is why it is not part of `AppTab`.
 struct BrandTabBar: View {
     /// How far the centre button rises above the bar.
-    static let raisedOverhang: CGFloat = 29
+    ///
+    /// The design reduced this: the button was a 59pt circle raised 29pt into a
+    /// 97pt bar, and is now a 44pt circle raised 8pt into a 78pt one. It sits
+    /// almost flush, with its icon on the same baseline as the other tabs.
+    static let raisedOverhang: CGFloat = 8
+    /// Diameter of the raised centre button.
+    static let raisedDiameter: CGFloat = 44
     /// The bar's own height.
     static let barHeight: CGFloat = 70
     /// What content must leave clear above the bar.
     ///
-    /// The button is 59pt and rises `raisedOverhang` above the bar, so roughly
-    /// 30pt of it sits over the content. The extra 12 is breathing room — with
-    /// exactly the overhang the button touches the element above it, which
-    /// looked like a clipping bug.
+    /// The overhang plus breathing room — with exactly the overhang the button
+    /// touches whatever sits above it, which reads as a clipping bug.
     static let contentClearance: CGFloat = raisedOverhang + 12
 
     @Binding var selection: AppTab
@@ -222,16 +226,15 @@ struct BrandTabBar: View {
         } label: {
             Circle()
                 .fill(Brand.accent)
-                .frame(width: 59, height: 59)
+                .frame(width: Self.raisedDiameter, height: Self.raisedDiameter)
                 .overlay {
-                    // A bot glyph, matching the design. SF Symbols gained
-                    // `brain.head.profile` and similar, but this reads most
-                    // clearly at 27pt on a filled circle.
                     Image(systemName: "sparkles")
-                        .font(.system(size: 23, weight: .medium))
+                        .font(.system(size: 19, weight: .medium))
                         .foregroundStyle(Brand.onAccent)
                 }
-                .shadow(color: Brand.accent.opacity(0.3), radius: 12, y: 8)
+                // Softer now that the button sits close to the bar; the old
+                // glow suited a circle floating well clear of it.
+                .shadow(color: Brand.accent.opacity(0.25), radius: 8, y: 4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Ai Coach")

@@ -363,9 +363,17 @@ struct CoachActionCard: View {
     let onConfirm: () -> Void
     let onDismiss: () -> Void
 
-    @State private var state: State = .pending
+    init(action: CoachAction, onConfirm: @escaping () -> Void, onDismiss: @escaping () -> Void) {
+        self.action = action
+        self.onConfirm = onConfirm
+        self.onDismiss = onDismiss
+    }
 
-    enum State { case pending, confirmed, dismissed }
+    @State private var state: Stage = .pending
+
+    /// Named `Stage`, not `State`: an inner type called `State` shadows
+    /// SwiftUI's property wrapper and `@State` stops resolving.
+    private enum Stage { case pending, confirmed, dismissed }
 
     var body: some View {
         BrandCard(padding: 16, strokeColor: strokeColor) {

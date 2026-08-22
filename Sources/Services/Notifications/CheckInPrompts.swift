@@ -228,29 +228,71 @@ enum CheckInPrompts {
         return context
     }
 
-    /// Every prompt, for tests and for the settings preview.
+    /// Every prompt the rules can produce, for tests and previews.
+    ///
+    /// Built by mutation rather than the memberwise initialiser: that init
+    /// demands arguments in declaration order, so adding a field to `Context`
+    /// silently breaks every fixture here.
     static var allPossiblePrompts: [Prompt] {
-        [
-            Context(readingCount: 0),
-            Context(readingCount: 5),
-            Context(readingCount: 10, hasMedications: true),
-            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
-                    dosesOutstandingToday: 2),
-            Context(daysSinceLastReading: 5, readingCount: 10,
-                    hasMedications: true, hasAnyAppointment: true),
-            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
-                    hasUpcomingAppointment: true, daysUntilAppointment: 2),
-            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
-                    daysSinceAppointment: 1),
-            Context(readingCount: 10, hasMedications: true, hasAnyAppointment: true,
-                    latestAboveOwnAverage: true),
-            Context(readingsToday: 0, readingCount: 10,
-                    hasMedications: true, hasAnyAppointment: true),
-            Context(readingsToday: 1, readingCount: 10,
-                    hasMedications: true, hasAnyAppointment: true),
-            Context(readingsToday: 1, readingCount: 10, hasMedications: true,
-                    hasAnyAppointment: true, sodiumLoggedToday: true,
-                    lastSymptomDaysAgo: 20),
-        ].compactMap(todaysPrompt)
+        var contexts: [Context] = []
+
+        // No readings at all.
+        contexts.append(Context())
+
+        /// A context where setup is done, so the later rules are reachable.
+        func settled() -> Context {
+            var context = Context()
+            context.readingCount = 10
+            context.readingsToday = 1
+            context.hasMedications = true
+            context.hasAnyAppointment = true
+            return context
+        }
+
+        // No medicines yet.
+        var noMedicines = Context()
+        noMedicines.readingCount = 5
+        contexts.append(noMedicines)
+
+        // Medicines but no appointment.
+        var noAppointment = Context()
+        noAppointment.readingCount = 10
+        noAppointment.hasMedications = true
+        contexts.append(noAppointment)
+
+        var doses = settled()
+        doses.dosesOutstandingToday = 2
+        contexts.append(doses)
+
+        var afterVisit = settled()
+        afterVisit.daysSinceAppointment = 1
+        contexts.append(afterVisit)
+
+        var gap = settled()
+        gap.daysSinceLastReading = 5
+        contexts.append(gap)
+
+        var upcoming = settled()
+        upcoming.hasUpcomingAppointment = true
+        upcoming.daysUntilAppointment = 2
+        contexts.append(upcoming)
+
+        var aboveAverage = settled()
+        aboveAverage.latestAboveOwnAverage = true
+        contexts.append(aboveAverage)
+
+        var noneToday = settled()
+        noneToday.readingsToday = 0
+        contexts.append(noneToday)
+
+        var noSodium = settled()
+        contexts.append(noSodium)
+
+        var oldSymptom = settled()
+        oldSymptom.sodiumLoggedToday = true
+        oldSymptom.lastSymptomDaysAgo = 20
+        contexts.append(oldSymptom)
+
+        return contexts.compactMap(todaysPrompt)
     }
 }

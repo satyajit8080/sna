@@ -81,6 +81,8 @@ struct CoachView: View {
             ConversationHistoryView(selected: $conversation)
         }
         .onAppear {
+            seedWelcomeIfNeeded()
+
             // A check-in notification carries its question. Asking it straight
             // away means the tap leads somewhere rather than just opening a
             // blank screen.
@@ -582,6 +584,37 @@ struct CoachView: View {
             .joined(separator: "\n\n")
         UIPasteboard.general.string = text
         Haptics.success()
+    }
+
+    /// Puts the coach's introduction in place on first use.
+    ///
+    /// Written straight into the conversation rather than sent to the model:
+    /// there is nothing to ask yet, and a round trip would mean the first thing
+    /// a new user sees is a spinner.
+    private func seedWelcomeIfNeeded() {
+        let profileID = app.activeProfile.id
+        guard !CoachWelcome.hasBeenShown(for: profileID) else { return }
+        guard conversation?.messages.isEmpty ?? true else { return }
+
+        let target: AIConversation
+        if let existing = conversation {
+            target = existing
+        } else {
+            target = AIConversation(profileID: profileID)
+            context.insert(target)
+            conversation = target
+        }
+
+        target.title = "Welcome"
+        target.messages.append(AIMessage(
+            isFromUser: false,
+            text: CoachWelcome.message(
+                name: app.activeProfile.name,
+                hasReadings: !allReadings.filter { $0.profileID == profileID }.isEmpty
+            )
+        ))
+        try? context.save()
+        CoachWelcome.markShown(for: profileID)
     }
 
     private func newConversation() {

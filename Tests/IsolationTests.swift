@@ -866,7 +866,8 @@ struct CheckInPromptTests {
 
     @Test("A user with no readings is asked for their first")
     func firstReading() {
-        let prompt = CheckInPrompts.todaysPrompt(for: .init(readingCount: 0))
+        // A fresh context: nothing recorded at all.
+        let prompt = CheckInPrompts.todaysPrompt(for: CheckInPrompts.Context())
         #expect(prompt?.title.contains("Ready") == true)
     }
 
@@ -1006,5 +1007,81 @@ struct PostAppointmentPromptTests {
         for word in ["should", "correct", "wrong", "make sure", "right dose"] {
             #expect(!text.contains(word), "Wording implied a judgement: \(word)")
         }
+    }
+}
+
+/// The coach's first message.
+///
+/// Written in code rather than generated: it arrives before the user has asked
+/// anything, nobody reviews it before it appears, and a model improvising would
+/// produce something different every install.
+@Suite("Coach welcome")
+struct CoachWelcomeTests {
+
+    @Test("It uses the name when there is one")
+    func usesName() {
+        let message = CoachWelcome.message(name: "Satya", hasReadings: false)
+        #expect(message.contains("Hello Satya"))
+    }
+
+    /// "Me" is the default profile name and carries nothing.
+    @Test("The placeholder name is not used")
+    func ignoresPlaceholder() {
+        for name in ["Me", "me", "", nil] {
+            let message = CoachWelcome.message(name: name, hasReadings: false)
+            #expect(message.hasPrefix("Hello — I'm your coach."))
+        }
+    }
+
+    /// Someone who imported from Health should not be told to start recording.
+    @Test("It adapts to whether readings already exist")
+    func adaptsToData() {
+        let empty = CoachWelcome.message(name: nil, hasReadings: false)
+        #expect(empty.contains("Once you record a few readings"))
+
+        let populated = CoachWelcome.message(name: nil, hasReadings: true)
+        #expect(populated.contains("already have some readings"))
+    }
+
+    /// The limits belong in the introduction, not discovered later when the
+    /// coach declines something.
+    @Test("It states both limits up front")
+    func statesLimits() {
+        let message = CoachWelcome.message(name: "Satya", hasReadings: true)
+        #expect(message.lowercased().contains("emergency"))
+        #expect(message.lowercased().contains("changing a medication"))
+    }
+
+    @Test("It mentions the things the coach can actually do")
+    func describesCapabilities() {
+        let message = CoachWelcome.message(name: nil, hasReadings: false)
+        for capability in ["appointment", "prescription", "mornings"] {
+            #expect(message.lowercased().contains(capability), "missing: \(capability)")
+        }
+    }
+
+    /// A welcome that promises an outcome is a claim the app cannot support.
+    @Test("It promises no health outcome")
+    func noOutcomePromises() {
+        let message = CoachWelcome.message(name: "Satya", hasReadings: true).lowercased()
+        for phrase in ["lower your blood pressure", "improve your health",
+                       "get healthier", "reduce your risk"] {
+            #expect(!message.contains(phrase), "promised an outcome: \(phrase)")
+        }
+    }
+
+    @Test("It is shown once per profile")
+    func shownOncePerProfile() {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let first = UUID()
+        let second = UUID()
+
+        #expect(!CoachWelcome.hasBeenShown(for: first, defaults: defaults))
+        CoachWelcome.markShown(for: first, defaults: defaults)
+
+        #expect(CoachWelcome.hasBeenShown(for: first, defaults: defaults))
+        // A family member added later gets their own introduction rather than
+        // arriving mid-conversation.
+        #expect(!CoachWelcome.hasBeenShown(for: second, defaults: defaults))
     }
 }
