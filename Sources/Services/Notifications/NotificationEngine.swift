@@ -117,6 +117,10 @@ final class NotificationEngine {
     func scheduleMeasurementReminder(at date: Date) async {
         guard isEnabled(.measurement) else { return }
 
+        // Same silent failure as the check-in: no permission, no notification,
+        // and nothing to tell the user why.
+        guard await requestAuthorization() else { return }
+
         let content = UNMutableNotificationContent()
         content.title = "Time for a reading"
         content.body = "Sit quietly for five minutes first, then measure."
@@ -200,6 +204,10 @@ final class NotificationEngine {
     func scheduleDriftAlert() async {
         guard isEnabled(.drift) else { return }
 
+        // Same silent failure as the check-in: no permission, no notification,
+        // and nothing to tell the user why.
+        guard await requestAuthorization() else { return }
+
         let content = UNMutableNotificationContent()
         content.title = "Your average has shifted"
         content.body = "Your blood pressure has trended up over the past month. Open History to see the change."
@@ -253,6 +261,13 @@ final class NotificationEngine {
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
 
         guard isEnabled(.dailyCheckIn) else { return }
+
+        // Without permission `center.add` fails silently: the app believes it
+        // scheduled something, iOS queues nothing, and the user waits for a
+        // notification that was never going to arrive. Ask once here rather
+        // than depending on the onboarding step having been accepted.
+        guard await requestAuthorization() else { return }
+
         guard let prompt = CheckInPrompts.todaysPrompt(for: context) else { return }
 
         var components = DateComponents()
@@ -290,6 +305,7 @@ final class NotificationEngine {
     /// scheduled.
     @discardableResult
     func sendTestCheckIn(_ context: CheckInPrompts.Context) async -> Bool {
+        guard await requestAuthorization() else { return false }
         guard let prompt = CheckInPrompts.todaysPrompt(for: context) else { return false }
 
         let content = UNMutableNotificationContent()

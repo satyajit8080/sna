@@ -67,10 +67,16 @@ struct NotificationSettingsView: View {
     @State private var nextCheckIn: (date: Date, title: String)?
 
     /// Describes the pending check-in, or why there is none.
+    ///
+    /// Each branch is a different cause with a different fix, and they used to
+    /// be indistinguishable: no notification at all looked the same whether
+    /// permission was denied, the category was off, or the rules simply had
+    /// nothing to say.
     private var nextCheckInLabel: String {
+        if authorizationDenied { return "Blocked in iOS Settings" }
         guard enabled[.dailyCheckIn] ?? true else { return "Turned off" }
         guard let nextCheckIn else { return "Nothing to ask today" }
-        return nextCheckIn.date.formatted(date: .omitted, time: .shortened)
+        return nextCheckIn.date.formatted(date: .abbreviated, time: .shortened)
     }
 
     @Environment(AppModel.self) private var app

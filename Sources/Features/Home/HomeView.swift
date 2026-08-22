@@ -46,6 +46,9 @@ struct HomeView: View {
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
         .task {
             await app.health.refreshSnapshot(for: app.activeProfile)
+            // Scheduling now requests permission if it does not have it, so a
+            // user who skipped the onboarding step still gets the prompt the
+            // first time a check-in would have been queued.
             await app.refreshDailyCheckIn(context: checkInContext)
         }
         .reviewPrompt(app.reviewPrompt, readings: readings, isCalmMoment: isCalmMoment)
