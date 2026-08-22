@@ -16,6 +16,7 @@ struct CoachView: View {
     @Query(sort: \MedicalDocument.importedAt, order: .reverse) private var allDocuments: [MedicalDocument]
     @Query(sort: \AIConversation.startedAt, order: .reverse) private var allConversations: [AIConversation]
     @Query private var allAppointments: [Appointment]
+    @Query private var allSymptoms: [SymptomEntry]
     @Query private var allRoutines: [ActivityRoutine]
 
     @State private var conversation: AIConversation?
@@ -90,6 +91,7 @@ struct CoachView: View {
         }
         .onAppear {
             seedWelcomeIfNeeded()
+            postCheckInIfDue()
 
             // A check-in notification carries its question. Asking it straight
             // away means the tap leads somewhere rather than just opening a
@@ -680,6 +682,53 @@ struct CoachView: View {
         ))
         try? context.save()
         CoachWelcome.markShown(for: profileID)
+    }
+
+    /// Posts the day's check-in into the conversation.
+    ///
+    /// The same question the notification would ask, delivered where it cannot
+    /// be blocked. A notification needs permission, a scheduled time, and the
+    /// phone unlocked at the right moment. Opening the coach needs none of
+    /// those — and someone who has just opened the coach is already listening.
+    ///
+    /// Once a day at most, and never on the first run: the welcome has just
+    /// introduced everything, and following it with a nudge is too much at once.
+    private func postCheckInIfDue() {
+        let profileID = app.activeProfile.id
+        let key = "coach.checkin.posted.\(profileID.uuidString)"
+
+        if let last = UserDefaults.standard.object(forKey: key) as? Date,
+           Calendar.current.isDateInToday(last) {
+            return
+        }
+        guard CoachWelcome.hasBeenShown(for: profileID) else { return }
+
+        let checkIn = CheckInPrompts.context(
+            profileID: profileID,
+            readings: allReadings,
+            medications: allMedications,
+            doses: allDoses,
+            lifestyle: allLifestyle,
+            symptoms: allSymptoms,
+            appointments: allAppointments
+        )
+        guard let prompt = CheckInPrompts.todaysPrompt(for: checkIn) else { return }
+
+        let target: AIConversation
+        if let existing = conversation {
+            target = existing
+        } else {
+            target = AIConversation(profileID: profileID)
+            context.insert(target)
+            conversation = target
+        }
+
+        target.messages.append(AIMessage(
+            isFromUser: false,
+            text: "\(prompt.title)\n\n\(prompt.body)"
+        ))
+        try? context.save()
+        UserDefaults.standard.set(Date.now, forKey: key)
     }
 
     private func newConversation() {
