@@ -80,6 +80,16 @@ final class NotificationEngine {
 
         /// The hour a suppressed reminder should move to.
         var resumeHour: Int { endHour }
+
+        /// Shifts an hour out of the quiet window.
+        ///
+        /// Lives here rather than in the scheduler: the rule is knowledge about
+        /// quiet hours, and putting it beside the window it applies to means
+        /// there is one place to change it.
+        func adjustedHour(_ hour: Int) -> Int {
+            guard isEnabled, contains(hour: hour) else { return hour }
+            return resumeHour
+        }
     }
 
     /// Shifts a time out of the quiet window if it falls inside one.
@@ -257,67 +267,66 @@ final class NotificationEngine {
         return (soonest.0, soonest.1)
     }
 
+    /// Queues the check-in notifications for a given state.
+    ///
+    /// Delivery only. Every decision — whether to notify at all, what to say,
+    /// which days, what time — is made by `CheckInScheduler.plan`, which is a
+    /// pure function and therefore testable without a device. This method just
+    /// hands the result to iOS.
+    ///
+    /// Returns what it queued so a caller (or a test) can see the outcome
+    /// rather than inferring it from silence.
+    @discardableResult
     func scheduleDailyCheckIn(
         _ context: CheckInPrompts.Context,
         hour: Int? = nil
-    ) async {
-        // Clear the whole week before rebuilding it, including the old single
-        // repeating request, so upgrading does not leave a stale one behind.
-        let existing = await center.pendingNotificationRequests()
+    ) async -> [PlannedNotification] {
+        // Clear the whole horizon before rebuilding, including the single
+        // repeating request older versions used, so an upgrade cannot leave a
+        // stale notification firing forever.
+        let stale = await center.pendingNotificationRequests()
             .map(\.identifier)
             .filter { $0.hasPrefix("checkin.") }
-        center.removePendingNotificationRequests(withIdentifiers: existing)
+        center.removePendingNotificationRequests(withIdentifiers: stale)
 
-        guard isEnabled(.dailyCheckIn) else { return }
+        guard isEnabled(.dailyCheckIn) else { return [] }
 
         // Without permission `center.add` fails silently: the app believes it
         // scheduled something, iOS queues nothing, and the user waits for a
         // notification that was never going to arrive.
-        guard await requestAuthorization() else { return }
+        let authorized = await requestAuthorization()
 
-        let calendar = Calendar.current
-        let targetHour = hour ?? Self.checkInHour
+        let planned = CheckInScheduler.plan(.init(
+            context: context,
+            hour: hour ?? Self.checkInHour,
+            quietHours: QuietHours.current(),
+            isEnabled: true,
+            isAuthorized: authorized,
+            now: .now,
+            calendar: .current
+        ))
 
-        // A week of separate one-shot notifications rather than one repeating
-        // trigger. iOS delivers these with the app closed and never launched
-        // since; a repeating trigger would deliver the same sentence each time,
-        // because nothing can regenerate it while the app is not running.
-        for (day, prompt) in CheckInPrompts.week(from: context) {
-            guard let base = calendar.date(byAdding: .day, value: day, to: .now) else { continue }
-
-            var components = calendar.dateComponents([.year, .month, .day], from: base)
-            components.hour = targetHour
-            components.minute = 0
-            components = adjustedForQuietHours(components)
-
-            guard let fireDate = calendar.date(from: components),
-                  // Today's slot may already have passed; that day is simply
-                  // skipped rather than firing immediately, which would feel
-                  // like a bug to anyone who just opened the app.
-                  fireDate > Date.now.addingTimeInterval(60)
-            else { continue }
-
+        for item in planned {
             let content = UNMutableNotificationContent()
-            content.title = prompt.title
-            content.body = prompt.body
+            content.title = item.title
+            content.body = item.body
             content.sound = .default
-
-            let encoded = prompt.coachQuestion
-                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            content.userInfo = ["deepLink": "bpcoach://coach?question=\(encoded)"]
+            content.userInfo = ["deepLink": item.deepLink]
 
             let request = UNNotificationRequest(
-                identifier: "checkin.day\(day)",
+                identifier: item.identifier,
                 content: content,
                 trigger: UNCalendarNotificationTrigger(
-                    dateMatching: calendar.dateComponents(
-                        [.year, .month, .day, .hour, .minute], from: fireDate
+                    dateMatching: Calendar.current.dateComponents(
+                        [.year, .month, .day, .hour, .minute], from: item.fireDate
                     ),
                     repeats: false
                 )
             )
             try? await center.add(request)
         }
+
+        return planned
     }
 
     /// Fires the check-in in a few seconds, for testing.

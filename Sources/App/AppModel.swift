@@ -71,14 +71,6 @@ final class AppModel {
 
     // MARK: - Profiles
 
-    /// Refreshes tomorrow's check-in from the current state.
-    ///
-    /// Called when the app becomes active so the question reflects today rather
-    /// than whenever it was last scheduled.
-    func refreshDailyCheckIn(context: CheckInPrompts.Context) async {
-        await NotificationEngine.shared.scheduleDailyCheckIn(context)
-    }
-
     func setActive(_ profile: UserProfile) {
         activeProfile = profile
         Haptics.selection()

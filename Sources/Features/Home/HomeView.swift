@@ -44,13 +44,11 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $isPresentingAdd) { AddBPView() }
         .refreshable { await app.health.refreshSnapshot(for: app.activeProfile) }
-        .task {
-            await app.health.refreshSnapshot(for: app.activeProfile)
-            // Scheduling now requests permission if it does not have it, so a
-            // user who skipped the onboarding step still gets the prompt the
-            // first time a check-in would have been queued.
-            await app.refreshDailyCheckIn(context: checkInContext)
-        }
+        // Scheduling deliberately does not happen here. It runs at app launch
+        // and on backgrounding, because a `.task` on one screen only fires if
+        // the user visits that screen — which meant opening straight to the
+        // Coach tab queued nothing at all.
+        .task { await app.health.refreshSnapshot(for: app.activeProfile) }
         .reviewPrompt(app.reviewPrompt, readings: readings, isCalmMoment: isCalmMoment)
     }
 
@@ -661,20 +659,6 @@ struct HomeView: View {
                     .foregroundStyle(Brand.accent)
             }
         }
-    }
-
-    /// Facts about today, built by the shared builder so Home and the settings
-    /// test cannot disagree about what the rules are looking at.
-    private var checkInContext: CheckInPrompts.Context {
-        CheckInPrompts.context(
-            profileID: app.activeProfile.id,
-            readings: allReadings,
-            medications: allMedications,
-            doses: allDoses,
-            lifestyle: allLifestyle,
-            symptoms: allSymptoms,
-            appointments: allAppointments
-        )
     }
 
     /// True when nothing on Home is asking for attention.
