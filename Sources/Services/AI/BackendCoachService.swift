@@ -204,6 +204,13 @@ struct BackendCoachService: AICoachService {
             guidelineName: context.guidelineName,
             // A first name, never a full one. "Me" is the default profile name
             // and carries nothing, so it is not worth sending.
+            firstName: {
+                let name = context.firstName?
+                    .trimmingCharacters(in: .whitespaces)
+                    .split(separator: " ").first.map(String.init)
+                guard let name, !name.isEmpty, name.lowercased() != "me" else { return nil }
+                return String(name.prefix(40))
+            }(),
             // Taken from the device, not the server. A user in India asking at
             // 1am is on a different date from UTC, and an appointment booked on
             // the wrong day is a wasted trip.
@@ -214,13 +221,6 @@ struct BackendCoachService: AICoachService {
                 return formatter.string(from: .now)
             }(),
             timeZone: TimeZone.current.identifier,
-            firstName: {
-                let name = context.firstName?
-                    .trimmingCharacters(in: .whitespaces)
-                    .split(separator: " ").first.map(String.init)
-                guard let name, !name.isEmpty, name.lowercased() != "me" else { return nil }
-                return String(name.prefix(40))
-            }(),
             activityRoutine: context.activityRoutine,
             // Already reduced to text on the device — never an image.
             attachments: attachments.map {

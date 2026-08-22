@@ -285,7 +285,7 @@ enum CheckInPrompts {
         noneToday.readingsToday = 0
         contexts.append(noneToday)
 
-        var noSodium = settled()
+        let noSodium = settled()
         contexts.append(noSodium)
 
         var oldSymptom = settled()
