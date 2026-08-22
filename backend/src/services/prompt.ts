@@ -402,9 +402,22 @@ export function renderContext(body: CoachRequestBody): string {
     lines.push("");
   }
 
-  // Relative dates ("next Tuesday") cannot be resolved without this, and a
-  // model guessing at today's date produces appointments in the wrong week.
-  lines.push(`Today is ${new Date().toISOString()} (UTC).`);
+  // Relative dates are resolved against the user's own clock, not the server's.
+  // "Tomorrow at 3" means 3pm where they are; UTC would put it on the wrong day
+  // for anyone far from Greenwich, and on the wrong side of midnight for users
+  // in Asia and the Americas.
+  if (body.localTime) {
+    lines.push(
+      `The user's local time is ${body.localTime}` +
+        (body.timeZone ? ` (${body.timeZone}).` : ".")
+    );
+    lines.push(
+      "Resolve every relative date and time against that clock, and give times " +
+        "back in it. Never answer in UTC."
+    );
+  } else {
+    lines.push(`Server time is ${new Date().toISOString()} (UTC).`);
+  }
   lines.push(`Guideline in use: ${body.guidelineName}`);
 
   if (body.activityRoutine) {

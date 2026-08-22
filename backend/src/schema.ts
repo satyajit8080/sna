@@ -52,6 +52,16 @@ export interface CoachRequestBody {
    * privacy copy in the app states that a first name is included.
    */
   firstName?: string;
+  /**
+   * The device's local time and timezone, e.g. "2026-08-22T13:43:00+05:30".
+   *
+   * Without this the model resolves relative dates against UTC. For a user in
+   * India that is five and a half hours behind their day — at 1am local it is
+   * still yesterday in UTC, so "tomorrow" lands on the wrong date entirely.
+   */
+  localTime?: string;
+  /** IANA identifier, e.g. "Asia/Kolkata". */
+  timeZone?: string;
   /** Exercise routine as a sentence, e.g. "Usually does gym, walk, usually in the evening." */
   activityRoutine?: string;
   guidelineName: string;
@@ -148,6 +158,12 @@ export function validateCoachRequest(
         typeof body.firstName === "string" && body.firstName.trim()
           ? body.firstName.trim().split(/\s+/)[0].slice(0, 40)
           : undefined,
+      localTime: typeof body.localTime === "string"
+        ? body.localTime.trim().slice(0, 40)
+        : undefined,
+      timeZone: typeof body.timeZone === "string"
+        ? body.timeZone.trim().slice(0, 60)
+        : undefined,
       activityRoutine:
         typeof body.activityRoutine === "string" && body.activityRoutine.trim()
           ? body.activityRoutine.trim().slice(0, 200)

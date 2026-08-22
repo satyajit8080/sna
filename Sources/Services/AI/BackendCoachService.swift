@@ -82,6 +82,9 @@ private struct CoachRequestPayload: Encodable {
     let guidelineName: String
     /// First name only. Trimmed server-side too, as a second guard.
     let firstName: String?
+    /// The device's own clock, so "tomorrow at 3" means 3pm where the user is.
+    let localTime: String
+    let timeZone: String
     /// Exercise routine, if given. Plain text, no identifiers.
     let activityRoutine: String?
     let attachments: [Attachment]
@@ -201,6 +204,16 @@ struct BackendCoachService: AICoachService {
             guidelineName: context.guidelineName,
             // A first name, never a full one. "Me" is the default profile name
             // and carries nothing, so it is not worth sending.
+            // Taken from the device, not the server. A user in India asking at
+            // 1am is on a different date from UTC, and an appointment booked on
+            // the wrong day is a wasted trip.
+            localTime: {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime]
+                formatter.timeZone = .current
+                return formatter.string(from: .now)
+            }(),
+            timeZone: TimeZone.current.identifier,
             firstName: {
                 let name = context.firstName?
                     .trimmingCharacters(in: .whitespaces)

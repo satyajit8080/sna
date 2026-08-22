@@ -15,6 +15,7 @@ struct OnboardingFlow: View {
     @State private var selectedGuideline: BPGuidelineID = .accAha2017
     @State private var healthError: String?
     @State private var ownerName = ""
+    @State private var signInError: String?
 
     /// The categories BP Coach asks Health for, named so the user knows exactly
     /// what the permission sheet will cover.
@@ -26,7 +27,7 @@ struct OnboardingFlow: View {
         ("Weight", "scalemass.fill"),
     ]
 
-    private let stepCount = 6
+    private let stepCount = 7
 
     var body: some View {
         ZStack {
@@ -42,8 +43,9 @@ struct OnboardingFlow: View {
                     guidelineChoice.tag(1)
                     guidelineExplainer.tag(2)
                     whoIsThisFor.tag(3)
-                    healthPermission.tag(4)
-                    notificationPermission.tag(5)
+                    signIn.tag(4)
+                    healthPermission.tag(5)
+                    notificationPermission.tag(6)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.snappy, value: step)
@@ -277,7 +279,82 @@ struct OnboardingFlow: View {
         )
     }
 
-    // MARK: - 5 · Apple Health
+    // MARK: - 5 · Sign in (optional)
+
+    /// Offered, never required.
+    ///
+    /// Guest is the equal option, not the escape hatch. Nothing in the app is
+    /// withheld without an account, so presenting it as a lesser choice — small
+    /// grey text under a big button — would be a lie told through layout.
+    private var signIn: some View {
+        OnboardingScreen(
+            logoSymbol: "person.crop.circle",
+            header: {
+                OnboardingTitle(
+                    accented: "Sign in ",
+                    plain: "or continue as a guest",
+                    subtitle: "Both work exactly the same"
+                )
+            },
+            content: {
+                VStack(spacing: 15) {
+                    OnboardingFeatureRow(symbol: "iphone") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Your readings stay on this device either way.")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OnboardingTheme.textSecondary)
+                            Text("No feature is locked behind an account.")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(OnboardingTheme.accent)
+                        }
+                    }
+
+                    OnboardingFeatureRow(symbol: "arrow.triangle.2.circlepath") {
+                        Text("Signing in only means a future version can restore your data on a new phone.")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OnboardingTheme.textSecondary)
+                            .lineSpacing(2)
+                    }
+
+                    if let signInError {
+                        Text(signInError)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.statusModerate)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 4)
+                    }
+
+                    if app.auth.isSignedIn {
+                        Label("Signed in", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(OnboardingTheme.accent)
+                            .padding(.top, 4)
+                    }
+                }
+            },
+            primary: (
+                app.auth.isSignedIn ? "Continue" : "Sign in with Apple",
+                {
+                    if app.auth.isSignedIn { step = 5; return }
+                    signInError = nil
+                    Task {
+                        do {
+                            try await app.auth.signInWithApple()
+                            step = 5
+                        } catch let error as AuthService.AuthError {
+                            // Cancelling is a choice, not a failure.
+                            if error != .cancelled { signInError = error.errorDescription }
+                        } catch {
+                            signInError = error.localizedDescription
+                        }
+                    }
+                }
+            ),
+            secondary: ("Continue as guest", { step = 5 })
+        )
+    }
+
+    // MARK: - 6 · Apple Health
 
     private var healthPermission: some View {
         OnboardingScreen(
@@ -362,7 +439,7 @@ struct OnboardingFlow: View {
                 Task {
                     do {
                         try await app.health.requestReadAuthorization(for: app.activeProfile)
-                        step = 5
+                        step = 6
                     } catch {
                         // Onboarding must never dead-end. Show what happened and
                         // let the user continue without Health.
@@ -370,11 +447,11 @@ struct OnboardingFlow: View {
                     }
                 }
             }),
-            secondary: ("Not now", { step = 5 })
+            secondary: ("Not now", { step = 6 })
         )
     }
 
-    // MARK: - 6 · Reminders
+    // MARK: - 7 · Reminders
 
     private var notificationPermission: some View {
         OnboardingScreen(

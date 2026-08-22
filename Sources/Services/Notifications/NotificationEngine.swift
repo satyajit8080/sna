@@ -223,9 +223,31 @@ final class NotificationEngine {
     /// The text is written in code, never generated: a notification arrives
     /// unreviewed and cannot be recalled, so its wording has to be something a
     /// person wrote and can be held to.
+    /// The hour the daily check-in fires. Configurable, because 7pm suits some
+    /// people and not others, and a fixed time is the difference between a
+    /// useful nudge and one that always arrives mid-meeting.
+    static var checkInHour: Int {
+        get { UserDefaults.standard.object(forKey: "notify.checkInHour") as? Int ?? 19 }
+        set { UserDefaults.standard.set(newValue, forKey: "notify.checkInHour") }
+    }
+
+    /// When the next check-in is due, and what it will say.
+    ///
+    /// Exists so "is this working?" has an answer other than waiting until
+    /// evening. A pending notification that is genuinely scheduled looks
+    /// identical to one that silently failed, until this shows the date.
+    func nextCheckIn() async -> (date: Date, title: String)? {
+        let pending = await center.pendingNotificationRequests()
+        guard let request = pending.first(where: { $0.identifier == "checkin.daily" }),
+              let trigger = request.trigger as? UNCalendarNotificationTrigger,
+              let date = trigger.nextTriggerDate()
+        else { return nil }
+        return (date, request.content.title)
+    }
+
     func scheduleDailyCheckIn(
         _ context: CheckInPrompts.Context,
-        hour: Int = 19
+        hour: Int? = nil
     ) async {
         let identifier = "checkin.daily"
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
@@ -234,7 +256,7 @@ final class NotificationEngine {
         guard let prompt = CheckInPrompts.todaysPrompt(for: context) else { return }
 
         var components = DateComponents()
-        components.hour = hour
+        components.hour = hour ?? Self.checkInHour
         components.minute = 0
         components = adjustedForQuietHours(components)
 

@@ -910,3 +910,62 @@ describe("coach actions", () => {
     assert.match(SYSTEM_PROMPT, /Nothing is saved until they confirm/i);
   });
 });
+
+describe("time zones", () => {
+  const base = {
+    question: "when is my appointment",
+    guidelineName: "ACC/AHA 2017",
+    readings: [], averages: [], medications: [], lifestyle: [], attachments: [],
+  };
+
+  /**
+   * The bug this prevents: at 1am in India it is still the previous day in UTC,
+   * so a model resolving "tomorrow" against server time books the appointment a
+   * day early. A wasted trip to a clinic is a real cost.
+   */
+  test("the user's own clock is what the model is told", () => {
+    const rendered = renderContext({
+      ...base,
+      localTime: "2026-08-22T01:15:00+05:30",
+      timeZone: "Asia/Kolkata",
+    });
+    assert.match(rendered, /local time is 2026-08-22T01:15:00\+05:30/);
+    assert.match(rendered, /Asia\/Kolkata/);
+    assert.match(rendered, /Never answer in UTC/);
+  });
+
+  test("a US clock is carried through just the same", () => {
+    const rendered = renderContext({
+      ...base,
+      localTime: "2026-08-21T16:45:00-07:00",
+      timeZone: "America/Los_Angeles",
+    });
+    assert.match(rendered, /-07:00/);
+    assert.match(rendered, /America\/Los_Angeles/);
+  });
+
+  /** An older client that sends no clock must still work. */
+  test("server time is the fallback when no clock is sent", () => {
+    const rendered = renderContext(base);
+    assert.match(rendered, /Server time is/);
+    assert.doesNotMatch(rendered, /local time is/);
+  });
+
+  test("the clock and zone survive validation", () => {
+    const result = validateCoachRequest({
+      ...base,
+      localTime: "2026-08-22T01:15:00+05:30",
+      timeZone: "Asia/Kolkata",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.body.localTime, "2026-08-22T01:15:00+05:30");
+    assert.equal(result.body.timeZone, "Asia/Kolkata");
+  });
+
+  test("a non-string clock is dropped rather than passed on", () => {
+    const result = validateCoachRequest({ ...base, localTime: 12345, timeZone: {} });
+    assert.equal(result.ok, true);
+    assert.equal(result.body.localTime, undefined);
+    assert.equal(result.body.timeZone, undefined);
+  });
+});

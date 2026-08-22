@@ -63,6 +63,15 @@ struct NotificationSettingsView: View {
     @State private var pendingCount = 0
     @State private var enabled: [NotificationEngine.Category: Bool] = [:]
     @State private var testResult: String?
+    @State private var checkInHour = NotificationEngine.checkInHour
+    @State private var nextCheckIn: (date: Date, title: String)?
+
+    /// Describes the pending check-in, or why there is none.
+    private var nextCheckInLabel: String {
+        guard enabled[.dailyCheckIn] ?? true else { return "Turned off" }
+        guard let nextCheckIn else { return "Nothing to ask today" }
+        return nextCheckIn.date.formatted(date: .omitted, time: .shortened)
+    }
 
     @Environment(AppModel.self) private var app
     @Query(sort: \BPReading.recordedAt, order: .reverse) private var allReadings: [BPReading]
@@ -145,11 +154,36 @@ struct NotificationSettingsView: View {
             BrandFormSection(
                 "Daily check-in",
                 footer: """
-                Arrives once a day at 7pm, moved out of quiet hours. It is skipped \
-                entirely on days when there is nothing useful to ask — that is working \
-                as intended, not a fault.
+                One question a day, chosen from your own data. It is skipped entirely \
+                on days when there is nothing useful to ask — silence is intended, not \
+                a fault.
                 """
             ) {
+                // The pending state, in plain words. Without this, "scheduled
+                // for tonight" and "silently failed" look identical.
+                BrandValueRow(
+                    title: "Next check-in",
+                    value: nextCheckInLabel,
+                    symbol: "clock.badge.checkmark"
+                )
+
+                BrandRowDivider()
+
+                HStack {
+                    Text("Time")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Brand.textPrimary)
+                    Spacer()
+                    Picker("Time", selection: $checkInHour) {
+                        ForEach(6..<23, id: \.self) { Text(hourLabel($0)).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(Brand.accent)
+                }
+                .padding(16)
+
+                BrandRowDivider()
+
                 BrandActionRow(
                     title: "Send a test now",
                     detail: testResult ?? "Arrives in about five seconds",
@@ -174,6 +208,10 @@ struct NotificationSettingsView: View {
                 ) { openSettings() }
             }
         }
+        .onChange(of: checkInHour) { _, newValue in
+            NotificationEngine.checkInHour = newValue
+            Task { await rescheduleCheckIn() }
+        }
         .onChange(of: quiet.isEnabled) { _, _ in quiet.save() }
         .onChange(of: quiet.startHour) { _, _ in quiet.save() }
         .onChange(of: quiet.endHour) { _, _ in quiet.save() }
@@ -183,7 +221,26 @@ struct NotificationSettingsView: View {
             for category in NotificationEngine.Category.allCases {
                 enabled[category] = NotificationEngine.shared.isEnabled(category)
             }
+            await rescheduleCheckIn()
         }
+    }
+
+    /// Reschedules and reads back when it will fire.
+    private func rescheduleCheckIn() async {
+        await NotificationEngine.shared.scheduleDailyCheckIn(currentContext)
+        nextCheckIn = await NotificationEngine.shared.nextCheckIn()
+    }
+
+    private var currentContext: CheckInPrompts.Context {
+        CheckInPrompts.context(
+            profileID: app.activeProfile.id,
+            readings: allReadings,
+            medications: allMedications,
+            doses: allDoses,
+            lifestyle: allLifestyle,
+            symptoms: allSymptoms,
+            appointments: allAppointments
+        )
     }
 
     /// Fires the real check-in, chosen by the real rules, so the test proves the
@@ -198,17 +255,7 @@ struct NotificationSettingsView: View {
                 return
             }
 
-            let context = CheckInPrompts.context(
-                profileID: app.activeProfile.id,
-                readings: allReadings,
-                medications: allMedications,
-                doses: allDoses,
-                lifestyle: allLifestyle,
-                symptoms: allSymptoms,
-                appointments: allAppointments
-            )
-
-            let sent = await NotificationEngine.shared.sendTestCheckIn(context)
+            let sent = await NotificationEngine.shared.sendTestCheckIn(currentContext)
             testResult = sent
                 ? "Sent — it should arrive in a few seconds."
                 : "Nothing to ask right now, so no notification was sent."
