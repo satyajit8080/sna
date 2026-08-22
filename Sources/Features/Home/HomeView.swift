@@ -250,13 +250,17 @@ struct HomeView: View {
                     value: snapshot.restingHeartRate.map { "\($0)" },
                     caption: "bpm",
                     // 40–100 is the range most resting rates fall in.
-                    fraction: snapshot.restingHeartRate.map { Double($0 - 40) / 60 }
+                    fraction: snapshot.restingHeartRate.map { Double($0 - 40) / 60 },
+                    // An iPhone cannot measure this. Saying so is more useful
+                    // than "No data", which reads like the app is broken.
+                    missingHint: "Needs Apple Watch"
                 )
                 metricTile(
                     title: "Sleep", symbol: "bed.double.fill", tint: Brand.sleep,
                     value: snapshot.sleepMinutes.map { "\($0 / 60)h \($0 % 60)m" },
                     caption: sleepQuality(snapshot.sleepMinutes),
-                    fraction: snapshot.sleepMinutes.map { Double($0) / 480 }
+                    fraction: snapshot.sleepMinutes.map { Double($0) / 480 },
+                    missingHint: "Needs Apple Watch"
                 )
                 weightTile
             }
@@ -268,9 +272,15 @@ struct HomeView: View {
         return minutes >= 420 ? "Good" : minutes >= 360 ? "A little short" : "Short"
     }
 
+    /// A tile for one Health metric.
+    ///
+    /// `missingHint` explains *why* a value is absent. Most of these cannot come
+    /// from an iPhone alone, and a bare "No data" reads like a broken app rather
+    /// than a missing sensor.
     private func metricTile(
         title: String, symbol: String, tint: Color,
-        value: String?, caption: String, fraction: Double?
+        value: String?, caption: String, fraction: Double?,
+        missingHint: String? = nil
     ) -> some View {
         BrandCard(padding: 16, radius: Brand.Metric.tileRadius) {
             VStack(alignment: .leading, spacing: 0) {
@@ -286,10 +296,12 @@ struct HomeView: View {
                     .foregroundStyle(value == nil ? Brand.textTertiary : Brand.textPrimary)
                     .padding(.top, 4)
 
-                Text(value == nil ? "No data" : caption)
+                Text(value == nil ? (missingHint ?? "No data") : caption)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Brand.textSecondary)
                     .padding(.top, 4)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
 
                 Spacer(minLength: 8)
 
@@ -302,7 +314,15 @@ struct HomeView: View {
     }
 
     /// Weight shows change rather than progress — there is no target to fill.
+    ///
+    /// Tappable, because unlike the other tiles this is a metric the user can
+    /// enter themselves, and the empty state invites it.
     private var weightTile: some View {
+        NavigationLink { WeightHistoryView() } label: { weightTileContent }
+            .buttonStyle(.plain)
+    }
+
+    private var weightTileContent: some View {
         let weights = allLifestyle
             .filter { $0.profileID == app.activeProfile.id && $0.kind == .weight }
             .sorted { $0.recordedAt > $1.recordedAt }
@@ -336,9 +356,11 @@ struct HomeView: View {
                     .foregroundStyle(Brand.accent)
                     .padding(.top, 4)
                 } else {
-                    Text(latest == nil ? "No data" : "First entry")
+                    // Weight is the one metric here the user can simply enter,
+                    // so the hint points at the app rather than at hardware.
+                    Text(latest == nil ? "Tap to add" : "First entry")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Brand.textSecondary)
+                        .foregroundStyle(latest == nil ? Brand.accent : Brand.textSecondary)
                         .padding(.top, 4)
                 }
                 Spacer(minLength: 0)
