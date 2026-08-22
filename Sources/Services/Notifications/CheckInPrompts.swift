@@ -228,6 +228,53 @@ enum CheckInPrompts {
         return context
     }
 
+    /// A week of prompts, projected forward from today.
+    ///
+    /// Scheduled as separate one-shot notifications rather than one repeating
+    /// trigger. A repeating trigger sends the identical sentence every day until
+    /// the app is next opened — seven copies of "Taking any medicines?" is how
+    /// someone turns notifications off for good.
+    ///
+    /// The projection assumes nothing improves while the app is closed, which is
+    /// the safe direction to be wrong in: it would rather nudge about a reading
+    /// already taken than fall silent on a missed week.
+    static func week(from context: Context, days: Int = 7) -> [(day: Int, prompt: Prompt)] {
+        var results: [(Int, Prompt)] = []
+        var seen = Set<String>()
+        var projected = context
+
+        for day in 0..<days {
+            // Each day without the app open is another day since a reading.
+            if day > 0 {
+                projected.daysSinceLastReading = (projected.daysSinceLastReading ?? 0) + 1
+                projected.readingsToday = 0
+                projected.latestAboveOwnAverage = false
+                if let since = projected.daysSinceAppointment {
+                    projected.daysSinceAppointment = since + 1
+                }
+                if let until = projected.daysUntilAppointment {
+                    projected.daysUntilAppointment = max(0, until - 1)
+                }
+                if let symptom = projected.lastSymptomDaysAgo {
+                    projected.lastSymptomDaysAgo = symptom + 1
+                }
+                projected.sodiumLoggedToday = false
+            }
+
+            guard let prompt = todaysPrompt(for: projected) else { continue }
+
+            // Repeating the same sentence on consecutive days is the thing this
+            // exists to avoid, so a duplicate is skipped rather than sent.
+            let key = prompt.title + prompt.body
+            if seen.contains(key) { continue }
+            seen.insert(key)
+
+            results.append((day, prompt))
+        }
+
+        return results
+    }
+
     /// Every prompt the rules can produce, for tests and previews.
     ///
     /// Built by mutation rather than the memberwise initialiser: that init

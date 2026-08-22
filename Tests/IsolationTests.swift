@@ -1168,3 +1168,63 @@ struct CoachSuggestionTests {
         #expect(items.count <= 5)
     }
 }
+
+/// A week of check-ins, scheduled ahead.
+///
+/// One repeating trigger would send the identical sentence every day until the
+/// app was next opened, because nothing can regenerate the text while the app is
+/// not running. Seven copies of the same nudge is how someone turns notifications
+/// off permanently.
+@Suite("Week of check-ins")
+struct CheckInWeekTests {
+
+    private func settled() -> CheckInPrompts.Context {
+        var context = CheckInPrompts.Context()
+        context.readingCount = 20
+        context.readingsToday = 1
+        context.hasMedications = true
+        context.hasAnyAppointment = true
+        return context
+    }
+
+    @Test("A week is projected, not a single repeat")
+    func projectsAWeek() {
+        let week = CheckInPrompts.week(from: settled())
+        #expect(week.count >= 2)
+        #expect(week.allSatisfy { $0.day >= 0 && $0.day < 7 })
+    }
+
+    /// The point of the whole exercise.
+    @Test("No two scheduled days say the same thing")
+    func noDuplicates() {
+        for context in [settled(), CheckInPrompts.Context()] {
+            let texts = CheckInPrompts.week(from: context).map { $0.prompt.title + $0.prompt.body }
+            #expect(Set(texts).count == texts.count, "Duplicate prompt scheduled")
+        }
+    }
+
+    /// Days pass while the app is closed, so the gap grows and the wording
+    /// should follow it.
+    @Test("The projection ages the context forward")
+    func agesForward() {
+        var context = settled()
+        context.daysSinceLastReading = 1
+        let week = CheckInPrompts.week(from: context)
+        #expect(week.contains { $0.prompt.title.contains("days") })
+    }
+
+    @Test("Someone with nothing recorded still gets a week")
+    func emptyUserStillNudged() {
+        let week = CheckInPrompts.week(from: CheckInPrompts.Context())
+        #expect(!week.isEmpty)
+    }
+
+    /// Every scheduled day must carry a question, since tapping it opens the
+    /// coach with that question asked.
+    @Test("Every scheduled day carries a coach question")
+    func allHaveQuestions() {
+        for entry in CheckInPrompts.week(from: settled()) {
+            #expect(!entry.prompt.coachQuestion.isEmpty)
+        }
+    }
+}

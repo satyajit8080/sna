@@ -246,52 +246,78 @@ final class NotificationEngine {
     /// identical to one that silently failed, until this shows the date.
     func nextCheckIn() async -> (date: Date, title: String)? {
         let pending = await center.pendingNotificationRequests()
-        guard let request = pending.first(where: { $0.identifier == "checkin.daily" }),
-              let trigger = request.trigger as? UNCalendarNotificationTrigger,
-              let date = trigger.nextTriggerDate()
-        else { return nil }
-        return (date, request.content.title)
+        let checkIns = pending
+            .filter { $0.identifier.hasPrefix("checkin.") }
+            .compactMap { request -> (Date, String)? in
+                guard let trigger = request.trigger as? UNCalendarNotificationTrigger,
+                      let date = trigger.nextTriggerDate() else { return nil }
+                return (date, request.content.title)
+            }
+        guard let soonest = checkIns.min(by: { $0.0 < $1.0 }) else { return nil }
+        return (soonest.0, soonest.1)
     }
 
     func scheduleDailyCheckIn(
         _ context: CheckInPrompts.Context,
         hour: Int? = nil
     ) async {
-        let identifier = "checkin.daily"
-        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        // Clear the whole week before rebuilding it, including the old single
+        // repeating request, so upgrading does not leave a stale one behind.
+        let existing = await center.pendingNotificationRequests()
+            .map(\.identifier)
+            .filter { $0.hasPrefix("checkin.") }
+        center.removePendingNotificationRequests(withIdentifiers: existing)
 
         guard isEnabled(.dailyCheckIn) else { return }
 
         // Without permission `center.add` fails silently: the app believes it
         // scheduled something, iOS queues nothing, and the user waits for a
-        // notification that was never going to arrive. Ask once here rather
-        // than depending on the onboarding step having been accepted.
+        // notification that was never going to arrive.
         guard await requestAuthorization() else { return }
 
-        guard let prompt = CheckInPrompts.todaysPrompt(for: context) else { return }
+        let calendar = Calendar.current
+        let targetHour = hour ?? Self.checkInHour
 
-        var components = DateComponents()
-        components.hour = hour ?? Self.checkInHour
-        components.minute = 0
-        components = adjustedForQuietHours(components)
+        // A week of separate one-shot notifications rather than one repeating
+        // trigger. iOS delivers these with the app closed and never launched
+        // since; a repeating trigger would deliver the same sentence each time,
+        // because nothing can regenerate it while the app is not running.
+        for (day, prompt) in CheckInPrompts.week(from: context) {
+            guard let base = calendar.date(byAdding: .day, value: day, to: .now) else { continue }
 
-        let content = UNMutableNotificationContent()
-        content.title = prompt.title
-        content.body = prompt.body
-        content.sound = .default
+            var components = calendar.dateComponents([.year, .month, .day], from: base)
+            components.hour = targetHour
+            components.minute = 0
+            components = adjustedForQuietHours(components)
 
-        // The question travels in the deep link so the existing routing handles
-        // it, rather than a second parallel mechanism.
-        let encoded = prompt.coachQuestion
-            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        content.userInfo = ["deepLink": "bpcoach://coach?question=\(encoded)"]
+            guard let fireDate = calendar.date(from: components),
+                  // Today's slot may already have passed; that day is simply
+                  // skipped rather than firing immediately, which would feel
+                  // like a bug to anyone who just opened the app.
+                  fireDate > Date.now.addingTimeInterval(60)
+            else { continue }
 
-        let request = UNNotificationRequest(
-            identifier: identifier,
-            content: content,
-            trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
-        )
-        try? await center.add(request)
+            let content = UNMutableNotificationContent()
+            content.title = prompt.title
+            content.body = prompt.body
+            content.sound = .default
+
+            let encoded = prompt.coachQuestion
+                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            content.userInfo = ["deepLink": "bpcoach://coach?question=\(encoded)"]
+
+            let request = UNNotificationRequest(
+                identifier: "checkin.day\(day)",
+                content: content,
+                trigger: UNCalendarNotificationTrigger(
+                    dateMatching: calendar.dateComponents(
+                        [.year, .month, .day, .hour, .minute], from: fireDate
+                    ),
+                    repeats: false
+                )
+            )
+            try? await center.add(request)
+        }
     }
 
     /// Fires the check-in in a few seconds, for testing.
