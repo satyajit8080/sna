@@ -5,6 +5,7 @@ import SwiftUI
 struct BPCoachApp: App {
 
     @State private var appModel: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     private let stack: PersistenceController.Stack
 
     init() {
@@ -26,8 +27,57 @@ struct BPCoachApp: App {
                 .overlay(alignment: .top) {
                     if stack.isEphemeral { StorageWarningBanner() }
                 }
+                // Scheduled at launch, not from a screen.
+                //
+                // This used to run in HomeView's `.task`, which meant opening
+                // the app straight to the Coach tab queued nothing at all — and
+                // a notification that was never scheduled is indistinguishable
+                // from one that failed to arrive.
+                .task { await scheduleCheckIn() }
         }
         .modelContainer(stack.container)
+        .onChange(of: scenePhase) { _, phase in
+            // Rescheduled on the way out as well, so the queued question
+            // reflects what the user just did rather than what was true when
+            // they opened the app.
+            if phase == .background {
+                Task { await scheduleCheckIn() }
+            }
+        }
+    }
+}
+
+extension BPCoachApp {
+    /// Queues the daily check-in from whatever is currently stored.
+    ///
+    /// Reads directly rather than through a view's `@Query`: this has to happen
+    /// whichever screen the app opens on, including none of them.
+    @MainActor
+    private func scheduleCheckIn() async {
+        // Not before onboarding. Scheduling asks for notification permission,
+        // and an iOS prompt on the very first launch — before the app has
+        // explained what it would send — is both rude and the surest way to get
+        // it declined permanently.
+        guard appModel.hasCompletedOnboarding else { return }
+
+        let context = stack.container.mainContext
+        let profileID = appModel.activeProfile.id
+
+        func fetch<T: PersistentModel>(_ type: T.Type) -> [T] {
+            (try? context.fetch(FetchDescriptor<T>())) ?? []
+        }
+
+        let checkIn = CheckInPrompts.context(
+            profileID: profileID,
+            readings: fetch(BPReading.self),
+            medications: fetch(Medication.self),
+            doses: fetch(MedicationDose.self),
+            lifestyle: fetch(LifestyleEntry.self),
+            symptoms: fetch(SymptomEntry.self),
+            appointments: fetch(Appointment.self)
+        )
+
+        await NotificationEngine.shared.scheduleDailyCheckIn(checkIn)
     }
 }
 
